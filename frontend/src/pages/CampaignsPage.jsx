@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
-import StatusBadge from '../components/StatusBadge.jsx';
-import DataTable from '../components/DataTable.jsx';
+import { statusLabel, statusClass } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
 
 function fmtDateTime(value) {
@@ -17,14 +16,6 @@ function fmtDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function CountsMini({ counts }) {
-  if (!counts || counts.total == null) return <span className="text-muted">—</span>;
-  const parts = [`${counts.total} total`];
-  if (counts.completed) parts.push(`${counts.completed} completed`);
-  if (counts.failed) parts.push(`${counts.failed} failed`);
-  return <span className="counts-mini">{parts.join(' · ')}</span>;
 }
 
 export default function CampaignsPage() {
@@ -57,9 +48,17 @@ export default function CampaignsPage() {
       .catch((e) => setAgentsError(e.message));
   }, []);
 
-  // Agents are the primary path; the legacy domain-config select only shows
-  // when no agent has a saved version yet.
   const hasAgentVersions = agents.length > 0;
+
+  async function act(id, fn) {
+    try {
+      await fn(id);
+    } catch (e) {
+      setCreateError(e.message || 'Action failed.');
+    } finally {
+      reload();
+    }
+  }
 
   async function submitNew() {
     setCreating(true);
@@ -84,24 +83,12 @@ export default function CampaignsPage() {
     }
   }
 
-  const columns = [
-    {
-      key: 'name',
-      label: 'Campaign',
-      render: (c) => <span className="cell-strong">{c.name || `Campaign ${c.id}`}</span>,
-    },
-    { key: 'domain_config_name', label: 'Call domain', render: (c) => c.domain_config_name || '—' },
-    { key: 'status', label: 'Status', render: (c) => <StatusBadge status={c.status} /> },
-    { key: 'counts', label: 'Contacts', render: (c) => <CountsMini counts={c.counts} /> },
-    { key: 'created_at', label: 'Created', render: (c) => fmtDateTime(c.created_at), className: 'nowrap' },
-  ];
-
   return (
     <div>
       <div className="page-head">
         <div>
           <h2 className="page-title">Campaigns</h2>
-          <p className="page-sub">Upload contacts, launch calling campaigns, and monitor live progress.</p>
+          <p className="page-sub">Upload contacts, pick an agent, launch. Calls run 9 AM – 9 PM IST.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowNew(true)}>
           + New Campaign
@@ -117,20 +104,89 @@ export default function CampaignsPage() {
         </div>
       )}
 
-      <div className="card flush">
-        <DataTable
-          columns={columns}
-          rows={campaigns || []}
-          rowKey={(c) => c.id}
-          onRowClick={(c) => navigate(`/campaigns/${c.id}`)}
-          loading={loading}
-          empty="No campaigns yet. Create your first campaign to get started."
-          emptyAction={
-            <button type="button" className="btn btn-primary" onClick={() => setShowNew(true)}>
-              + Create your first campaign
-            </button>
-          }
-        />
+      {createError && (
+        <div className="banner banner-error">{createError}</div>
+      )}
+
+      <div className="card" style={{ overflowX: 'auto' }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th>Agent</th>
+              <th>Status</th>
+              <th style={{ minWidth: 180 }}>Progress</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={6} className="text-muted" style={{ padding: 24, textAlign: 'center' }}>
+                  Loading…
+                </td>
+              </tr>
+            )}
+            {!loading && (!campaigns || campaigns.length === 0) && (
+              <tr>
+                <td colSpan={6} style={{ padding: 24, textAlign: 'center' }}>
+                  <span className="text-muted">No campaigns yet. </span>
+                  <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+                    + Create your first campaign
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!loading &&
+              (campaigns || []).map((c) => {
+                const counts = c.counts || {};
+                const done = counts.completed || 0;
+                const total = counts.total || 0;
+                const pct = total ? Math.round((done / total) * 100) : 0;
+
+                return (
+                  <tr
+                    key={c.id}
+                    onClick={() => navigate(`/campaigns/${c.id}`)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <b>{c.name || `Campaign ${c.id}`}</b>
+                    </td>
+                    <td style={{ color: 'var(--muted)' }}>{c.agent_name || c.domain_config_name || '—'}</td>
+                    <td>
+                      <span className={`chip ${statusClass(c.status)}`}>{statusLabel(c.status)}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className="progress">
+                          <b style={{ width: pct + '%' }}></b>
+                        </div>
+                        <span className="mono">
+                          {done}/{total}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="mono">{fmtDateTime(c.created_at)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {c.status === 'running' && (
+                        <button className="btn sm ghost" onClick={() => act(c.id, api.pauseCampaign)}>Pause</button>
+                      )}
+                      {c.status === 'paused' && (
+                        <button className="btn sm ghost" onClick={() => act(c.id, api.launchCampaign)}>Resume</button>
+                      )}
+                      {c.status !== 'completed' && c.status !== 'canceled' && c.status !== 'draft' && (
+                        <button className="btn sm danger" style={{ marginLeft: 6 }} onClick={() => act(c.id, api.cancelCampaign)}>
+                          Cancel
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
       </div>
 
       {showNew && (

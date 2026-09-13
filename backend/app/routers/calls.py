@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,12 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Agent, AgentVersion, Call, Campaign, Contact, ExtractedField, Transcript, User
 from app.schemas import CampaignCallOut, CallDetailOut, CallListItemOut
+from app.services.export_service import (
+    CSV_MEDIA_TYPE,
+    XLSX_MEDIA_TYPE,
+    export_call_csv,
+    export_call_xlsx,
+)
 
 router = APIRouter(prefix="/api", tags=["calls"])
 
@@ -182,3 +188,29 @@ def get_call(
             for f in fields
         ],
     }
+
+
+@router.get("/calls/{call_id}/export")
+def export_call(
+    call_id: int,
+    format: str = "csv",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export ONE call row (campaign or contact-less playground call) as CSV/XLSX."""
+    call = db.get(Call, call_id)
+    if call is None or _call_org_id(db, call) != user.org_id:
+        raise HTTPException(status_code=404, detail="call not found")
+    if format == "csv":
+        return Response(
+            content=export_call_csv(db, call),
+            media_type=CSV_MEDIA_TYPE,
+            headers={"Content-Disposition": f'attachment; filename="call-{call.id}.csv"'},
+        )
+    if format == "xlsx":
+        return Response(
+            content=export_call_xlsx(db, call),
+            media_type=XLSX_MEDIA_TYPE,
+            headers={"Content-Disposition": f'attachment; filename="call-{call.id}.xlsx"'},
+        )
+    raise HTTPException(status_code=422, detail="format must be csv or xlsx")

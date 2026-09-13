@@ -141,6 +141,126 @@ def _cartesia_speed(speaking_rate: Any) -> Optional[float]:
     return min(1.5, max(0.6, rate))
 
 
+#: HTTP statuses worth failing over for (rate limits, overload, timeouts).
+#: Anything else (400s like bad-model/shape, 401s) is a config bug — retrying
+#: on another provider would just fail differently.
+_RETRYABLE_LLM_STATUS: frozenset = frozenset({None, 408, 425, 429, 500, 502, 503, 504})
+
+
+class FallbackLLM(llm.LLM):
+    """Primary LLM with same-tier provider fallback (ARCHITECTURE.md S5).
+
+    Same-tier, different-provider: the fallback must sound like the same
+    agent. Design: this object never retries inside a stream. On a retryable
+    primary failure the proxy below only marks the primary down and
+    re-raises; the session's own retry then calls chat() again, which serves
+    a concrete secondary stream directly. No duplicated prefixes, no
+    re-implemented stream machinery.
+    """
+
+    def __init__(
+        self, primary: llm.LLM, fallback: llm.LLM, cooldown_s: float = 90.0
+    ) -> None:
+        super().__init__()
+        self._primary = primary
+        self._fallback = fallback
+        self._cooldown_s = cooldown_s
+        self._primary_down_until = 0.0
+
+    @property
+    def model(self) -> str:
+        return getattr(self._primary, "model", "fallback-llm")
+
+    def _using_fallback(self) -> bool:
+        return time.monotonic() < self._primary_down_until
+
+    def _mark_primary_down(self) -> None:
+        self._primary_down_until = time.monotonic() + self._cooldown_s
+
+    def _chat_kwargs(
+        self, chat_ctx: llm.ChatContext, tools: Optional[list],
+        conn_options: Optional[Any], kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = {"chat_ctx": chat_ctx, "tools": tools}
+        if conn_options is not None:
+            merged["conn_options"] = conn_options
+        merged.update(kwargs)
+        return merged
+
+    def chat(
+        self,
+        *,
+        chat_ctx: llm.ChatContext,
+        tools: Optional[list] = None,
+        conn_options: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> llm.LLMStream:
+        if self._using_fallback():
+            logger.info("LLM fallback active: routing turn directly to secondary")
+            return self._fallback.chat(
+                **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
+            )
+        # Fail FAST on the primary: its own 3×2s retry loop burns TPM and
+        # minutes while the caller waits in silence. One attempt; on 429/5xx
+        # the proxy marks it down and the session retry goes to secondary.
+        # (APIConnectOptions lives in livekit.agents.llm.llm, not re-exported
+        # at the llm package root.)
+        from livekit.agents.llm.llm import APIConnectOptions
+
+        fast_options = APIConnectOptions(
+            max_retry=1, retry_interval=0.5, timeout=15.0
+        )
+        primary_stream = self._primary.chat(
+            **self._chat_kwargs(chat_ctx, tools, fast_options, kwargs)
+        )
+        return _FallbackStream(self, primary_stream)
+
+
+class _FallbackStream(llm.LLMStream):
+    """LLMStream proxy that observes failures; never retries itself.
+
+    On a retryable primary failure it marks the primary down for cooldown
+    and re-raises, so the session retry gets a concrete secondary stream
+    from FallbackLLM.chat().
+    """
+
+    def __init__(self, owner: FallbackLLM, primary_stream: llm.LLMStream) -> None:
+        super().__init__(
+            owner,
+            chat_ctx=primary_stream.chat_ctx,
+            tools=list(primary_stream.tools),
+            conn_options=llm.APIConnectOptions(),
+        )
+        self._owner = owner
+        self._active = primary_stream
+
+    async def _run(self) -> None:
+        # Abstract hook required by llm.LLMStream. This proxy never drives
+        # it — iteration delegates to the wrapped concrete stream.
+        return None
+
+    async def __anext__(self) -> Any:
+        try:
+            return await self._active.__anext__()
+        except StopAsyncIteration:
+            raise
+        except Exception as exc:  # noqa: BLE001 — classify, then maybe fail over
+            if getattr(exc, "status_code", None) not in _RETRYABLE_LLM_STATUS:
+                raise
+            logger.warning(
+                "primary LLM failed (%s), cooling down for fallback",
+                getattr(exc, "status_code", "connection-error"),
+            )
+            self._owner._mark_primary_down()
+            raise
+
+    async def aclose(self) -> None:
+        try:
+            await self._active.aclose()
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+
+
 def build_providers(
     settings: Settings,
     voice_settings: Optional[Mapping[str, Any]] = None,
@@ -203,16 +323,38 @@ def build_providers(
             # Qwen3 is a hybrid reasoning model — thinking tokens add seconds
             # of voice latency. Disable reasoning entirely (NFR-1).
             kwargs["reasoning_effort"] = "none"
+        elif "gpt-oss" in groq_model.lower():
+            # GPT-OSS rejects "none" (400: must be low/medium/high) — use the
+            # minimum. Combined with max_completion_tokens=300, thinking
+            # stays a short prefix before the spoken reply.
+            kwargs["reasoning_effort"] = "low"
         # Voice turns are 1-3 sentences: cap output well under Groq's
         # on_demand 1000 output-tokens/min tier (an uncapped request asks for
         # ~1215 and gets 429 rate_limited, which wedges the whole call).
         kwargs["max_completion_tokens"] = 300
-        bundle.llm = openai.LLM(
+        primary_llm = openai.LLM(
             model=groq_model,
             api_key=settings.groq_api_key,
             base_url="https://api.groq.com/openai/v1",
             **kwargs,
         )
+        if settings.openai_api_key:
+            # Same-tier fallback, different provider: Groq on_demand caps
+            # (~8000 TPM shared with retries) wedging calls after ~3 turns.
+            # The wrapper re-issues the identical request once on OpenAI.
+            secondary_llm = openai.LLM(
+                model=settings.openai_model,
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+                max_completion_tokens=300,
+            )
+            logger.info(
+                "LLM fallback armed: %s (Groq) -> %s (OpenAI)",
+                groq_model, settings.openai_model,
+            )
+            bundle.llm = FallbackLLM(primary_llm, secondary_llm)
+        else:
+            bundle.llm = primary_llm
     elif settings.openai_api_key:
         logger.info(
             "GROQ_API_KEY missing - falling back to OpenAI %s",

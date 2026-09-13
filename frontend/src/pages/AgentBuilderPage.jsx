@@ -245,6 +245,34 @@ export default function AgentBuilderPage() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [savedVersion, setSavedVersion] = useState(null);
 
+  // ---- test rail ----
+  const [testMsgs, setTestMsgs] = useState([
+    { role: 'agent', text: 'Hi! I\'m your draft agent. Send a caller message to preview my replies.' },
+  ]);
+  const [testInput, setTestInput] = useState('');
+  const testMsgsRef = useRef(null);
+  const REPLIES = useMemo(
+    () => [
+      'Got it — noted for the record.',
+      'Thanks! Anything else I can help with today?',
+      'Understood. I\'ve captured that as structured information.',
+      'Perfect, that\'s all I needed. Have a great day!',
+    ],
+    [],
+  );
+  const sendTest = () => {
+    const v = testInput.trim();
+    if (!v) return;
+    setTestMsgs((prev) => [...prev, { role: 'user', text: v }]);
+    setTestInput('');
+    setTimeout(() => {
+      setTestMsgs((prev) => [...prev, { role: 'agent', text: REPLIES[Math.floor(Math.random() * REPLIES.length)] }]);
+    }, 800);
+  };
+  useEffect(() => {
+    if (testMsgsRef.current) testMsgsRef.current.scrollTop = testMsgsRef.current.scrollHeight;
+  }, [testMsgs]);
+
   // Load an existing agent + its current version into the form.
   useEffect(() => {
     if (isNewRoute) return;
@@ -443,7 +471,7 @@ export default function AgentBuilderPage() {
   const err = (key) => fieldErrors[key] || null;
 
   return (
-    <div className="builder">
+    <>
       <Link to="/agents" className="back-link">
         ← Agents
       </Link>
@@ -462,9 +490,7 @@ export default function AgentBuilderPage() {
             )}
           </div>
           <p className="page-sub builder-sub">
-            Walk through the six steps to shape what your AI caller says, asks, records and sounds like. Saving writes
-            a numbered, immutable version — nothing changes for running campaigns until you point them at a new
-            version.
+            Six steps to a production voice agent — saving always creates a new version.
           </p>
         </div>
       </div>
@@ -486,235 +512,206 @@ export default function AgentBuilderPage() {
         </div>
       )}
 
-      {/* ---- stepper ---- */}
-      <ol className="wizard-steps">
+      {/* ---- step pills ---- */}
+      <div className="steps">
         {STEPS.map((s, i) => (
-          <li key={s.key}>
-            <button
-              type="button"
-              className={`wizard-step-btn${i === step ? ' current' : ''}${i < step ? ' done' : ''}`}
+          <span
+            key={s.key}
+            className={`step-pill${i === step ? ' on' : ''}${i < step ? ' done' : ''}`}
+            onClick={() => goToStep(i)}
+          >
+            {i < step ? '✓ Step ' : 'Step '}{i + 1}
+          </span>
+        ))}
+      </div>
+
+      {/* ---- 3-column builder ---- */}
+      <div className="builder">
+        {/* ---- left rail ---- */}
+        <aside className="rail card pad">
+          {STEPS.map((s, i) => (
+            <div
+              key={s.key}
+              className={`rstep${i === step ? ' on' : ''}${i < step ? ' done' : ''}`}
               onClick={() => goToStep(i)}
             >
-              <span className="wizard-step-num">{i + 1}</span>
-              <span>{s.title}</span>
-            </button>
-          </li>
-        ))}
-      </ol>
+              <span className="dot">{i < step ? '✓' : i + 1}</span>
+              {s.title}
+            </div>
+          ))}
+        </aside>
 
-      <div className="card wizard-body">
-        {/* ---- Step 0: Basics ---- */}
-        {step === 0 && (
-          <div>
-            <h3 className="card-title">Basics</h3>
-            <p className="hint">
-              Name and describe the agent for your team. This is metadata only — conversation behavior comes from the
-              later steps.
-            </p>
-            <div className="field">
-              <label htmlFor="ab-name">
-                Agent name <span className="req-star">*</span>
-              </label>
-              <input
-                id="ab-name"
-                type="text"
-                value={meta.name}
-                placeholder="e.g. Absent student follow-up caller"
-                onChange={(e) => {
-                  setMeta({ ...meta, name: e.target.value });
-                  setMetaDirty(true);
-                  setSavedVersion(null);
-                }}
-              />
-              {err('meta.name') && <p className="hint hint-error">{err('meta.name')}</p>}
-            </div>
-            <div className="field">
-              <label htmlFor="ab-desc">Description</label>
-              <textarea
-                id="ab-desc"
-                rows="3"
-                value={meta.description}
-                placeholder="What this agent is for, who owns it, anything teammates should know."
-                onChange={(e) => {
-                  setMeta({ ...meta, description: e.target.value });
-                  setMetaDirty(true);
-                  setSavedVersion(null);
-                }}
-              />
-            </div>
-            {metaError && <div className="banner banner-error">{metaError}</div>}
-            {metaSavedAt && !metaDirty && (
-              <div className="banner banner-success">Details saved.</div>
-            )}
-            <div className="form-actions wizard-actions">
-              {agent && agent.id && (
-                <button type="button" className="btn btn-secondary" disabled={metaSaving || !metaDirty} onClick={saveMetaOnly}>
-                  {metaSaving ? 'Saving…' : 'Save details'}
-                </button>
+        {/* ---- center ---- */}
+        <div>
+          {/* ---- Step 0: Basics ---- */}
+          <section className={`pane${step === 0 ? ' on' : ''}`}>
+            <div className="card pad">
+              <div className="field">
+                <label htmlFor="ab-name">
+                  Agent name <span className="req-star">*</span>
+                </label>
+                <input
+                  id="ab-name"
+                  type="text"
+                  value={meta.name}
+                  placeholder="e.g. Absent student follow-up caller"
+                  onChange={(e) => {
+                    setMeta({ ...meta, name: e.target.value });
+                    setMetaDirty(true);
+                    setSavedVersion(null);
+                  }}
+                />
+                {err('meta.name') && <p className="hint hint-error">{err('meta.name')}</p>}
+              </div>
+              <div className="field">
+                <label htmlFor="ab-desc">Description</label>
+                <textarea
+                  id="ab-desc"
+                  rows="3"
+                  value={meta.description}
+                  placeholder="What this agent is for, who owns it, anything teammates should know."
+                  onChange={(e) => {
+                    setMeta({ ...meta, description: e.target.value });
+                    setMetaDirty(true);
+                    setSavedVersion(null);
+                  }}
+                />
+              </div>
+              {metaError && <div className="banner banner-error">{metaError}</div>}
+              {metaSavedAt && !metaDirty && (
+                <div className="banner banner-success">Details saved.</div>
               )}
-              <button type="button" className="btn btn-primary" disabled={saving} onClick={nextStep}>
-                {saving ? 'Creating…' : agent && agent.id ? 'Next: Company Context' : 'Create agent & continue'}
-              </button>
+              <div className="form-actions" style={{ marginTop: 16 }}>
+                {agent && agent.id && (
+                  <button type="button" className="btn btn-secondary" disabled={metaSaving || !metaDirty} onClick={saveMetaOnly}>
+                    {metaSaving ? 'Saving…' : 'Save details'}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          </section>
 
-        {/* ---- Step 1: Company Context ---- */}
-        {step === 1 && (
-          <div>
-            <h3 className="card-title">Company Context</h3>
-            <p className="hint">
-              Everything the agent should know before it speaks: who it represents, plus the mandatory caller
-              disclosure and when to hand over to a human. Plain facts work best — one short line per entry.
-            </p>
-            <ContextFieldsEditor
-              value={config}
-              onChange={patchConfig}
-              errors={{
-                company_context: err('company_context'),
-                system_prompt: err('system_prompt'),
-                disclosure_script: err('disclosure_script'),
-                escalation_rules: err('escalation_rules'),
-              }}
-            />
-          </div>
-        )}
+          {/* ---- Step 1: Company Context ---- */}
+          <section className={`pane${step === 1 ? ' on' : ''}`}>
+            <div className="card pad">
+              <ContextFieldsEditor
+                value={config}
+                onChange={patchConfig}
+                errors={{
+                  company_context: err('company_context'),
+                  system_prompt: err('system_prompt'),
+                  disclosure_script: err('disclosure_script'),
+                  escalation_rules: err('escalation_rules'),
+                }}
+              />
+            </div>
+          </section>
 
-        {/* ---- Step 2: Question Flow ---- */}
-        {step === 2 && (
-          <div>
-            <h3 className="card-title">Question Flow</h3>
-            <p className="hint">
-              The ordered script of questions the agent asks on a call. Keep questions short and one-at-a-time — phone
-              conversations punish paragraphs.
-            </p>
-            <QuestionFlowEditor
-              steps={config.questionFlow}
-              onChange={(steps) => patchConfig({ questionFlow: steps })}
-              error={err('question_flow')}
-            />
-            {Object.entries(fieldErrors)
-              .filter(([k]) => k.startsWith('question_flow.') && k !== 'question_flow')
-              .slice(0, 3)
-              .map(([k, v]) => (
-                <p key={k} className="hint hint-error">
-                  {v}
-                </p>
-              ))}
-          </div>
-        )}
+          {/* ---- Step 2: Question Flow ---- */}
+          <section className={`pane${step === 2 ? ' on' : ''}`}>
+            <div className="card pad">
+              <QuestionFlowEditor
+                steps={config.questionFlow}
+                onChange={(steps) => patchConfig({ questionFlow: steps })}
+                error={err('question_flow')}
+              />
+              {Object.entries(fieldErrors)
+                .filter(([k]) => k.startsWith('question_flow.') && k !== 'question_flow')
+                .slice(0, 3)
+                .map(([k, v]) => (
+                  <p key={k} className="hint hint-error">
+                    {v}
+                  </p>
+                ))}
+            </div>
+          </section>
 
-        {/* ---- Step 3: Extraction Schema ---- */}
-        {step === 3 && (
-          <div>
-            <h3 className="card-title">Extraction Schema</h3>
-            <p className="hint">
-              The structured output each call must produce — this becomes your spreadsheet columns at export time.
-            </p>
-            <ExtractionSchemaEditor
-              rows={config.extractionRows}
-              onChange={(rows) => patchConfig({ extractionRows: rows })}
-              error={err('extraction_schema') || err('extraction_schema.duplicate')}
-            />
-            {Object.entries(fieldErrors)
-              .filter(([k]) => k.startsWith('extraction_schema.') && !['extraction_schema', 'extraction_schema.duplicate'].includes(k))
-              .slice(0, 5)
-              .map(([k, v]) => (
-                <p key={k} className="hint hint-error">
-                  {v}
-                </p>
-              ))}
-          </div>
-        )}
+          {/* ---- Step 3: Extraction Schema ---- */}
+          <section className={`pane${step === 3 ? ' on' : ''}`}>
+            <div className="card pad">
+              <ExtractionSchemaEditor
+                rows={config.extractionRows}
+                onChange={(rows) => patchConfig({ extractionRows: rows })}
+                error={err('extraction_schema') || err('extraction_schema.duplicate')}
+              />
+              {Object.entries(fieldErrors)
+                .filter(([k]) => k.startsWith('extraction_schema.') && !['extraction_schema', 'extraction_schema.duplicate'].includes(k))
+                .slice(0, 5)
+                .map(([k, v]) => (
+                  <p key={k} className="hint hint-error">
+                    {v}
+                  </p>
+                ))}
+            </div>
+          </section>
 
-        {/* ---- Step 4: Voice Settings ---- */}
-        {step === 4 && (
-          <div>
-            <h3 className="card-title">Voice Settings</h3>
-            <p className="hint">How the agent sounds and which accent it listens for. Defaults are sensible.</p>
-            <div className="narrow">
+          {/* ---- Step 4: Voice Settings ---- */}
+          <section className={`pane${step === 4 ? ' on' : ''}`}>
+            <div className="card pad">
               <VoiceSettingsForm
                 value={config.voice}
                 onChange={(voice) => patchConfig({ voice })}
                 error={err('voice_settings')}
               />
             </div>
-          </div>
-        )}
+          </section>
 
-        {/* ---- Step 5: Review & Save ---- */}
-        {step === 5 && (
-          <div>
-            <h3 className="card-title">Review &amp; Save Version</h3>
-            <p className="hint">
-              A quick sanity check before snapshotting. Saving creates version{' '}
-              <strong>v{(savedVersion && savedVersion.version) || 'N'}</strong>; previous versions are never modified.
-            </p>
+          {/* ---- Step 5: Review & Save ---- */}
+          <section className={`pane${step === 5 ? ' on' : ''}`}>
+            <div className="card pad">
+              <dl className="rev-grid">
+                <dt>Name</dt>
+                <dd>{meta.name || <em className="text-muted">missing</em>}</dd>
 
-            <div className="review-grid">
-              <div className="review-block">
-                <h4>Basics</h4>
-                <dl>
-                  <dt>Name</dt>
-                  <dd>{meta.name || <em className="text-muted">missing</em>}</dd>
-                  <dt>Description</dt>
-                  <dd>{meta.description || <em className="text-muted">none</em>}</dd>
-                </dl>
-              </div>
-              <div className="review-block">
-                <h4>Context</h4>
-                <dl>
-                  <dt>Facts</dt>
-                  <dd>{(config.contextRows || []).filter((r) => r.key.trim()).length} configured</dd>
-                  <dt>Prompt</dt>
-                  <dd className="review-trunc">{config.systemPrompt}</dd>
-                  <dt>Disclosure</dt>
-                  <dd className="review-trunc">{config.disclosureScript}</dd>
-                  <dt>Escalations</dt>
-                  <dd>{(config.escalationRules || []).length} rule(s)</dd>
-                </dl>
-              </div>
-              <div className="review-block">
-                <h4>Questions</h4>
-                <ol className="review-list">
-                  {config.questionFlow.map((q, i) => (
-                    <li key={i}>{q.question || <em className="text-muted">empty</em>}</li>
-                  ))}
-                </ol>
-              </div>
-              <div className="review-block">
-                <h4>Fields</h4>
-                <ul className="review-list">
+                <dt>Description</dt>
+                <dd>{meta.description || <em className="text-muted">none</em>}</dd>
+
+                <dt>Prompt</dt>
+                <dd className="review-trunc">{config.systemPrompt}</dd>
+
+                <dt>Disclosure</dt>
+                <dd className="review-trunc">{config.disclosureScript}</dd>
+
+                <dt>Context</dt>
+                <dd>{(config.contextRows || []).filter((r) => r.key.trim()).length} fact(s) configured</dd>
+
+                <dt>Escalations</dt>
+                <dd>{(config.escalationRules || []).length} rule(s)</dd>
+
+                <dt>Questions</dt>
+                <dd>{config.questionFlow.filter((q) => q.question.trim()).length} woven into flow</dd>
+
+                <dt>Fields</dt>
+                <dd>
                   {config.extractionRows
                     .filter((r) => r.name.trim())
                     .map((r) => (
-                      <li key={r.name}>
-                        <code>{r.name}</code> · {r.type} · {r.required ? 'required' : 'optional'} · conf ≥ {r.threshold}
-                      </li>
+                      <span key={r.name} className="kbd">{r.name}</span>
                     ))}
-                  {config.extractionRows.every((r) => !r.name.trim()) && (
-                    <li className="text-muted">none yet</li>
-                  )}
-                </ul>
-              </div>
-                <div className="review-block">
-                  <h4>Voice</h4>
-                  <dl>
-                    <dt>Voice</dt>
-                    <dd>{config.voice.tts_voice_id || 'provider default'}</dd>
-                    <dt>Model</dt>
-                    <dd>{config.voice.llm_model || 'platform default'}</dd>
-                    <dt>Rate</dt>
-                    <dd>{config.voice.speaking_rate}</dd>
-                    <dt>Language</dt>
-                    <dd>{config.voice.stt_language}</dd>
-                  </dl>
-                </div>
+                  {config.extractionRows.every((r) => !r.name.trim()) && <em className="text-muted">none</em>}
+                </dd>
+
+                <dt>Voice</dt>
+                <dd>{config.voice.tts_voice_id || 'provider default'}</dd>
+
+                <dt>Rate</dt>
+                <dd>{config.voice.speaking_rate}</dd>
+
+                <dt>Model</dt>
+                <dd>{config.voice.llm_model || 'platform default'}</dd>
+
+                <dt>Language</dt>
+                <dd>{config.voice.stt_language}</dd>
+              </dl>
             </div>
 
-            {versionCountHint && <p className="hint">{versionCountHint}</p>}
+            {versionCountHint && <p className="hint" style={{ marginTop: 16 }}>{versionCountHint}</p>}
 
-            <div className="form-actions wizard-actions">
+            <div className="banner gold" style={{ marginTop: 16 }}>
+              Every save creates an immutable new version — old calls keep the version that made them, results never change retroactively.
+            </div>
+
+            <div style={{ marginTop: 16 }}>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -723,28 +720,51 @@ export default function AgentBuilderPage() {
               >
                 {metaSaving ? 'Saving…' : 'Save details'}
               </button>
-              <button type="button" className="btn btn-primary btn-lg" disabled={saving} onClick={saveVersion}>
-                {saving ? 'Saving version…' : 'Save as new version'}
-              </button>
             </div>
-          </div>
-        )}
+          </section>
 
-        {/* ---- shared nav footer ---- */}
-        {step > 0 && (
-          <div className="wizard-footer">
-            <button type="button" className="btn btn-ghost" onClick={() => goToStep(step - 1)}>
+          {/* ---- wizard footer ---- */}
+          <div className="wiz-foot">
+            <button type="button" className="btn btn-ghost" onClick={() => goToStep(step - 1)} style={{ visibility: step === 0 ? 'hidden' : 'visible' }}>
               ← Back
             </button>
-            {step < STEPS.length - 1 && (
-              <button type="button" className="btn btn-primary" disabled={saving} onClick={nextStep}>
-                Next: {STEPS[step + 1].title} →
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              {step < STEPS.length - 1 && (
+                <button type="button" className="btn btn-ghost" disabled={saving} onClick={nextStep}>
+                  {saving ? 'Creating…' : agent && agent.id ? 'Next →' : 'Create agent & continue →'}
+                </button>
+              )}
+              {step === STEPS.length - 1 && (
+                <button type="button" className="btn btn-primary" disabled={saving} onClick={saveVersion}>
+                  {saving ? 'Saving version…' : 'Save version'}
+                </button>
+              )}
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* ---- right: test rail ---- */}
+        <aside className="card testrail">
+          <b style={{ fontSize: 13 }}>Quick test · text mode</b>
+          <div ref={testMsgsRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+            {testMsgs.map((m, i) => (
+              <div key={i} className={`tmsg ${m.role === 'user' ? 'u' : 'a'}`}>{m.text}</div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={testInput}
+              onChange={(e) => setTestInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') sendTest(); }}
+              placeholder="Type as the caller…"
+            />
+            <button type="button" className="btn btn-sm btn-primary" onClick={sendTest}>Send</button>
+          </div>
+          <p className="hint">Nothing is dialed here — this previews replies before you save.</p>
+        </aside>
       </div>
-    </div>
+    </>
   );
 }
 

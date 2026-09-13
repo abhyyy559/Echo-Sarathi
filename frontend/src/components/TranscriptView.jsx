@@ -1,4 +1,5 @@
 import React from 'react';
+import { cleanTranscriptText } from '../utils/transcript.js';
 
 const AGENT_SPEAKERS = new Set(['agent', 'ai', 'bot', 'assistant', 'system', 'voice_agent']);
 
@@ -49,7 +50,7 @@ export default function TranscriptView({ turns, emptyText }) {
                 <span className="bubble-speaker">{agent ? 'Agent' : t.speaker ? titleCase(t.speaker) : 'Caller'}</span>
                 {clock && <span className="bubble-time">{clock}</span>}
               </div>
-              <div className="bubble-text">{t.text}</div>
+              <div className="bubble-text">{cleanTranscriptText(t.text)}</div>
             </div>
           </div>
         );

@@ -24,6 +24,36 @@ logger = logging.getLogger("voice_agent.extraction")
 LOW_CONFIDENCE_THRESHOLD: float = 0.6
 MAX_ASKS_PER_FIELD: int = 3
 
+#: Values that are NOT a value. An extraction carrying one of these means the
+#: caller did not actually provide the information (PE the LLM hedging with
+#: "unknown"). Recording these would be fabricating data - the #1 violation the
+#: defense pack must never be caught doing. Reject them as not-captured.
+PLACEHOLDER_VALUES: frozenset[str] = frozenset(
+    {
+        "",
+        "unknown",
+        "n/a",
+        "na",
+        "none",
+        "null",
+        "not sure",
+        "not sure.",
+        "unsure",
+        "i don't know",
+        "i dont know",
+        "don't know",
+        "dont know",
+        "no idea",
+        "not provided",
+        "-",
+        "?",
+    }
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    return str(value or "").strip().lower() in PLACEHOLDER_VALUES
+
 
 class ExtractionBackend(Protocol):
     """Minimal backend surface needed by the tools (real or fake)."""
@@ -62,6 +92,9 @@ class ExtractionCoordinator:
     required_fields: frozenset[str] = field(default_factory=frozenset)
     low_confidence_threshold: float = LOW_CONFIDENCE_THRESHOLD
     max_asks_per_field: int = MAX_ASKS_PER_FIELD
+    #: The domain extraction_schema (field_name -> spec). When non-empty it is
+    #: used to validate field names and to apply per-field confidence_threshold.
+    schema: Mapping[str, Any] = field(default_factory=dict)
 
     recorded: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     flagged_fields: Dict[str, str] = field(default_factory=dict)
@@ -87,13 +120,58 @@ class ExtractionCoordinator:
             logger.warning("escalation: %s", reason)
         return count
 
+    def _threshold_for(self, field_name: str) -> float:
+        """Effective confidence threshold: per-field over the global default."""
+        spec = self.schema.get(str(field_name))
+        if isinstance(spec, Mapping):
+            per_field = spec.get("confidence_threshold")
+            if per_field is not None:
+                try:
+                    return float(per_field)
+                except (TypeError, ValueError):
+                    pass
+        return self.low_confidence_threshold
+
     def record(self, field_name: str, value: str, confidence: float) -> RecordResult:
         """Store (or flag) one extracted value. Never invents data."""
         clamped = max(0.0, min(1.0, float(confidence)))
-        if clamped < self.low_confidence_threshold:
+        # Validate the field name against the known schema when one is loaded.
+        if self.schema and str(field_name) not in self.schema:
+            reason = (
+                f"'{field_name}' is not a known field in the extraction schema "
+                f"- NOT recorded."
+            )
+            logger.warning("rejected out-of-schema field: %s", reason)
+            return RecordResult(
+                field_name=field_name,
+                value=str(value),
+                confidence=clamped,
+                accepted=False,
+                flagged=False,
+                should_wrap_up=False,
+                reason=reason,
+            )
+        if _is_placeholder(value):
+            reason = (
+                f"Value for '{field_name}' is a placeholder ('{value}') - NOT a "
+                f"captured value; never fabricate. Ask again or skip this field."
+            )
+            self.flagged_fields.setdefault(field_name, reason)
+            logger.warning("refused placeholder extraction: %s", reason)
+            return RecordResult(
+                field_name=field_name,
+                value=str(value),
+                confidence=clamped,
+                accepted=False,
+                flagged=True,
+                should_wrap_up=False,
+                reason=reason,
+            )
+        effective = self._threshold_for(field_name)
+        if clamped < effective:
             reason = (
                 f"Low confidence ({clamped:.2f}) for '{field_name}' below "
-                f"{self.low_confidence_threshold:.2f} - not captured."
+                f"{effective:.2f} - not captured."
             )
             self.flagged_fields.setdefault(field_name, reason)
             self._wrap_up_reasons.append(reason)
@@ -178,6 +256,8 @@ class VoiceAgentTools:
             for sentence in re.split(r"(?<=[.!?])\s+|,\s+", text):
                 words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
                 if words & cue_words:
+                    if _is_placeholder(sentence):
+                        continue  # "unknown"/"n/a" is not a value - never record it
                     await self.record_extracted_field(
                         field_name,
                         sentence.strip(" ."),
@@ -195,8 +275,29 @@ class VoiceAgentTools:
         *,
         source_turn_index: int = 0,
     ) -> str:
-        """Record one extracted field and escalate when it is unreliable."""
+        """Record one extracted field and escalate when it is unreliable.
+
+        Only ACCEPTED values are persisted to the backend. A value the
+        coordinator rejects (placeholder, low confidence, or out-of-schema
+        field name) is never posted — the LLM is told to re-ask or keep going.
+        """
         result = self._coordinator.record(field_name, str(value), float(confidence))
+        if not result.accepted:
+            if result.should_wrap_up:
+                await self._backend.post_complete(
+                    self._call_id,
+                    status="wrapped_up_flagged",
+                    error=result.reason,
+                )
+                return (
+                    f"FLAGGED - {result.reason} Do NOT guess this value. Wrap up the "
+                    f"call gracefully now and call `end_call` with a summary noting "
+                    f"that '{result.field_name}' could not be reliably captured."
+                )
+            return (
+                f"NOT RECORDED: {result.reason} Re-ask specifically, or record it "
+                f"once you have a real value."
+            )
         await self._backend.post_fields(
             self._call_id,
             [
@@ -208,17 +309,6 @@ class VoiceAgentTools:
                 }
             ],
         )
-        if result.should_wrap_up:
-            await self._backend.post_complete(
-                self._call_id,
-                status="wrapped_up_flagged",
-                error=result.reason,
-            )
-            return (
-                f"FLAGGED - {result.reason} Do NOT guess this value. Wrap up the "
-                f"call gracefully now and call `end_call` with a summary noting "
-                f"that '{result.field_name}' could not be reliably captured."
-            )
         return (
             f"Recorded {result.field_name}='{result.value}' "
             f"(confidence {result.confidence:.2f})."

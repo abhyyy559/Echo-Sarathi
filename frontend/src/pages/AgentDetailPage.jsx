@@ -5,8 +5,6 @@ import ContextFieldsEditor from '../components/ContextFieldsEditor.jsx';
 import QuestionFlowEditor from '../components/QuestionFlowEditor.jsx';
 import ExtractionSchemaEditor from '../components/ExtractionSchemaEditor.jsx';
 import VoiceSettingsForm from '../components/VoiceSettingsForm.jsx';
-import TextPlayground from '../components/TextPlayground.jsx';
-import TranscriptView from '../components/TranscriptView.jsx';
 import {
   buildVersionPayload,
   validateVersionPayload,
@@ -30,17 +28,11 @@ function tabForErrorKey(key) {
   return null;
 }
 
-function fmtClock(seconds) {
-  const s = Math.max(0, Math.round(Number(seconds) || 0));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
 /**
  * Agent workspace — /agents/:id.
  *
- * Two-column split: LEFT is a tabbed config editor (drafting the NEXT
- * immutable version), RIGHT is a sticky "Test agent" rail that embeds the
- * same text-playground engine as the Playground plus the last-run report.
+ * Two-column layout: LEFT is a tabbed config editor (drafting the NEXT
+ * immutable version), RIGHT is version history with test buttons.
  */
 export default function AgentDetailPage() {
   const params = useParams();
@@ -64,10 +56,6 @@ export default function AgentDetailPage() {
   const [generalErrors, setGeneralErrors] = useState([]);
   const [fieldErrors, setFieldErrors] = useState({});
   const [savedVersion, setSavedVersion] = useState(null);
-
-  // ---- test rail ----
-  const [testVersionId, setTestVersionId] = useState('');
-  const [lastRun, setLastRun] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,16 +96,6 @@ export default function AgentDetailPage() {
     };
   }, [routeId]);
 
-  // Default the test target to the agent's current version, else latest saved.
-  useEffect(() => {
-    if (!agent && !versions.length) return;
-    setTestVersionId((prev) => {
-      if (prev && versions.some((v) => String(v.id) === String(prev))) return prev;
-      if (agent && agent.current_version_id != null) return String(agent.current_version_id);
-      return versions.length ? String(versions[versions.length - 1].id) : '';
-    });
-  }, [agent, versions]);
-
   function patchConfig(patch) {
     setConfig((c) => ({ ...c, ...patch }));
     setDirty(true);
@@ -156,7 +134,6 @@ export default function AgentDetailPage() {
       setSavedVersion(version);
       setDirty(false);
       setAgent((a) => (a ? { ...a, current_version_id: version.id } : a));
-      setTestVersionId(String(version.id));
       await refreshVersions();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
@@ -227,15 +204,14 @@ export default function AgentDetailPage() {
         </div>
         <div className="head-actions">
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => navigate(`/agents/${routeId}/edit`)}>
-            Open builder wizard
+            Edit → creates v{(latestVersionNumber ?? 0) + 1}
           </button>
         </div>
       </div>
 
       {savedVersion && (
         <div className="banner banner-success">
-          <strong>Version {savedVersion.version} saved.</strong> It is now the current version and the test panel on
-          the right targets it. Campaigns keep running their pinned version until you re-point them.
+          <strong>Version {savedVersion.version} saved.</strong> It is now the current version. Campaigns keep running their pinned version until you re-point them.
         </div>
       )}
       {saveError && <div className="banner banner-error">{saveError}</div>}
@@ -249,17 +225,21 @@ export default function AgentDetailPage() {
         </div>
       )}
 
-      <div className="detail-split">
+      <div className="banner brand">
+        Editing always creates a new version — history stays intact and old calls keep the version that made them.
+      </div>
+
+      <div className="detail">
         {/* ------------------------------ LEFT: tabbed config editor ------- */}
-        <div className="card config-tabs-card">
-          <div className="tab-row" role="tablist" aria-label="Agent configuration sections">
+        <div className="card">
+          <div className="tabs" role="tablist" aria-label="Agent configuration sections">
             {TABS.map((t) => (
               <button
                 key={t.key}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === t.key}
-                className={`tab-btn${activeTab === t.key ? ' active' : ''}`}
+                className={`tab${activeTab === t.key ? ' on' : ''}`}
                 onClick={() => setActiveTab(t.key)}
               >
                 {t.label}
@@ -267,83 +247,73 @@ export default function AgentDetailPage() {
             ))}
           </div>
 
-          <div style={{ paddingTop: 16 }}>
-            {activeTab === 'context' && (
-              <>
-                <h3 className="card-title">Context</h3>
-                <p className="hint">
-                  What the agent knows before it speaks: your organization's facts, behavior rules, the mandatory AI
-                  disclosure, and when to hand over to a human.
-                </p>
-                <ContextFieldsEditor
-                  value={config}
-                  onChange={patchConfig}
-                  errors={{
-                    company_context: err('company_context'),
-                    system_prompt: err('system_prompt'),
-                    disclosure_script: err('disclosure_script'),
-                    escalation_rules: err('escalation_rules'),
-                  }}
-                />
-              </>
-            )}
+          <div className={`tabbody${activeTab === 'context' ? ' on' : ''}`}>
+            <h3 className="card-title">Context</h3>
+            <p className="hint">
+              What the agent knows before it speaks: your organization's facts, behavior rules, the mandatory AI
+              disclosure, and when to hand over to a human.
+            </p>
+            <ContextFieldsEditor
+              value={config}
+              onChange={patchConfig}
+              errors={{
+                company_context: err('company_context'),
+                system_prompt: err('system_prompt'),
+                disclosure_script: err('disclosure_script'),
+                escalation_rules: err('escalation_rules'),
+              }}
+            />
+          </div>
 
-            {activeTab === 'flow' && (
-              <>
-                <h3 className="card-title">Question flow</h3>
-                <p className="hint">
-                  The ordered script of questions asked on every call. Short, one-at-a-time questions work best over
-                  the phone.
+          <div className={`tabbody${activeTab === 'flow' ? ' on' : ''}`}>
+            <h3 className="card-title">Question flow</h3>
+            <p className="hint">
+              The ordered script of questions asked on every call. Short, one-at-a-time questions work best over
+              the phone.
+            </p>
+            <QuestionFlowEditor
+              steps={config.questionFlow}
+              onChange={(steps) => patchConfig({ questionFlow: steps })}
+              error={err('question_flow')}
+            />
+            {Object.entries(fieldErrors)
+              .filter(([k]) => k.startsWith('question_flow.') && k !== 'question_flow')
+              .slice(0, 3)
+              .map(([k, v]) => (
+                <p key={k} className="hint hint-error">
+                  {v}
                 </p>
-                <QuestionFlowEditor
-                  steps={config.questionFlow}
-                  onChange={(steps) => patchConfig({ questionFlow: steps })}
-                  error={err('question_flow')}
-                />
-                {Object.entries(fieldErrors)
-                  .filter(([k]) => k.startsWith('question_flow.') && k !== 'question_flow')
-                  .slice(0, 3)
-                  .map(([k, v]) => (
-                    <p key={k} className="hint hint-error">
-                      {v}
-                    </p>
-                  ))}
-              </>
-            )}
+              ))}
+          </div>
 
-            {activeTab === 'extraction' && (
-              <>
-                <h3 className="card-title">Extraction schema</h3>
-                <p className="hint">
-                  The structured output each call must produce — these become your spreadsheet columns at export time.
+          <div className={`tabbody${activeTab === 'extraction' ? ' on' : ''}`}>
+            <h3 className="card-title">Extraction schema</h3>
+            <p className="hint">
+              The structured output each call must produce — these become your spreadsheet columns at export time.
+            </p>
+            <ExtractionSchemaEditor
+              rows={config.extractionRows}
+              onChange={(rows) => patchConfig({ extractionRows: rows })}
+              error={err('extraction_schema') || err('extraction_schema.duplicate')}
+            />
+            {Object.entries(fieldErrors)
+              .filter(
+                ([k]) =>
+                  k.startsWith('extraction_schema.') &&
+                  !['extraction_schema', 'extraction_schema.duplicate'].includes(k)
+              )
+              .slice(0, 5)
+              .map(([k, v]) => (
+                <p key={k} className="hint hint-error">
+                  {v}
                 </p>
-                <ExtractionSchemaEditor
-                  rows={config.extractionRows}
-                  onChange={(rows) => patchConfig({ extractionRows: rows })}
-                  error={err('extraction_schema') || err('extraction_schema.duplicate')}
-                />
-                {Object.entries(fieldErrors)
-                  .filter(
-                    ([k]) =>
-                      k.startsWith('extraction_schema.') &&
-                      !['extraction_schema', 'extraction_schema.duplicate'].includes(k)
-                  )
-                  .slice(0, 5)
-                  .map(([k, v]) => (
-                    <p key={k} className="hint hint-error">
-                      {v}
-                    </p>
-                  ))}
-              </>
-            )}
+              ))}
+          </div>
 
-            {activeTab === 'voice' && (
-              <>
-                <h3 className="card-title">Voice &amp; Model</h3>
-                <p className="hint">How the agent sounds and which conversation model powers it.</p>
-                <VoiceSettingsForm value={config.voice} onChange={(voice) => patchConfig({ voice })} error={err('voice_settings')} />
-              </>
-            )}
+          <div className={`tabbody${activeTab === 'voice' ? ' on' : ''}`}>
+            <h3 className="card-title">Voice &amp; Model</h3>
+            <p className="hint">How the agent sounds and which conversation model powers it.</p>
+            <VoiceSettingsForm value={config.voice} onChange={(voice) => patchConfig({ voice })} error={err('voice_settings')} />
           </div>
 
           <div className="wizard-footer" style={{ borderTop: '1px solid var(--border)', marginTop: 8 }}>
@@ -360,76 +330,41 @@ export default function AgentDetailPage() {
           </div>
         </div>
 
-        {/* ------------------------------ RIGHT: sticky test rail ---------- */}
-        <aside className="test-rail" aria-label="Test this agent">
-          <div className="card">
-            <h3 className="card-title">Test agent</h3>
+        {/* ------------------------------ RIGHT: version history ---------- */}
+        <div className="card pad">
+          <h3 style={{ fontFamily: 'var(--font-d)', fontSize: 15, marginBottom: 6 }}>Version history</h3>
+          <p style={{ fontSize: 12.5, color: 'var(--dim)', marginBottom: 10 }}>
+            Immutable snapshots — test any of them in the playground.
+          </p>
+          <div>
             {versions.length === 0 ? (
               <p className="hint">
                 No saved versions yet — configure the tabs on the left and press <strong>Save as new version</strong>{' '}
                 to make this agent testable.
               </p>
             ) : (
-              <>
-                <div className="field">
-                  <label htmlFor="ad-test-version">Version</label>
-                  <select id="ad-test-version" value={testVersionId} onChange={(e) => setTestVersionId(e.target.value)}>
-                    {versions
-                      .slice()
-                      .reverse()
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          v{v.version} — saved {new Date(v.created_at).toLocaleDateString()}
-                          {agent.current_version_id === v.id ? ' · current' : ''}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <TextPlayground
-                  key={testVersionId}
-                  versionId={testVersionId}
-                  onFinishReport={setLastRun}
-                />
-
-                <p className="rail-note">
-                  Prefer talking?{' '}
-                  <a href={`/playground/${testVersionId}`}>Open the voice test (microphone)</a> — same session records,
-                  zero minutes used.
-                </p>
-              </>
+              versions
+                .slice()
+                .reverse()
+                .map((v) => {
+                  const isCurrent = agent.current_version_id === v.id;
+                  const date = new Date(v.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  return (
+                    <div key={v.id} className="ver">
+                      <b>v{v.version}</b>
+                      <span style={{ flex: 1, fontSize: 12.5, color: 'var(--dim)' }}>
+                        {date}{isCurrent ? ' · current' : ''}
+                      </span>
+                      {isCurrent && <span className="cur-badge">current</span>}
+                      <a className="btn sm ghost" href={`/playground/${v.id}`}>
+                        Test this version
+                      </a>
+                    </div>
+                  );
+                })
             )}
           </div>
-
-          {lastRun && (
-            <div className="card">
-              <h3 className="card-title">Last run</h3>
-              <div className="agent-card-meta" style={{ marginBottom: 8 }}>
-                {lastRun.duration_seconds != null && (
-                  <span className="chip">duration {fmtClock(lastRun.duration_seconds)}</span>
-                )}
-                {Array.isArray(lastRun.extracted_fields) && lastRun.extracted_fields.length > 0 && (
-                  <span className="chip chip-green">
-                    {lastRun.extracted_fields.length} field{lastRun.extracted_fields.length > 1 ? 's' : ''} captured
-                  </span>
-                )}
-                {lastRun.flagged_for_human ? <span className="badge badge-red-outline">flagged</span> : null}
-              </div>
-              <TranscriptView
-                turns={(lastRun.transcript || []).slice(-6)}
-                emptyText="No transcript was recorded for this run."
-              />
-              {(lastRun.transcript || []).length > 6 && (
-                <p className="rail-note">Showing the last 6 turns of {(lastRun.transcript || []).length}.</p>
-              )}
-              {lastRun.call_id != null && (
-                <p className="rail-note">
-                  <Link to={`/calls/${lastRun.call_id}`}>Open full call report →</Link>
-                </p>
-              )}
-            </div>
-          )}
-        </aside>
+        </div>
       </div>
     </div>
   );

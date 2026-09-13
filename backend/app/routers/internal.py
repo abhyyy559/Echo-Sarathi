@@ -28,7 +28,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Agent, AgentVersion, Call, Campaign, Contact, DomainConfig
+from app.models import Agent, AgentVersion, Call, Campaign, Contact, DomainConfig, Organization
 from app.services.calls_service import (
     apply_report,
     log_call_event,
@@ -72,6 +72,16 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
         if campaign and campaign.domain_config_id
         else None
     )
+    org_id = call.org_id
+    if org_id is None and campaign is not None:
+        org_id = campaign.org_id
+    institution_name = ""
+    if org_id is not None:
+        org = db.get(Organization, org_id)
+        if org is not None and org.name:
+            institution_name = org.name
+    if not institution_name and campaign is not None:
+        institution_name = campaign.name or ""
     return {
         "call": {
             "id": call.id,
@@ -87,6 +97,7 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
         },
         "campaign": {"name": campaign.name if campaign else None},
         "domain_config": domain_config.config if domain_config else None,
+        "institution_name": institution_name,
     }
 
 

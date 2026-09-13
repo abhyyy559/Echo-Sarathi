@@ -23,20 +23,6 @@ function fmtDateTime(value) {
   });
 }
 
-function StatCard({ label, value, unit, foot }) {
-  return (
-    <div className="stat-card">
-      <div className="stat-card-label">{label}</div>
-      <div className="stat-card-value">
-        {value}
-        {unit && <span className="unit">{unit}</span>}
-      </div>
-      {foot && <div className="stat-card-foot">{foot}</div>}
-    </div>
-  );
-}
-
-/** Overview — org-wide analytics landing page (Vapi/Retell-style home). */
 export default function OverviewPage() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
@@ -67,7 +53,11 @@ export default function OverviewPage() {
         ? Math.round(summary.avg_e2e_ms)
         : null;
   const latencyOnTarget = medianLatency != null && medianLatency <= LATENCY_TARGET_MS;
-  const maxDayCount = summary ? Math.max(1, ...summary.calls_last_7d.map((d) => d.count)) : 1;
+  // Fresh/empty backends may omit these arrays — never let a missing field
+  // blank the whole dashboard.
+  const calls7d = summary && Array.isArray(summary.calls_last_7d) ? summary.calls_last_7d : [];
+  const recentCalls = summary && Array.isArray(summary.recent_calls) ? summary.recent_calls : [];
+  const maxDayCount = Math.max(1, ...calls7d.map((d) => d.count));
   const monthKey = new Date().toISOString().slice(0, 7);
   const monthCosts = costs && costs.monthly ? costs.monthly[monthKey] : null;
 
@@ -77,12 +67,12 @@ export default function OverviewPage() {
         <div>
           <h2 className="page-title">Overview</h2>
           <p className="page-sub">
-            How your voice agents are performing — volume, success rate, end-to-end latency and captured data.
+            Health of your voice operations, updated live.
           </p>
         </div>
         <div className="head-actions">
-          <Link to="/agents/new" className="btn btn-primary">
-            + New Agent
+          <Link to="/playground" className="btn primary">
+            Test an agent
           </Link>
         </div>
       </div>
@@ -104,133 +94,116 @@ export default function OverviewPage() {
 
       {summary && (
         <>
-          <div className="stat-grid">
-            <StatCard label="Total Calls" value={summary.total_calls} foot={<span>{summary.completed_calls} completed</span>} />
-            <StatCard
-              label="Success Rate"
-              value={summary.success_rate_pct}
-              unit="%"
-              foot={<span>completed ÷ all calls</span>}
-            />
-            <StatCard
-              label="Median Latency"
-              value={medianLatency != null ? medianLatency.toLocaleString() : '—'}
-              unit={medianLatency != null ? 'ms' : undefined}
-              foot={
-                <span
-                  className={`target-badge${latencyOnTarget || medianLatency == null ? '' : ' miss'}`}
-                  title={`End-to-end turn latency target: ≤ ${LATENCY_TARGET_MS} ms`}
-                >
-                  {medianLatency == null ? (
-                    'target ≤ 900ms'
-                  ) : latencyOnTarget ? (
-                    <>
-                      ✓ on target · ≤900ms
-                    </>
-                  ) : (
-                    <>▲ over target · ≤900ms</>
-                  )}
+          <div className="grid g5">
+            <div className="card stat">
+              <div className="lbl">Total calls</div>
+              <div className="num">{summary.total_calls != null ? summary.total_calls.toLocaleString() : '—'}</div>
+              <div className="foot">{summary.completed_calls != null ? `${summary.completed_calls.toLocaleString()} completed` : '— completed'}</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Success rate</div>
+              <div className="num">{summary.success_rate_pct != null ? `${summary.success_rate_pct}%` : '—'}</div>
+              <div className="foot">answered &amp; completed</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Median latency</div>
+              <div className="num">{medianLatency != null ? `${medianLatency.toLocaleString()} ms` : '—'}</div>
+              <div className="foot">
+                <span className={`badge${latencyOnTarget || medianLatency == null ? ' ok' : ' warn'}`}>
+                  {medianLatency == null
+                    ? 'target ≤900ms'
+                    : latencyOnTarget
+                      ? '✓ on target ≤900ms'
+                      : '▲ over target'}
                 </span>
-              }
-            />
-            <StatCard label="Fields Captured" value={summary.total_extracted_fields} foot={<span>structured values extracted</span>} />
-            <StatCard
-              label="Est. Spend"
-              value={monthCosts ? `$${monthCosts.est_cost_usd.toFixed(2)}` : costs ? '$0.00' : '—'}
-              foot={
-                <span>
-                  {monthCosts
-                    ? `${monthCosts.minutes.toLocaleString()} min this month`
-                    : 'no billable minutes yet'}{' '}
-                  · telephony+STT+LLM+TTS @ ~$0.025/min est.
-                </span>
-              }
-            />
+              </div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Fields captured</div>
+              <div className="num">{summary.total_extracted_fields != null ? summary.total_extracted_fields.toLocaleString() : '—'}</div>
+              <div className="foot">structured data points</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Est. spend</div>
+              <div className="num">{monthCosts ? `$${monthCosts.est_cost_usd.toFixed(2)}` : costs ? '$0.00' : '$—'}</div>
+              <div className="foot">
+                {monthCosts
+                  ? `${monthCosts.minutes.toLocaleString()} min this month`
+                  : '— min this month'}
+              </div>
+            </div>
           </div>
 
-          <div className="overview-grid">
+          <div className="grid g2" style={{ marginTop: 18 }}>
             <div className="card">
-              <h3 className="card-title">Calls — last 7 days</h3>
-              <div className="bar-chart" role="img" aria-label="Bar chart of calls per day over the last seven days">
-                {summary.calls_last_7d.map((day) => {
-                  const h = day.count === 0 ? 0 : Math.max(4, Math.round((day.count / maxDayCount) * 100));
-                  const date = new Date(`${day.date}T00:00:00`);
-                  const label = Number.isNaN(date.getTime())
-                    ? day.date.slice(5)
-                    : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
-                  return (
-                    <div key={day.date} className="bar-col" title={`${day.date}: ${day.count} calls`}>
-                      <span className="bar-count">{day.count > 0 ? day.count : ''}</span>
-                      <div className="bar-track">
-                        <div className={`bar-fill${day.count === 0 ? ' zero' : ''}`} style={{ height: `${h}%` }} />
+              <div className="card-h">
+                <h3>Calls — last 7 days</h3>
+                <span>all agents</span>
+              </div>
+              <div style={{ padding: '20px 22px' }}>
+                <div className="chart">
+                  {calls7d.map((day) => {
+                    const h = day.count === 0 ? 0 : Math.max(4, Math.round((day.count / maxDayCount) * 100));
+                    const date = new Date(`${day.date}T00:00:00`);
+                    const label = Number.isNaN(date.getTime())
+                      ? day.date.slice(5)
+                      : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+                    return (
+                      <div key={day.date} className="bar" data-v={day.count} title={`${day.count} calls · ${label}`}>
+                        <i style={{ height: `${h}%` }} />
+                        <em>{label}</em>
                       </div>
-                      <span className="bar-date">{label}</span>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{ padding: '0 22px 16px', fontSize: 12, color: 'var(--dim)' }}>
+                Latency targets — median ≤900ms · p95 ≤1500ms. Bars show total calls per day.
               </div>
             </div>
 
-            <div className="card flush">
-              <div className="card-head">
-                <h3 className="card-title">Recent calls</h3>
+            <div className="card">
+              <div className="card-h">
+                <h3>Recent calls</h3>
+                <Link to="/calls" style={{ color: 'var(--brand)', fontSize: 13 }}>View all →</Link>
               </div>
-              <div className="table-wrap">
-                <table className="data-table mini-table">
-                  <thead>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Agent</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentCalls.length === 0 && (
                     <tr>
-                      <th>Call</th>
-                      <th>Status</th>
-                      <th>Agent</th>
-                      <th className="nowrap">When</th>
+                      <td colSpan={4} className="table-state">
+                        No calls yet — run one from the{' '}
+                        <Link to="/playground">Playground</Link>.
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {summary.recent_calls.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="table-state">
-                          No calls yet — run one from the{' '}
-                          <Link to="/playground">Playground</Link>.
-                        </td>
-                      </tr>
-                    )}
-                    {summary.recent_calls.map((call) => (
-                      <tr key={call.id} className="clickable" onClick={() => navigate(`/calls/${call.id}`)}>
-                        <td>
-                          <Link to={`/calls/${call.id}`} onClick={(e) => e.stopPropagation()}>
-                            #{call.id}
-                          </Link>
-                        </td>
-                        <td>
-                          <StatusBadge status={call.status} />
-                        </td>
-                        <td>{call.agent_name || <span className="text-muted">—</span>}</td>
-                        <td className="nowrap">
-                          <span title={fmtDateTime(call.started_at)}>{fmtDateTime(call.started_at)}</span>
-                          {call.duration_seconds != null && (
-                            <span className="text-muted"> · {fmtDuration(call.duration_seconds)}</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {summary.recent_calls.length > 0 && (
-                <div className="pagination" style={{ borderTop: 'none' }}>
-                  <Link to="/calls" className="btn btn-ghost btn-sm">
-                    View all calls →
-                  </Link>
-                </div>
-              )}
+                  )}
+                  {recentCalls.map((call) => (
+                    <tr key={call.id} onClick={() => navigate(`/calls/${call.id}`)}>
+                      <td className="mono">#{call.id}</td>
+                      <td>
+                        <StatusBadge status={call.status} />
+                      </td>
+                      <td>{call.agent_name || '—'}</td>
+                      <td className="mono">
+                        {fmtDateTime(call.started_at)}
+                        {call.duration_seconds != null && (
+                          <> · {fmtDuration(call.duration_seconds)}</>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-
-          <p className="hint" style={{ marginTop: 16 }}>
-            Latency is the median end-to-end turn time measured across every transcript turn. p95:{' '}
-            {summary.p95_e2e_ms != null ? `${Math.round(summary.p95_e2e_ms).toLocaleString()} ms` : '—'} · avg:{' '}
-            {summary.avg_e2e_ms != null ? `${Math.round(summary.avg_e2e_ms).toLocaleString()} ms` : '—'}.
-          </p>
         </>
       )}
     </div>

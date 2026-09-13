@@ -25,6 +25,7 @@ def test_health_reports_presence_booleans(client):
         "groq",
         "openai",
         "twilio",
+        "plivo",
         "livekit",
     }
     assert all(isinstance(v, bool) for v in providers.values())

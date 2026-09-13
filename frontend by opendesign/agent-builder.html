@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Builder — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.builder{display:grid;grid-template-columns:230px 1fr 300px;gap:22px}
+@media(max-width:1150px){.builder{grid-template-columns:1fr}.rail,.testrail{display:none}}
+.rail{position:sticky;top:96px;align-self:start}
+.rail .rstep{display:flex;gap:12px;padding:11px 4px;color:var(--dim);font-size:14px;cursor:pointer;border-radius:10px;transition:.2s}
+.rail .rstep:hover{color:var(--muted)}
+.rail .rstep.on{color:var(--fg)}
+.rail .rstep.done .dot{background:rgba(16,185,129,.15);border-color:var(--green);color:var(--green)}
+.rail .rstep .dot{width:26px;height:26px;border-radius:50%;border:1.5px solid var(--line2);display:flex;align-items:center;justify-content:center;font-size:12px;font-family:var(--font-m);flex:0 0 auto;transition:.2s}
+.rail .rstep.on .dot{border-color:var(--brand);color:var(--brand);box-shadow:0 0 12px rgba(233,228,218,.25)}
+.pane{display:none}.pane.on{display:block;animation:fIn .3s ease}
+@keyframes fIn{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
+.qrow{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-bottom:9px}
+.qrow input{border:none;background:none;padding:6px 4px}
+.qrow .grip{color:var(--dim);cursor:grab;font-family:var(--font-m)}
+.iconbtn{color:var(--dim);padding:6px;border-radius:7px}
+.iconbtn:hover{color:var(--red);background:rgba(224,110,95,.08)}
+.schema-row{display:grid;grid-template-columns:1.3fr .8fr 1.6fr auto auto;gap:10px;align-items:center;margin-bottom:10px}
+@media(max-width:800px){.schema-row{grid-template-columns:1fr 1fr}}
+input[type=range]{accent-color:var(--brand);padding:0;height:4px;-webkit-appearance:none;appearance:none;background:linear-gradient(90deg,var(--brand) var(--v,70%),rgba(233,228,218,.2) var(--v,70%));border:none;border-radius:99px}
+.voices{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.voice{border:1px solid var(--line);border-radius:12px;padding:13px;display:flex;align-items:center;gap:11px;cursor:pointer;transition:.2s;background:var(--surface)}
+.voice:hover{border-color:var(--line2)}
+.voice.sel{border-color:var(--brand);background:var(--brand-soft)}
+.vplay{width:32px;height:32px;border-radius:50%;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;color:var(--brand);flex:0 0 auto}
+.eq{display:flex;gap:2.5px;align-items:center;height:14px}
+.eq i{width:2.5px;background:var(--brand);animation:eq .8s ease-in-out infinite}
+.eq i:nth-child(2){animation-delay:.15s}.eq i:nth-child(3){animation-delay:.3s}
+@keyframes eq{0%,100%{height:4px}50%{height:13px}}
+.testrail{position:sticky;top:96px;align-self:start;padding:16px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 130px)}
+.tmsg{max-width:88%;padding:9px 12px;border-radius:12px;font-size:13.5px;line-height:1.5}
+.tmsg.u{align-self:flex-end;background:var(--surface2);border:1px solid var(--line)}
+.tmsg.a{align-self:flex-start;background:var(--brand-soft);border:1px solid rgba(233,228,218,.28)}
+.wiz-foot{display:flex;justify-content:space-between;margin-top:24px;gap:10px}
+.rev-grid{display:grid;grid-template-columns:150px 1fr;gap:9px 16px;font-size:14px}
+.rev-grid dt{color:var(--dim);text-transform:uppercase;font-size:11.5px;letter-spacing:.1em;padding-top:2px}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+const TEMPLATES={
+ absent:{name:'Absent Student Follow-up',desc:'Calls parents when a student is marked absent and logs the reason.',
+   context:'Sunrise Academy · Grade 8 · attendance desk',knowledge:'School timings 8:30 AM – 3:30 PM. Be warm and brief. Never share other students’ data.',
+   questions:['Is Anika attending classes today?','Could you share the reason?','Should the class teacher call you back?'],
+   schema:[['student_name','string','Student full name',true,90],['parent_name','string','Parent on the call',true,85],['present_today','boolean','Attending school today?',true,85],['reason','string','Reason given by parent',false,75],['callback_requested','boolean','Teacher follow-up needed?',false,80]]},
+ survey:{name:'Parent Satisfaction Survey',desc:'Five open questions with structured answers.',context:'Sunrise Academy · quarterly pulse',knowledge:'Keep answers anonymous in reporting.',
+   questions:['How satisfied are you with teaching quality this term?','Any subject needing more attention?','Rate communication from class teachers.','How is the transport experience?','Anything we should start doing?'],
+   schema:[['parent_name','string','Parent name',true,85],['teaching_score','number','Satisfaction 1–5',true,80],['transport_feedback','string','Transport comments',false,70]]},
+ blank:{name:'New Agent',desc:'Describe what this agent should accomplish.',context:'',knowledge:'',questions:[''],schema:[['response','string','Primary answer collected',true,80]]}};
+let cur=JSON.parse(JSON.stringify(TEMPLATES.absent));
+let step=1;
+
+ES.shell({
+  active:'agents',
+  title:'Agent Builder',
+  subtitle:'Six steps to a production voice agent — saving always creates a new version.',
+  action:`<button class="btn primary" id="saveTop">Save version</button>`,
+  body:`
+  <div class="steps" id="pills">${[1,2,3,4,5,6].map(n=>`<span class="step-pill" data-s="${n}">Step ${n}</span>`).join('')}</div>
+  <div class="builder">
+    <aside class="rail card pad" id="rail"></aside>
+    <div>
+      <section class="pane on" data-p="1"><div class="card pad">
+        <div class="fieldrow"><label>Agent name</label><input id="a-name" value="${cur.name}"></div>
+        <div class="fieldrow"><label>Description</label><input id="a-desc" value="${cur.desc}"></div>
+        <div class="fieldrow"><label>Starting template</label><select id="a-tpl">
+          <option value="absent" selected>Absent Student Follow-up (preloaded)</option>
+          <option value="survey">Parent Satisfaction Survey</option><option value="blank">Blank agent</option></select>
+          <div class="hint">Templates preload a proven question flow and extraction schema you can edit freely.</div></div>
+      </div></section>
+
+      <section class="pane" data-p="2"><div class="card pad">
+        <div class="fieldrow"><label>Institution / company</label><input id="c-org" value="${cur.context}"></div>
+        <div class="fieldrow"><label>Extra knowledge for the agent</label><textarea id="c-know" rows="4">${cur.knowledge}</textarea></div>
+        <div class="banner brand">Personalization comes later — when you upload contact lists with columns like <b>student_name</b>, <b>parent_name</b>, the agent speaks them naturally inside the conversation.</div>
+      </div></section>
+
+      <section class="pane" data-p="3"><div class="card pad">
+        <div id="qlist"></div>
+        <button class="btn ghost sm" id="addQ">+ Add question</button>
+        <div class="hint">The agent weaves these into conversation naturally — it is a goal list, not a rigid script.</div>
+      </div></section>
+
+      <section class="pane" data-p="4"><div class="card pad">
+        <div style="display:grid;grid-template-columns:1.3fr .8fr 1.6fr auto auto;gap:10px;margin-bottom:10px">
+          <label style="margin:0">Field</label><label style="margin:0">Type</label><label style="margin:0">Description</label><label style="margin:0">Required</label><label style="margin:0">Confidence</label>
+        </div>
+        <div id="slist"></div>
+        <button class="btn ghost sm" id="addF">+ Add field</button>
+        <div class="hint">These become columns in your exported Excel — one row per contact, one call per row.</div>
+      </div></section>
+
+      <section class="pane" data-p="5"><div class="card pad">
+        <label>Voice</label>
+        <div class="voices" id="voiceGrid"></div>
+        <div class="fieldrow" style="margin-top:20px"><label>Speaking rate — <span id="rateV" style="color:var(--brand)">1.0×</span></label>
+        <input type="range" min="70" max="130" value="100" id="rate" style="--v:37%"></div>
+        <div class="fieldrow"><label>Conversation model</label><select id="model">
+          <option value="fast">Sarathi Flash — lowest latency (~700ms median)</option>
+          <option value="quality" selected>Sarathi Pro — best comprehension (~900ms median)</option></select></div>
+      </div></section>
+
+      <section class="pane" data-p="6"><div class="card pad">
+        <dl class="rev-grid" id="review"></dl>
+      </div>
+      <div class="banner gold">Every save creates an immutable new version (v${'N+1'}). Old calls keep the version that made them — results never change retroactively.</div>
+      </section>
+
+      <div class="wiz-foot">
+        <button class="btn ghost" id="backBtn">← Back</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn ghost" id="nextBtn">Next →</button>
+          <button class="btn primary" id="saveBtn" style="display:none">Save version</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="card testrail">
+      <b style="font-size:13px">Quick test · text mode</b>
+      <div id="tmsgs" style="flex:1;display:flex;flex-direction:column;gap:8px;overflow-y:auto"></div>
+      <div style="display:flex;gap:8px">
+        <input id="t-in" placeholder="Type as the caller…">
+        <button class="btn sm primary" id="t-go">Send</button>
+      </div>
+      <div class="hint">Nothing is dialed here — this previews replies before you save.</div>
+    </aside>
+  </div>`
+});
+
+const STEPS=['Basics','Context','Question Flow','Extraction Schema','Voice &amp; Model','Review &amp; Save'];
+function renderRail(){
+  document.getElementById('rail').innerHTML=STEPS.map((s,i)=>{
+    const n=i+1;
+    return `<div class="rstep ${n===step?'on':''} ${n<step?'done':''}" onclick="goto(${n})"><span class="dot">${n<step?'✓':n}</span>${s}</div>`;
+  }).join('');
+  document.querySelectorAll('.step-pill').forEach(p=>{
+    const n=+p.dataset.s;p.className='step-pill'+(n===step?' on':n<step?' done':'');
+    if(n<step)p.textContent='✓ Step '+n;else p.textContent='Step '+n;
+  });
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',+p.dataset.p===step));
+  document.getElementById('backBtn').style.visibility=step===1?'hidden':'visible';
+  document.getElementById('nextBtn').style.display=step===6?'none':'inline-flex';
+  document.getElementById('saveBtn').style.display=step===6?'inline-flex':'none';
+}
+function goto(n){collect();step=n;if(step===6)renderReview();renderRail()}
+
+function collect(){
+  cur.name=document.getElementById('a-name').value||'Untitled Agent';
+  cur.desc=document.getElementById('a-desc').value;
+  cur.context=document.getElementById('c-org').value;
+  cur.knowledge=document.getElementById('c-know').value;
+}
+document.getElementById('a-tpl').onchange=e=>{
+  const sel=TEMPLATES[e.target.value];if(!sel)return;
+  cur=JSON.parse(JSON.stringify(sel));
+  document.getElementById('a-name').value=cur.name;
+  document.getElementById('a-desc').value=cur.desc;
+  document.getElementById('c-org').value=cur.context;
+  document.getElementById('c-know').value=cur.knowledge;
+  renderQ();renderS();
+  ES.toast('Template loaded — everything stays editable','info');
+};
+function renderQ(){
+  document.getElementById('qlist').innerHTML=cur.questions.map((q,i)=>`
+    <div class="qrow"><span class="grip">⠿ ${i+1}</span><input value="${q}" onchange="cur.questions[${i}]=this.value">
+    <button class="iconbtn" onclick="delQ(${i})">✕</button></div>`).join('');
+}
+function delQ(i){cur.questions.splice(i,1);renderQ()}
+document.getElementById('addQ').onclick=()=>{collect();cur.questions.push('');renderQ()};
+function renderS(){
+  document.getElementById('slist').innerHTML=cur.schema.map((f,i)=>`
+    <div class="schema-row">
+      <input value="${f[0]}" onchange="cur.schema[${i}][0]=this.value">
+      <select onchange="cur.schema[${i}][1]=this.value">${['string','date','boolean','number'].map(t=>`<option ${f[1]===t?'selected':''}>${t}</option>`).join('')}</select>
+      <input value="${f[2]}" onchange="cur.schema[${i}][2]=this.value">
+      <label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;letter-spacing:0;color:var(--muted)">
+        <input type="checkbox" ${f[3]?'checked':''} style="width:15px" onchange="cur.schema[${i}][3]=this.checked"> req.</label>
+      <input type="range" min="50" max="95" value="${f[4]}" style="--v:${(f[4]-50)/45*100}%" onchange="cur.schema[${i}][4]=+this.value">
+    </div>`).join('');
+}
+document.getElementById('addF').onclick=()=>{cur.schema.push(['new_field','string','',false,75]);renderS()};
+const VOICES=[['Asha','warm female'],['Ravi','calm male'],['Meera','bright female'],['Arjun','deep male'],['Kavya','soft female'],['Imran','neutral male'],['Tara','narrator female'],['Bala','energetic male']];
+let voiceSel='Asha';
+document.getElementById('voiceGrid').innerHTML=VOICES.map(([n,d])=>`
+  <div class="voice ${n===voiceSel?'sel':''}" data-v="${n}" onclick="selVoice(this)">
+    <span class="vplay" onclick="preview(event,this)"><svg width="11" height="11" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg></span>
+    <span><b style="font-size:14px">${n}</b><br><small style="color:var(--dim)">${d}</small></span>
+  </div>`).join('');
+function selVoice(el){document.querySelectorAll('.voice').forEach(v=>v.classList.remove('sel'));el.classList.add('sel');voiceSel=el.dataset.v}
+function preview(e){
+  e.stopPropagation();
+  const eq=document.createElement('span');eq.className='eq';eq.innerHTML='<i></i><i></i><i></i>';
+  e.currentTarget.innerHTML='';e.currentTarget.appendChild(eq);
+  setTimeout(()=>{e.currentTarget.innerHTML='<svg width="11" height="11" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>'},1200);
+}
+document.getElementById('rate').oninput=e=>{
+  document.getElementById('rateV').textContent=(e.target.value/100).toFixed(1)+'×';
+  e.target.style.setProperty('--v',((e.target.value-70)/60*100)+'%');
+};
+function renderReview(){
+  collect();
+  const rows=[['Name',cur.name],['Description',cur.desc||'—'],['Context',cur.context||'—'],
+   ['Questions',cur.questions.filter(Boolean).length+' woven into flow'],
+   ['Fields',cur.schema.map(f=>`<span class="kbd">${f[0]}</span> `).join('')],
+   ['Voice',`${voiceSel} · ${(document.getElementById('rate').value/100).toFixed(1)}× · ${document.getElementById('model').selectedOptions[0].textContent}`],
+   ['Next version',`v${Math.max(...ES.AGENTS.map(a=>a.version))+1}`]];
+  document.getElementById('review').innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+}
+function save(){
+  ES.toast(`Saved — immutable v${Math.max(...ES.AGENTS.map(a=>a.version))+1} created`,'');
+  setTimeout(()=>location.href='agent-detail.html?id=1',1100);
+}
+document.getElementById('backBtn').onclick=()=>goto(Math.max(1,step-1));
+document.getElementById('nextBtn').onclick=()=>{
+  if(step===1&&!document.getElementById('a-name').value.trim()){ES.toast('Give your agent a name first','err');return}
+  goto(step+1);
+};
+document.getElementById('saveBtn').onclick=save;
+document.getElementById('saveTop').onclick=()=>{collect();save()};
+
+const REPLIES=["Got it — noted for the record.","Thanks! Anything else I can help with today?","Understood. I’ve captured that as structured information.","Perfect, that’s all I needed. Have a great day!"];
+const tmsgs=document.getElementById('tmsgs');
+function tpush(cls,txt){const d=document.createElement('div');d.className='tmsg '+cls;d.textContent=txt;tmsgs.appendChild(d);tmsgs.scrollTop=tmsgs.scrollHeight}
+tpush('a','Hi! I’m your draft agent. Send a caller message to preview my replies.');
+document.getElementById('t-go').onclick=()=>{
+  const inp=document.getElementById('t-in'),v=inp.value.trim();if(!v)return;
+  tpush('u',v);inp.value='';
+  const d=document.createElement('div');d.className='tmsg a';d.textContent='…';tmsgs.appendChild(d);tmsgs.scrollTop=tmsgs.scrollHeight;
+  setTimeout(()=>{d.textContent=REPLIES[Math.floor(Math.random()*REPLIES.length)];tmsgs.scrollTop=tmsgs.scrollHeight},800);
+};
+
+renderQ();renderS();renderRail();
+</script>
+</body>
+</html>

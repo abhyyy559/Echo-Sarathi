@@ -34,6 +34,9 @@ TWILIO_STATUS_MAP = {
     "failed": "failed",
 }
 
+# Plivo uses the same CallStatus vocabulary as Twilio.
+PLIVO_STATUS_MAP = {**TWILIO_STATUS_MAP}
+
 
 def log_call_event(db: Session, call_id: int, event_type: str, payload: Optional[dict]) -> None:
     db.add(CallEvent(call_id=call_id, event_type=event_type, payload=payload))
@@ -147,6 +150,38 @@ def _apply_turn(db: Session, call: Call, payload: Any) -> None:
     )
 
 
+_PLACEHOLDER_FIELD_VALUES = {"unknown", "not provided", "n/a"}
+
+
+def _normalize_field_row(item: dict) -> tuple[str, str | None] | None:
+    """Normalize one extracted-field row.
+
+    Voice-agent rows use ``field_name``/``field_value`` (preferred); legacy
+    text-path rows use ``name``/``value``. Returns ``(field_name, value)`` or
+    ``None`` when the voice-agent value is a placeholder to be skipped.
+    """
+    if "field_name" in item or "field_value" in item:
+        name = item.get("field_name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("field 'field_name' must be a non-empty string")
+        raw_value = item.get("field_value")
+        if raw_value is None:
+            return None
+        if not isinstance(raw_value, str):
+            raise ValueError(f"field '{name}' 'field_value' must be a string")
+        value = raw_value.strip()
+        if not value or value.lower() in _PLACEHOLDER_FIELD_VALUES:
+            return None
+        return name, value
+    name = item.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("field 'name' must be a non-empty string")
+    value = item.get("value")
+    if value is not None and not isinstance(value, (str, int, float, bool)):
+        raise ValueError(f"field '{name}' value must be scalar or null")
+    return name, None if value is None else str(value)
+
+
 def _apply_fields(db: Session, call: Call, payload: Any) -> None:
     p = _require_dict(payload, "fields")
     fields = p.get("fields")
@@ -155,12 +190,10 @@ def _apply_fields(db: Session, call: Call, payload: Any) -> None:
     for item in fields:
         if not isinstance(item, dict):
             raise ValueError("each field must be an object")
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("field 'name' must be a non-empty string")
-        value = item.get("value")
-        if value is not None and not isinstance(value, (str, int, float, bool)):
-            raise ValueError(f"field '{name}' value must be scalar or null")
+        normalized = _normalize_field_row(item)
+        if normalized is None:
+            continue
+        name, value = normalized
         confidence = item.get("confidence")
         if confidence is not None and not isinstance(confidence, (int, float)):
             raise ValueError(f"field '{name}' confidence must be a number or null")
@@ -180,7 +213,7 @@ def _apply_fields(db: Session, call: Call, payload: Any) -> None:
             ExtractedField(
                 call_id=call.id,
                 field_name=name,
-                field_value=None if value is None else str(value),
+                field_value=value,
                 confidence=None if confidence is None else float(confidence),
                 source_turn_index=source_turn,
             )

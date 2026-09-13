@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaigns — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+ES.shell({
+  active:'campaigns',
+  title:'Campaigns',
+  subtitle:'Upload contacts, pick an agent, launch. Calls run 9 AM – 9 PM IST.',
+  action:`<button class="btn primary" onclick="newCampaign()">+ New Campaign</button>`,
+  body:`
+  <div class="card" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th>Campaign</th><th>Agent</th><th>Status</th><th style="min-width:180px">Progress</th><th>Created</th><th></th></tr></thead>
+      <tbody id="cBody"></tbody>
+    </table>
+  </div>`
+});
+
+function render(){
+  document.getElementById('cBody').innerHTML=ES.CAMPAIGNS.map(c=>`
+    <tr onclick="location.href='campaign-detail.html?id=${c.id}'">
+      <td><b>${c.name}</b></td>
+      <td style="color:var(--muted)">${c.agent}</td>
+      <td>${ES.chip(c.status)}</td>
+      <td><div style="display:flex;align-items:center;gap:10px"><div class="progress"><b style="width:${c.total?Math.round(c.done/c.total*100):0}%"></b></div><span class="mono">${c.done}/${c.total}</span></div></td>
+      <td class="mono">${c.created}</td>
+      <td onclick="event.stopPropagation()">
+        ${c.status==='running'?`<button class="btn sm ghost" onclick="pauseC(${c.id})">Pause</button>`:''}
+        ${c.status==='paused'?`<button class="btn sm ghost" onclick="resumeC(${c.id})">Resume</button>`:''}
+        ${c.status!=='completed'&&c.status!=='draft'?`<button class="btn sm danger" style="margin-left:6px" onclick="cancelC(${c.id})">Cancel</button>`:''}
+      </td>
+    </tr>`).join('');
+}
+render();
+function setStatus(id,s){const c=ES.CAMPAIGNS.find(x=>x.id===id);if(c){c.status=s;render()}}
+function pauseC(id){setStatus(id,'paused');ES.toast('Campaign paused — in-flight calls finish politely','gold')}
+function resumeC(id){
+  if(!ES.istInWindow()){ES.toast('Outside the 9 AM – 9 PM IST window — resume tomorrow morning','err');return}
+  setStatus(id,'running');ES.toast('Campaign resumed','');}
+function cancelC(id){ES.confirmBox('Cancel campaign?','Remaining queued contacts will not be called. Completed results stay available.','Yes, cancel',()=>{setStatus(id,'paused');ES.toast('Campaign cancelled','err')})}
+
+function newCampaign(){
+  let step=1,rows=[],mapping={};
+  const back=ES.modal(`
+    <div class="modal-h"><h3>New Campaign</h3><button class="modal-x" data-close>×</button></div>
+    <div class="modal-b"><div class="steps" id="wSteps"></div><div id="wBody"></div></div>
+    <div class="modal-f" id="wFoot"></div>`);
+
+  function drawSteps(){
+    back.querySelector('#wSteps').innerHTML=[1,2,3,4].map(n=>{
+      const names=['Upload contacts','Map columns','Agent & review','Schedule'];
+      return `<span class="step-pill ${n===step?'on':n<step?'done':''}">${n<step?'✓ ':''}${n}. ${names[n-1]}</span>`;
+    }).join('');
+  }
+  function draw(){
+    drawSteps();
+    const body=back.querySelector('#wBody'),foot=back.querySelector('#wFoot');
+    if(step===1){
+      body.innerHTML=`
+        <div class="dropzone" id="dz">
+          <b style="display:block;font-size:15px;margin-bottom:6px;color:var(--fg)">Drop CSV / XLSX here</b>
+          or click to browse — parsed locally in your browser.<br>
+          <button class="btn sm ghost" style="margin-top:12px;pointer-events:auto" onclick="event.stopPropagation();loadSample()">Use sample list (6 rows)</button>
+        </div>
+        <input type="file" id="fileIn" accept=".csv,.xlsx" style="display:none">
+        <div id="preview"></div>`;
+      const dz=body.querySelector('#dz'),fi=body.querySelector('#fileIn');
+      dz.onclick=()=>fi.click();
+      fi.onchange=e=>parse(e.target.files[0]);
+      dz.ondragover=e=>{e.preventDefault();dz.classList.add('over')};
+      dz.ondragleave=()=>dz.classList.remove('over');
+      dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over');parse(e.dataTransfer.files[0])};
+      foot.innerHTML=`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" disabled id="next1">Next →</button>`;
+    }
+    if(step===2){
+      body.innerHTML=`
+        <p class="hint" style="margin-bottom:14px">Auto-guessed from your headers — adjust anything.</p>
+        ${Object.keys(mapping).map(col=>`
+          <div class="fieldrow"><label>${col} ${/phone/i.test(col)?'':'· optional'}</label>
+          <select data-col="${col}">
+            ${['— ignore —','full_name','phone','student_name','parent_name','class','notes'].map(m=>`<option ${mapping[col]===m?'selected':''}>${m}</option>`).join('')}
+          </select></div>`).join('')}
+        <div id="badRows"></div>`;
+      body.querySelectorAll('select').forEach(s=>s.onchange=()=>mapping[s.dataset.col]=s.value);
+      checkBad();
+      foot.innerHTML=`<button class="btn ghost" id="bk2">← Back</button><button class="btn primary" id="next2">Next →</button>`;
+    }
+    if(step===3){
+      body.innerHTML=`
+        <div class="fieldrow"><label>Agent &amp; version</label>
+        <select id="agSel">${ES.AGENTS.filter(a=>a.status==='published').map(a=>`<option>${a.name} — v${a.version}</option>`).join('')}</select></div>
+        <label>Review contacts (${rows.length})</label>
+        <div style="border:1px solid var(--line);border-radius:10px;max-height:200px;overflow:auto">
+        <table class="tbl">${Object.keys(mapping).filter(k=>mapping[k]!=='— ignore —').map(k=>`<th>${k}<br><small style="color:var(--brand)">${mapping[k]}</small></th>`).join('')}${rows.slice(0,8).map(r=>`<tr>${Object.keys(mapping).map(k=>`<td>${r[k]||'—'}</td>`).join('')}</tr>`).join('')}</table>
+        </div>`;
+      foot.innerHTML=`<button class="btn ghost" id="bk3">← Back</button><button class="btn primary" id="next3">Next →</button>`;
+    }
+    if(step===4){
+      const ok=ES.istInWindow(),ist=ES.istNow();
+      body.innerHTML=`
+        <div class="banner gold">Calls run only between <b>9 AM – 9 PM IST</b> — a guardrail so no one is woken up.</div>
+        <div class="banner ${ok?'brand':'red'}">${ok
+          ?`It's ${String(ist.getHours()).padStart(2,'0')}:${String(ist.getMinutes()).padStart(2,'0')} IST — inside the calling window. Launch away.`
+          :`It's ${String(ist.getHours()).padStart(2,'0')}:${String(ist.getMinutes()).padStart(2,'0')} IST — outside the window, so launch is disabled until 9 AM.`}</div>
+        <div class="fieldrow"><label>Campaign name</label><input id="cname" value="Aug — new sweep"></div>
+        <p class="hint">Retry rules: busy numbers retry once after 20 min · no-answer retries next day within the window.</p>`;
+      foot.innerHTML=`<button class="btn ghost" id="bk4">← Back</button><button class="btn primary" id="launchBtn" ${ok?'':'disabled'}>Launch campaign</button>`;
+    }
+    wireFoot();
+  }
+  function wireFoot(){
+    ['next1'].forEach(id=>{const b=back.querySelector('#'+id);if(b)b.onclick=()=>{step=2;draw()}});
+    const n2=back.querySelector('#next2');if(n2)n2.onclick=()=>{step=3;draw()};
+    const n3=back.querySelector('#next3');if(n3)n3.onclick=()=>{step=4;draw()};
+    [['bk2',1],['bk3',2],['bk4',3]].forEach(([id,s])=>{const b=back.querySelector('#'+id);if(b)b.onclick=()=>{step=s;draw()}});
+    const lb=back.querySelector('#launchBtn');if(lb)lb.onclick=launch;
+  }
+  function loadSample(){
+    rows=[
+      {student_name:'Anika Rao',parent_name:'Mr. Rao',phone:'+91 98480 11223'},
+      {student_name:'Rahul Sharma',parent_name:'Mrs. Sharma',phone:'+91 99590 44556'},
+      {student_name:'Priya Reddy',parent_name:'Mr. Reddy',phone:'+91 90000 77889'},
+      {student_name:'Arjun Nair',parent_name:'Mrs. Nair',phone:'+91 81234 55667'},
+      {student_name:'Meera Iyer',parent_name:'Dr. Iyer',phone:'+91 90104 22331'}
+    ];
+    mapping={student_name:'student_name',parent_name:'parent_name',phone:'phone'};
+    showPreview();
+  }
+  function parse(file){
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const text=reader.result.split(/\r?\n/).filter(Boolean);
+      const heads=text[0].split(',').map(h=>h.trim());
+      rows=text.slice(1,40).map(l=>{const cells=l.split(',');const o={};heads.forEach((h,i)=>o[h]=(cells[i]||'').trim());return o});
+      heads.forEach(h=>{mapping[h]=/name/i.test(h)&&!/parent|student/i.test(h)?'full_name':/parent/i.test(h)?'parent_name':/student/i.test(h)?'student_name':/phone|mobile/i.test(h)?'phone':/class|grade/i.test(h)?'class':'— ignore —'});
+      showPreview();
+    };
+    reader.readAsText(file);
+  }
+  function showPreview(){
+    const pv=back.querySelector('#preview');
+    if(!pv)return;
+    pv.innerHTML=`<p style="margin:16px 0 8px;font-size:13px;color:var(--muted)">${rows.length} rows detected:</p>
+      <div style="border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:170px">
+      <table class="tbl">${Object.keys(rows[0]).map(k=>`<th>${k}</th>`).join('')}${rows.slice(0,6).map(r=>`<tr>${Object.values(r).map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</table></div>`;
+    const b=back.querySelector('#next1');if(b)b.disabled=false;
+  }
+  function checkBad(){
+    const bad=rows.filter(r=>r.phone&&!/^\+?[\d\s-]{10,}$/.test(r.phone));
+    back.querySelector('#badRows').innerHTML=bad.length?`<div class="banner red">${bad.length} row(s) have invalid phone numbers and will be flagged red before import.</div>`:
+      `<div class="banner brand">All phone numbers look valid.</div>`;
+  }
+  function launch(){
+    ES.CAMPAIGNS.unshift({id:106,name:back.querySelector('#cname').value||'Untitled campaign',
+      agent:back.querySelector('#agSel').value.split(' — ')[0],status:'running',done:0,total:rows.length,created:'Just now'});
+    render();back.remove();
+    ES.toast('Campaign launched — first calls going out now','');
+    setInterval(()=>{
+      const c=ES.CAMPAIGNS[0];
+      if(c.status==='running'&&c.done<c.total)c.done=Math.min(c.done+ES.ri(1,3),c.total),render();
+    },4000);
+  }
+  draw();
+}
+setTimeout(()=>ES.toast('Tip: campaigns auto-pause outside 9 AM – 9 PM IST','gold'),900);
+</script>
+</body>
+</html>

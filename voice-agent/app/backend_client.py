@@ -62,6 +62,23 @@ class BackendClient:
 
     # -- reads ------------------------------------------------------------
 
+    async def fetch_call_context(self, call_id: str) -> dict[str, Any]:
+        """Fetch per-call context (institution_name + contact). Never raises.
+
+        Returns the parsed JSON dict on success, or ``{}`` on any failure so a
+        flaky backend can never crash the voice session (C token resolution).
+        """
+        try:
+            response = await self._client.get(
+                f"{self._base_url}/internal/calls/{call_id}/context"
+            )
+            response.raise_for_status()
+            data: Any = response.json()
+            return data if isinstance(data, Mapping) else {}
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("call context fetch failed for %s: %s", call_id, exc)
+            return {}
+
     async def get_agent_config(self, version_id: Any) -> Mapping[str, Any]:
         """Fetch a full agent-version config, cached for 30 seconds."""
         key = str(version_id)

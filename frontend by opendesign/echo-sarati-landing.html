@@ -1,0 +1,2264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo Sarathi — AI voice agents that hold real conversations</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0b'/%3E%3Cpath d='M8 16v0M12 10v12M16 6v20M20 11v10M24 14v4' stroke='%23e9e4da' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scrollbar-width:none}
+::-webkit-scrollbar{display:none}
+body{background:#0a0a0b;color:#f3efe6;font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+:root{
+  --bg:#0a0a0b;--surface:rgba(22,22,24,.65);--surface-solid:#141416;--fg:#f3efe6;
+  --muted:#a89e8c;--dim:#6e6656;
+  --violet:#e9e4da;--violet-soft:rgba(233,228,218,.12);--violet-glow:rgba(233,228,218,.3);
+  --cyan:#a39a8e;--cyan-soft:rgba(163,154,142,.1);
+  --gold:#f5f2ec;--gold-soft:rgba(245,242,236,.1);
+  --red:#d96152;
+  --border:rgba(255,255,255,.08);
+  --glass-bg:rgba(20,20,22,.55);
+  --glass-border:rgba(255,255,255,.08);
+  --glass-blur:blur(20px) saturate(1.3);
+}
+
+/* ─── WebGL Canvas ─── */
+/* hero background — clean ambient gradient, no particles */
+.cta-orb{display:block;width:min(320px,72vw);height:min(320px,72vw);margin:0 auto 38px}
+
+/* ─── Glassmorphism Card ─── */
+.glass{background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);border-radius:16px;position:relative;overflow:hidden}
+.glass::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);pointer-events:none}
+
+/* ─── Navigation ─── */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:16px 32px;transition:all .4s cubic-bezier(.16,1,.3,1)}
+nav::before{content:'';position:absolute;inset:0;border-radius:0 0 20px 20px;background:rgba(10,10,11,.55);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);transition:all .4s cubic-bezier(.16,1,.3,1)}
+nav::after{content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:0;height:1px;background:linear-gradient(90deg,transparent,var(--violet),transparent);transition:width .6s cubic-bezier(.16,1,.3,1)}
+nav.scrolled{padding:12px 32px}
+nav.scrolled::before{background:rgba(10,10,11,.9);border-bottom-color:rgba(233,228,218,.08)}
+nav.scrolled::after{width:60%}
+.nav-inner{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;max-width:1200px;margin:0 auto}
+.nav-left{display:flex;align-items:center;gap:32px}
+.nav-right{display:flex;align-items:center;gap:8px}
+.nav-link{position:relative;font-size:13px;letter-spacing:.06em;font-weight:500;color:var(--muted);padding:8px 16px;border-radius:999px;transition:all .3s cubic-bezier(.16,1,.3,1)}
+.nav-link:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+.nav-link::after{content:'';position:absolute;bottom:4px;left:50%;width:0;height:1px;background:var(--violet);transform:translateX(-50%);transition:width .3s cubic-bezier(.16,1,.3,1)}
+.nav-link:hover::after{width:60%}
+.logo{display:flex;align-items:center;gap:12px;text-decoration:none}
+.logo-mark{flex:none}
+.lm-src{fill:#8f867a}
+.lm-a{fill:none;stroke:#8f867a;stroke-width:2;stroke-linecap:round}
+.lm-b{fill:none;stroke:#ece7dd;stroke-width:2;stroke-linecap:round;filter:drop-shadow(0 0 4px rgba(233,228,218,.45))}
+.lm-echo{fill:#ece7dd;filter:drop-shadow(0 0 5px rgba(233,228,218,.6))}
+.l1,.l2,.r1,.r2{animation:lmPulse 2.8s ease-in-out infinite}
+.l2{animation-delay:.16s}.r1{animation-delay:.5s}.r2{animation-delay:.66s}
+@keyframes lmPulse{0%{opacity:.14}18%{opacity:1}55%{opacity:.85}100%{opacity:.12}}
+@media(prefers-reduced-motion:reduce){.l1,.l2,.r1,.r2{animation:none;opacity:.75}}
+.logo-text{font-family:'Cormorant Garamond',serif;font-size:23px;font-weight:500;color:var(--fg);letter-spacing:.015em;font-style:italic}
+.nav-cta{position:relative;display:inline-flex;align-items:center;background:rgba(233,228,218,.12);border:1px solid rgba(233,228,218,.3);color:var(--fg);border-radius:999px;padding:10px 22px;font-size:13px;font-weight:600;letter-spacing:.02em;transition:transform .18s ease,box-shadow .25s ease,background .2s ease,border-color .25s;margin-left:12px;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.nav-cta:hover{background:rgba(233,228,218,.2);border-color:rgba(233,228,218,.5);transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,.3),0 0 16px rgba(233,228,218,.08)}
+.nav-cta:active{transform:translateY(0) scale(.97);transition-duration:.09s}
+
+/* Hamburger */
+.hamburger{display:none;flex-direction:column;justify-content:center;gap:5px;width:36px;height:36px;cursor:pointer;z-index:2;padding:4px}
+.hamburger span{display:block;width:100%;height:2px;background:var(--fg);border-radius:2px;transition:all .3s cubic-bezier(.16,1,.3,1);transform-origin:center}
+.hamburger.open span:nth-child(1){transform:rotate(45deg) translate(5px,5px)}
+.hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0)}
+.hamburger.open span:nth-child(3){transform:rotate(-45deg) translate(5px,-5px)}
+
+/* Mobile drawer */
+.mobile-drawer{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:99;background:rgba(10,10,11,.96);backdrop-filter:blur(32px);-webkit-backdrop-filter:blur(32px);flex-direction:column;align-items:center;justify-content:center;gap:8px;opacity:0;pointer-events:none;transition:opacity .35s cubic-bezier(.16,1,.3,1)}
+.mobile-drawer.open{opacity:1;pointer-events:all}
+.mobile-drawer a{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;color:var(--muted);padding:12px 32px;border-radius:12px;transition:all .25s;text-decoration:none}
+.mobile-drawer a:hover{color:var(--fg);background:rgba(255,255,255,.04)}
+.mobile-drawer .drawer-cta{margin-top:16px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;letter-spacing:0;background:var(--violet);color:#161310;padding:15px 40px;border-radius:999px;transition:transform .18s ease,box-shadow .25s ease}
+.mobile-drawer .drawer-cta:active{transform:scale(.97);transition-duration:.09s}
+
+@media(max-width:768px){
+  nav{padding:14px 20px}
+  nav.scrolled{padding:10px 20px}
+  .nav-left .nav-link,.nav-right .nav-link{display:none}
+  .nav-cta{display:none}
+  .hamburger{display:flex}
+  .mobile-drawer{display:flex}
+}
+
+/* ─── Hero ─── */
+.hero{position:relative;min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:170px 24px 110px;z-index:1;background:radial-gradient(ellipse 70% 55% at 50% 40%,rgba(233,228,218,.04) 0%,transparent 70%),radial-gradient(ellipse 50% 40% at 30% 60%,rgba(163,154,142,.03) 0%,transparent 60%),var(--bg)}
+.hero-kicker{display:inline-flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--violet);margin-bottom:26px}
+.hero-kicker::before,.hero-kicker::after{content:'';width:20px;height:1px;background:var(--violet);opacity:.5}
+.hero h1{font-family:'Marcellus',serif;font-weight:400;font-size:clamp(42px,6.8vw,96px);line-height:1.06;letter-spacing:.015em;max-width:920px;text-wrap:balance}
+.hero h1 .accent{font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;letter-spacing:0;background:linear-gradient(120deg,#f0ece4 10%,#a39a8e 55%,#f5f2ec 90%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:accentGlow 3.4s ease-in-out infinite}
+.hero-sub{margin-top:20px;font-size:18px;line-height:1.7;color:var(--muted);max-width:540px}
+.hero-btns{display:flex;gap:14px;margin-top:36px;flex-wrap:wrap;justify-content:center}
+.btn-primary{position:relative;display:inline-flex;align-items:center;gap:10px;background:rgba(233,228,218,.12);color:var(--fg);border:1px solid rgba(233,228,218,.35);border-radius:999px;padding:16px 34px;font-size:15px;font-weight:600;letter-spacing:.02em;transition:transform .18s ease,box-shadow .28s ease,background .2s ease,border-color .25s;box-shadow:0 2px 8px rgba(0,0,0,.3),0 0 0 0 rgba(233,228,218,0)}
+.btn-primary svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .3s cubic-bezier(.16,1,.3,1)}
+.btn-primary:hover{background:rgba(233,228,218,.2);border-color:rgba(233,228,218,.55);transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.35),0 0 24px rgba(233,228,218,.1)}
+.btn-primary:hover svg{transform:translateX(3px)}
+.btn-primary:active{transform:translateY(0) scale(.97);transition-duration:.08s;box-shadow:0 1px 4px rgba(0,0,0,.4),0 0 8px rgba(233,228,218,.06)}
+.btn-primary:focus-visible,.btn-ghost:focus-visible{outline:2px solid rgba(233,228,218,.5);outline-offset:3px}
+.btn-primary.busy{opacity:.5;pointer-events:none}
+.btn-ghost{display:inline-flex;align-items:center;gap:10px;border:1px solid rgba(233,228,218,.18);border-radius:999px;padding:15px 32px;font-size:15px;font-weight:500;letter-spacing:.02em;color:var(--muted);transition:border-color .25s ease,color .25s ease,background .25s ease,transform .18s ease;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.btn-ghost svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn-ghost:hover{border-color:rgba(233,228,218,.4);color:var(--fg);background:rgba(233,228,218,.05)}
+.btn-ghost:active{transform:scale(.97);transition-duration:.08s}
+.btn-primary.sm,.btn-ghost.sm{padding:11px 24px;font-size:13px}
+
+/* ─── Campaign Simulator ─── */
+.sim-stage{margin-top:44px;padding:26px 28px;border-radius:20px}
+.sim-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+.sim-agent{display:inline-flex;align-items:center;gap:9px;padding:8px 15px;border:1px solid var(--glass-border);border-radius:999px;background:rgba(255,255,255,.03);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#d8d2c6}
+.sim-dot{width:7px;height:7px;border-radius:50%;background:#8fae8b;box-shadow:0 0 8px rgba(143,174,139,.9)}
+.sim-meta{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.sim-controls{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:20px}
+.chip-set{display:flex;gap:8px;align-items:center}
+.chip-set .lbl{font-size:11px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-right:6px}
+.chip{padding:8px 16px;border-radius:999px;border:1px solid rgba(233,228,218,.2);color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums;transition:.2s}
+.chip.on{background:var(--violet);color:#141210;border-color:transparent;font-weight:650}
+.chip:not(.on):hover{border-color:rgba(233,228,218,.5);color:var(--fg)}
+.sim-counters{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+.sc-tile{padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.025);border:1px solid var(--border)}
+.sc-tile b{display:block;font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--fg)}
+.sc-tile span{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.sc-tile.ok b{color:#9dbb97}.sc-tile.dimt b{color:var(--muted)}.sc-tile.warn b{color:#d9a05b}
+.sim-prog-head{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.sim-prog-head span:last-child{font-family:'JetBrains Mono',monospace;letter-spacing:0}
+.sim-progress{height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden;margin-bottom:20px}
+.sim-progress-bar{height:100%;width:0;border-radius:3px;background:linear-gradient(90deg,#8f8676,var(--violet));transition:width .2s linear}
+.sim-rows{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.sim-row{display:grid;grid-template-columns:1fr auto minmax(150px,auto);gap:14px;align-items:center;padding:11px 16px;border-radius:12px;background:rgba(255,255,255,.02);border:1px solid transparent;font-size:14px;transition:background .3s}
+.sim-row:hover{background:rgba(255,255,255,.045)}
+.sr-name{color:#ddd7cb}
+.sr-phone{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--dim)}
+.sr-status{text-align:right;font-size:12.5px;color:var(--dim);transition:color .25s;white-space:nowrap}
+.sr-status.dial{color:#d9bc84}.sr-status.ok{color:#9dbb97}.sr-status.miss{color:var(--muted)}.sr-status.busy{color:#d9a05b}
+.sim-foot{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+#simQueue{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.sim-note-inline{font-size:12px;color:var(--dim)}
+@media(max-width:760px){.sim-counters{grid-template-columns:repeat(2,1fr)}.sim-row{grid-template-columns:1fr auto}.sr-phone{display:none}}
+
+/* ─── Voice Gallery ─── */
+.voice-stage{margin-top:44px;display:grid;grid-template-columns:1.25fr 1fr;gap:26px;padding:28px;border-radius:20px;align-items:stretch}
+.voice-view{display:flex;flex-direction:column;border-right:1px solid var(--border);padding-right:26px}
+#voiceWave{width:100%;height:170px;flex:1;min-height:140px}
+.voice-line{min-height:58px;font-size:17px;line-height:1.6;color:#e6e0d4;margin-top:14px}
+.voice-line .caret{display:inline-block;width:2px;height:1.05em;background:var(--violet);vertical-align:-2px;margin-left:1px;animation:caretBlink 1s steps(1) infinite}
+@keyframes caretBlink{50%{opacity:0}}
+.voice-rate{margin-top:auto;padding-top:14px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.voice-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;align-content:start}
+.voice-card{text-align:left;padding:14px 16px;border-radius:14px;border:1px solid rgba(233,228,218,.12);background:rgba(255,255,255,.02);transition:border-color .25s,background .25s,transform .25s cubic-bezier(.16,1,.3,1)}
+.voice-card:hover{transform:translateY(-2px);border-color:rgba(233,228,218,.35)}
+.voice-card.on{border-color:rgba(233,228,218,.7);background:rgba(233,228,218,.07);box-shadow:0 6px 24px rgba(233,228,218,.08)}
+.vc-name{display:block;font-family:'Cormorant Garamond',serif;font-size:21px;font-weight:600;color:var(--fg)}
+.vc-desc{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.vc-rate{display:block;font-size:10.5px;color:var(--dim);margin-top:9px;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+@media(max-width:900px){.voice-stage{grid-template-columns:1fr}.voice-view{border-right:none;padding-right:0;border-bottom:1px solid var(--border);padding-bottom:22px;margin-bottom:4px}}
+
+/* ─── Latency Lab ─── */
+.lat-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:44px}
+.lat-card{padding:24px;border-radius:20px;display:flex;flex-direction:column;gap:14px}
+.lat-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.lat-name{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:600;color:var(--fg)}
+.lat-tag{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);text-align:right}
+.lat-convo{min-height:122px;display:flex;flex-direction:column;gap:8px;justify-content:flex-end}
+.bub{max-width:88%;padding:10px 15px;border-radius:14px;font-size:14px;line-height:1.5;opacity:0;transform:translateY(8px);transition:opacity .35s ease,transform .35s ease}
+.bub.show{opacity:1;transform:none}
+.bub.user{align-self:flex-end;background:rgba(233,228,218,.1);color:#efeae0;border-bottom-right-radius:4px}
+.bub.agent{align-self:flex-start;background:rgba(233,228,218,.16);color:#f5f1e8;border-bottom-left-radius:4px}
+.pipe{display:flex;flex-direction:column;gap:7px}
+.pipe-row{display:grid;grid-template-columns:36px 1fr 62px;gap:10px;align-items:center;font-size:10.5px;letter-spacing:.1em;color:var(--dim)}
+.pipe-track{height:4px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.pipe-fill{height:100%;width:0;border-radius:2px;background:linear-gradient(90deg,#8f8676,var(--violet))}
+.lat-card.slow .pipe-fill{background:#b3765c}
+.pipe-ms{text-align:right;font-family:'JetBrains Mono',monospace;color:var(--muted);letter-spacing:0;font-variant-numeric:tabular-nums}
+.lat-verdict{font-size:13.5px;color:var(--muted);min-height:20px;opacity:0;transition:opacity .5s}
+.lat-verdict.good{opacity:1;color:#9dbb97}
+.lat-verdict.bad{opacity:1;color:#cf7a63}
+.lat-run{align-self:flex-start}
+@media(max-width:860px){.lat-grid{grid-template-columns:1fr}}
+
+/* ─── Hero Visual — Waveform ─── */
+.hero-visual{position:relative;margin-top:60px;width:100%;max-width:860px;height:360px;border-radius:20px;background:linear-gradient(165deg,rgba(26,22,17,.75),rgba(10,10,11,.85));border:1px solid rgba(233,228,218,.2);overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 80px rgba(233,228,218,.08),0 0 120px rgba(233,228,218,.04),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+#waveCanvas{position:absolute;inset:0;width:100%;height:100%}
+.hero-visual-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.hero-visual-pill{display:flex;align-items:center;gap:12px;background:rgba(10,10,11,.75);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:12px 28px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.pill-dot{width:10px;height:10px;border-radius:50%;background:var(--violet);box-shadow:0 0 14px var(--violet),0 0 28px rgba(233,228,218,.2);animation:pulse 1.5s ease infinite}
+.pill-text{font-size:13px;color:var(--muted);letter-spacing:.06em}
+.pill-text strong{color:var(--fg);font-weight:500}
+.wave-tag{position:absolute;bottom:18px;font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim)}
+.wave-tag.left{left:28px}
+.wave-tag.right{right:28px;color:var(--fg);opacity:.8}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes accentGlow{0%,100%{filter:brightness(1) drop-shadow(0 0 8px rgba(233,228,218,.3))}50%{filter:brightness(1.15) drop-shadow(0 0 16px rgba(233,228,218,.5))}}
+
+/* ─── Section Utilities ─── */
+section{position:relative;z-index:1}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.kick{display:inline-flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--violet)}
+.kick::before{content:'';width:20px;height:1px;background:var(--violet);opacity:.5}
+.section-title{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(32px,5vw,56px);line-height:1.05;margin-top:16px}
+.section-sub{margin-top:16px;font-size:16px;line-height:1.7;color:var(--muted);max-width:540px}
+/* ─── Scroll-driven parallax reveal ─── */
+.reveal{opacity:0;transform:translateY(40px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1)}
+.reveal.in{opacity:1;transform:none}
+.reveal-left{opacity:0;transform:translateX(-60px) perspective(800px) rotateY(4deg);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+.reveal-left.in{opacity:1;transform:none}
+.reveal-right{opacity:0;transform:translateX(60px) perspective(800px) rotateY(-4deg);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+.reveal-right.in{opacity:1;transform:none}
+.reveal-scale{opacity:0;transform:scale(.92);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1)}
+.reveal-scale.in{opacity:1;transform:none}
+
+/* ─── Problem Section ─── */
+.problem{padding:120px 0;position:relative}
+.problem-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;margin-top:48px}
+@media(max-width:768px){.problem-grid{grid-template-columns:1fr;gap:40px}}
+.problem-list{display:flex;flex-direction:column;gap:16px}
+.problem-item{display:flex;gap:16px;padding:24px;border-radius:18px;position:relative;overflow:hidden;transition:border-color .4s,transform .4s cubic-bezier(.16,1,.3,1),box-shadow .4s;border:1px solid transparent}
+.problem-item::before{content:'';position:absolute;inset:0;border-radius:18px;padding:1px;background:linear-gradient(135deg,rgba(233,228,218,.2),rgba(255,255,255,.04));-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;transition:background .4s}
+.problem-item::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(20,20,22,.65);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:-1}
+.problem-item:hover{transform:translateX(4px);box-shadow:0 8px 32px rgba(233,228,218,.08)}
+.problem-item:hover::before{background:linear-gradient(135deg,rgba(233,228,218,.4),rgba(163,154,142,.15))}
+.problem-icon{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;position:relative;background:linear-gradient(135deg,rgba(233,228,218,.12),rgba(233,228,218,.04));border:1px solid rgba(233,228,218,.15)}
+.problem-icon svg{width:22px;height:22px;color:var(--violet)}
+.problem-icon::after{content:'';position:absolute;inset:-3px;border-radius:17px;background:radial-gradient(circle,rgba(233,228,218,.15),transparent 70%);opacity:0;transition:opacity .4s;pointer-events:none}
+.problem-item:hover .problem-icon::after{opacity:1}
+.problem-item h4{font-size:15px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
+.problem-item p{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.6}
+
+.problem-stat{display:flex;flex-direction:column;gap:20px}
+.stat-card{padding:32px;border-radius:18px;position:relative;overflow:hidden;transition:border-color .4s,transform .4s cubic-bezier(.16,1,.3,1),box-shadow .4s;border:1px solid transparent}
+.stat-card::before{content:'';position:absolute;inset:0;border-radius:18px;padding:1px;background:linear-gradient(135deg,rgba(233,228,218,.25),rgba(245,242,236,.1));-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;transition:background .4s}
+.stat-card::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(20,20,22,.65);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:-1}
+.stat-card:hover{transform:translateX(-4px) scale(1.01);box-shadow:0 12px 40px rgba(233,228,218,.1)}
+.stat-card:hover::before{background:linear-gradient(135deg,rgba(233,228,218,.5),rgba(245,242,236,.25))}
+.stat-card .num{font-family:'Cormorant Garamond',serif;font-size:52px;font-weight:700;color:var(--violet);line-height:1;position:relative;z-index:1}
+.stat-card .label{font-size:14px;color:var(--muted);margin-top:10px;line-height:1.5;position:relative;z-index:1}
+.stat-card .stat-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--violet),var(--cyan));transform:scaleX(0);transform-origin:left;transition:transform .6s cubic-bezier(.16,1,.3,1);border-radius:0 0 18px 18px}
+.stat-card:hover .stat-bar{transform:scaleX(1)}
+
+/* ─── Product Showcase ─── */
+.showcase{padding:120px 0}
+.showcase-visual{margin-top:48px;border-radius:20px;background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.showcase-header{display:flex;align-items:center;justify-content:space-between;padding:20px 28px;border-bottom:1px solid var(--border)}
+.showcase-header h4{font-size:15px;font-weight:600}
+.showcase-dots{display:flex;gap:6px}
+.showcase-dots span{width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,.15)}
+.showcase-body{display:grid;grid-template-columns:1fr 320px;min-height:400px}
+@media(max-width:860px){.showcase-body{grid-template-columns:1fr;grid-template-rows:1fr auto}}
+.showcase-main{padding:28px;border-right:1px solid var(--border)}
+.showcase-side{padding:28px}
+.s-bar{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.s-pill{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border:1px solid rgba(255,255,255,.1);border-radius:999px;padding:6px 14px;backdrop-filter:blur(8px)}
+.s-pill b{width:7px;height:7px;border-radius:50%;background:var(--violet);box-shadow:0 0 8px var(--violet)}
+.s-timer{font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim);letter-spacing:.12em}
+.s-waveform{display:flex;align-items:center;justify-content:center;gap:2px;height:60px;margin:20px 0}
+.s-waveform i{width:4px;border-radius:2px;background:var(--violet);height:4px;transition:height .15s ease;box-shadow:0 0 8px rgba(233,228,218,.3)}
+.s-bubbles{display:flex;flex-direction:column;gap:8px;max-height:160px;overflow-y:auto}
+.s-bubble{max-width:80%;padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.5}
+.s-bubble.agent{align-self:flex-end;background:var(--violet-soft);border:1px solid rgba(233,228,218,.2);color:var(--fg)}
+.s-bubble.caller{align-self:flex-start;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--muted)}
+.s-bubble .who{display:block;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+.s-fields{display:flex;flex-direction:column;gap:14px}
+.s-frow{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:10px;border-bottom:1px dashed rgba(255,255,255,.08)}
+.s-frow .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.s-frow .v{font-size:14px;color:var(--fg)}
+.s-frow .conf{font-size:10px;border-radius:5px;padding:2px 6px;margin-left:6px;letter-spacing:.06em}
+.s-frow .conf.hi{background:var(--violet-soft);color:var(--violet)}
+.s-frow .conf.md{background:var(--gold-soft);color:var(--gold)}
+.s-frow .conf.wait{background:rgba(255,255,255,.05);color:var(--dim)}
+
+/* ─── How It Works ─── */
+.how{padding:120px 0;position:relative}
+.how-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:56px;position:relative}
+@media(max-width:1020px){.how-steps{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.how-steps{grid-template-columns:1fr}}
+
+.step{position:relative;border-radius:20px;padding:34px 28px 32px;background:linear-gradient(180deg,rgba(22,22,24,.72),rgba(14,14,16,.6));backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);overflow:hidden;transition:transform .45s cubic-bezier(.16,1,.3,1),border-color .35s,box-shadow .45s}
+.step:hover{transform:translateY(-8px);border-color:rgba(233,228,218,.22);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.step::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(233,228,218,.4),transparent);opacity:.35;transition:opacity .35s}
+.step:hover::before{opacity:1}
+.step-ghost{position:absolute;top:2px;right:18px;font-family:'Cormorant Garamond',serif;font-size:112px;line-height:1.1;color:transparent;-webkit-text-stroke:1px rgba(233,228,218,.1);pointer-events:none;transition:-webkit-text-stroke-color .35s}
+.step:hover .step-ghost{-webkit-text-stroke-color:rgba(233,228,218,.24)}
+.step-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(233,228,218,.06);border:1px solid rgba(233,228,218,.14);margin-bottom:40px;transition:background .35s,border-color .35s}
+.step:hover .step-icon{background:rgba(233,228,218,.1);border-color:rgba(233,228,218,.3)}
+.step-icon svg{width:20px;height:20px;stroke:#e9e4da;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.step h4{font-family:'Marcellus',serif;font-weight:400;font-size:19px;letter-spacing:.02em;color:var(--fg)}
+.step p{font-size:13.5px;color:var(--muted);margin-top:10px;line-height:1.7}
+.step-bar{position:absolute;left:28px;right:28px;bottom:0;height:2px;background:linear-gradient(90deg,#e9e4da,#a39a8e);transform:scaleX(0);transform-origin:left;transition:transform .5s cubic-bezier(.16,1,.3,1)}
+.step:hover .step-bar{transform:scaleX(1)}
+
+/* ─── Use Cases Marquee ─── */
+.transform{padding:120px 0;overflow:hidden}
+.transform .section-title,.transform .section-sub,.transform .kick{position:relative;z-index:2}
+.transform-grid{margin-top:56px;display:flex;flex-direction:column;gap:28px}
+.transform-card{display:grid;grid-template-columns:1fr 60px 1fr;align-items:stretch;gap:0;border-radius:20px;overflow:hidden;border:1px solid var(--glass-border);background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);transition:transform .4s,box-shadow .4s;opacity:0;transform:translateY(24px)}
+.transform-card.in{opacity:1;transform:none}
+.transform-card:nth-child(odd){transform:translateX(-30px)}
+.transform-card:nth-child(odd).in{transform:none}
+.transform-card:nth-child(even){transform:translateX(30px)}
+.transform-card:nth-child(even).in{transform:none}
+.transform-card:hover{box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.tc-before,.tc-after{padding:32px;display:flex;flex-direction:column;gap:12px}
+.tc-before{background:rgba(255,255,255,.015);border-right:none}
+.tc-after{background:rgba(233,228,218,.05);border-left:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.07)}
+.tc-divider{display:flex;align-items:center;justify-content:center;position:relative}
+.tc-divider::before{content:'';position:absolute;top:0;bottom:0;left:50%;width:1px;background:linear-gradient(to bottom,transparent,var(--border),transparent)}
+.tc-arrow{width:44px;height:44px;border-radius:50%;background:var(--bg);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;z-index:2;transition:border-color .3s,box-shadow .3s}
+.tc-arrow svg{width:18px;height:18px;stroke:var(--violet);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.transform-card:hover .tc-arrow{border-color:rgba(233,228,218,.5);box-shadow:0 0 16px rgba(233,228,218,.15)}
+.tc-label{font-size:10px;letter-spacing:.22em;text-transform:uppercase;font-weight:600}
+.tc-before .tc-label{color:var(--dim)}
+.tc-after .tc-label{color:var(--violet);text-shadow:0 0 14px rgba(233,228,218,.35)}
+.tc-title{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;line-height:1.25}
+.tc-before .tc-title{color:rgba(255,255,255,.6)}
+.tc-after .tc-title{color:var(--fg)}
+.tc-desc{font-size:14px;line-height:1.65}
+.tc-before .tc-desc{color:var(--dim)}
+.tc-after .tc-desc{color:var(--muted)}
+.tc-metric{display:inline-flex;align-items:center;gap:6px;font-size:12px;letter-spacing:.06em;padding:5px 12px;border-radius:8px;margin-top:4px;width:fit-content}
+.tc-before .tc-metric{background:rgba(255,255,255,.04);color:var(--dim);border:1px solid rgba(255,255,255,.08)}
+.tc-after .tc-metric{background:rgba(233,228,218,.1);color:#f5f2ec;border:1px solid rgba(233,228,218,.28)}
+.tc-metric svg{width:12px;height:12px;stroke:currentColor;stroke-width:2;fill:none}
+@media(max-width:768px){
+  .transform-card{grid-template-columns:1fr;gap:0}
+  .tc-divider{flex-direction:row;padding:16px 0}
+  .tc-divider::before{display:none}
+  .tc-before,.tc-after{padding:24px}
+  .tc-before{border-bottom:1px solid var(--border);border-right:none}
+  .tc-after{border-top:none;border-left:none}
+}
+
+/* ─── Demo (Interactive) ─── */
+.demo{padding:120px 0}
+.demo-box{position:relative;margin-top:48px;border-radius:20px;background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+#demoGl{position:absolute;inset:0;width:100%;height:100%;opacity:.3;pointer-events:none}
+.demo-inner{position:relative;display:grid;grid-template-columns:1.5fr 1fr;min-height:540px}
+@media(max-width:860px){.demo-inner{grid-template-columns:1fr;min-height:auto}}
+.demo-left{padding:32px;border-right:1px solid var(--border)}
+.demo-right{padding:32px}
+.demo-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.demo-orb{width:72px;height:72px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#16161a,#0d0d10);border:1.5px solid rgba(233,228,218,.35);display:flex;align-items:center;justify-content:center;transition:.3s;position:relative}
+.demo-orb::after{content:'';position:absolute;inset:-8px;border-radius:50%;border:1px solid rgba(233,228,218,.3);opacity:0}
+.demo-orb.live::after{animation:orbRing 1.6s ease-out infinite}
+.demo-orb[data-m="speaking"]{border-color:rgba(245,242,236,.6);box-shadow:0 0 30px rgba(245,242,236,.2)}
+.demo-orb[data-m="listening"]{box-shadow:0 0 30px rgba(233,228,218,.25)}
+@keyframes orbRing{from{transform:scale(.92);opacity:.7}to{transform:scale(1.2);opacity:0}}
+.demo-btns{display:flex;gap:10px;align-items:center}
+.btn-interrupt{border:1px solid rgba(239,68,68,.5);color:var(--red);border-radius:999px;padding:10px 20px;font-size:13px;letter-spacing:.06em;opacity:0;pointer-events:none;transition:.25s}
+.btn-interrupt.show{opacity:1;pointer-events:auto}
+.btn-end{border:1px solid rgba(255,255,255,.2);color:var(--muted);border-radius:999px;padding:10px 20px;font-size:13px;transition:.25s}
+.btn-end:hover{border-color:rgba(255,255,255,.5);color:var(--fg)}
+.demo-transcript{display:flex;flex-direction:column;gap:8px;padding-right:4px;margin-top:18px}
+.d-bub{max-width:80%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;opacity:0;transform:translateY(8px);animation:bubIn .4s ease forwards}
+.d-bub.agent{align-self:flex-end;background:var(--violet-soft);border:1px solid rgba(233,228,218,.2);border-bottom-right-radius:4px}
+.d-bub.caller{align-self:flex-start;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-bottom-left-radius:4px}
+.d-bub .who{display:block;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+@keyframes bubIn{to{opacity:1;transform:none}}
+.demo-choices{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;min-height:36px}
+.choice-btn{border:1px solid rgba(245,242,236,.4);color:var(--gold);border-radius:999px;padding:8px 16px;font-size:13px;transition:.25s;backdrop-filter:blur(8px)}
+.choice-btn:hover{background:rgba(245,242,236,.1)}
+.pane-h{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+.demo-fields{margin-top:16px;display:flex;flex-direction:column;gap:12px}
+.d-frow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;border-bottom:1px dashed rgba(255,255,255,.08);padding-bottom:10px}
+.d-frow .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.d-frow .v{font-size:14px;color:var(--fg)}
+.demo-latency{margin-top:20px;display:flex;flex-direction:column;gap:6px}
+.lat-row{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.lat-row b{color:var(--violet);font-weight:400}
+.demo-summary{margin-top:18px;border:1px solid rgba(233,228,218,.3);border-radius:12px;padding:14px;display:none}
+.demo-summary.show{display:block;animation:bubIn .4s ease}
+.demo-summary h5{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--violet)}
+.demo-summary p{margin-top:6px;font-size:13px;line-height:1.6;color:var(--muted)}
+.demo .s-waveform{height:46px;margin:14px 0}
+@media(max-width:860px){.demo-transcript{min-height:260px}}
+
+/* ─── CTA ─── */
+.cta{padding:120px 0;text-align:center}
+.cta h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(36px,6vw,68px);line-height:1.05;max-width:700px;margin:18px auto 0}
+.cta p{margin:16px auto 0;max-width:480px;color:var(--muted);font-size:17px;line-height:1.7}
+.cta-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
+
+/* ─── Footer ─── */
+footer{border-top:1px solid var(--border);padding:56px 0 42px;position:relative;z-index:1}
+.f-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:36px}
+@media(max-width:860px){.f-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.f-grid{grid-template-columns:1fr}}
+.f-brand p{margin-top:14px;font-size:14px;line-height:1.7;color:var(--dim);max-width:260px}
+.f-col h6{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+.f-col a{display:block;font-size:14px;color:var(--muted);padding:5px 0;transition:color .2s}
+.f-col a:hover{color:var(--fg)}
+.f-base{margin-top:44px;padding-top:22px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--dim)}
+.f-base .tl{color:var(--violet)}
+
+/* ─── Floating Agent Widget ─── */
+.agent-fab{position:fixed;bottom:28px;right:28px;z-index:200;width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#26262b,#141418);border:1.5px solid rgba(233,228,218,.4);box-shadow:0 8px 32px rgba(0,0,0,.5),0 0 20px rgba(233,228,218,.15);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .4s cubic-bezier(.34,1.56,.64,1),box-shadow .3s}
+.agent-fab:hover{transform:scale(1.08);box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 30px rgba(233,228,218,.25)}
+.agent-fab .fab-pulse{position:absolute;inset:-4px;border-radius:50%;border:1.5px solid rgba(233,228,218,.3);animation:fabPulse 2.4s ease-out infinite}
+.agent-fab .fab-mic{transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+.agent-fab.open .fab-mic{transform:rotate(90deg) scale(.8)}
+@keyframes fabPulse{0%{transform:scale(.95);opacity:.7}100%{transform:scale(1.35);opacity:0}}
+.agent-panel{position:fixed;bottom:100px;right:28px;z-index:199;width:380px;max-height:520px;background:linear-gradient(170deg,rgba(22,22,24,.85),rgba(10,10,11,.92));backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);border:1px solid rgba(233,228,218,.2);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.65),0 0 1px rgba(233,228,218,.3);display:flex;flex-direction:column;overflow:hidden;opacity:0;transform:translateY(20px) scale(.92);pointer-events:none;transition:all .45s cubic-bezier(.34,1.56,.64,1)}
+.agent-panel.open{opacity:1;transform:none;pointer-events:auto}
+.ap-head{padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:12px}
+.ap-head .dot{width:10px;height:10px;border-radius:50%;background:var(--violet);box-shadow:0 0 8px var(--violet);animation:pulse 1.5s ease infinite}
+.ap-head .info{flex:1}
+.ap-head .info b{font-size:14px;color:var(--fg)}
+.ap-head .info span{display:block;font-size:11px;color:var(--dim);margin-top:1px}
+.ap-head .close{color:var(--dim);font-size:18px;padding:4px 8px;border-radius:6px;cursor:pointer;transition:.2s}
+.ap-head .close:hover{color:var(--fg);background:rgba(255,255,255,.08)}
+.ap-body{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-height:200px}
+.ap-body .msg{max-width:85%;padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.5}
+.ap-body .msg.bot{align-self:flex-start;background:var(--violet-soft);border:1px solid rgba(233,228,218,.18);border-bottom-left-radius:4px;color:var(--fg)}
+.ap-body .msg.user{align-self:flex-end;background:rgba(245,242,236,.1);border:1px solid rgba(245,242,236,.2);border-bottom-right-radius:4px;color:var(--fg)}
+.ap-foot{padding:14px 18px;border-top:1px solid rgba(255,255,255,.08);display:flex;gap:10px;align-items:center}
+.ap-foot input{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 14px;color:var(--fg);font-size:14px;outline:none;transition:.2s}
+.ap-foot input:focus{border-color:rgba(233,228,218,.4)}
+.ap-foot input::placeholder{color:var(--dim)}
+.ap-foot button{width:38px;height:38px;border-radius:10px;background:var(--violet-soft);border:1px solid rgba(233,228,218,.3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s;flex:0 0 auto}
+.ap-foot button:hover{background:rgba(233,228,218,.2)}
+@media(max-width:480px){
+  .agent-panel{width:calc(100vw - 24px);right:12px;bottom:90px;max-height:440px}
+  .agent-fab{bottom:20px;right:20px;width:54px;height:54px}
+}
+
+/* ─── Custom Cursor ─── */
+.cursor-dot,.cursor-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:9999;border-radius:50%;transform:translate(-50%,-50%);will-change:left,top}
+.cursor-dot{width:6px;height:6px;background:#f5f2ec}
+.cursor-ring{width:34px;height:34px;border:1px solid rgba(233,228,218,.4);transition:width .28s cubic-bezier(.16,1,.3,1),height .28s cubic-bezier(.16,1,.3,1),border-color .25s,background .25s}
+.cursor-ring.hover{width:58px;height:58px;background:rgba(233,228,218,.06);border-color:rgba(233,228,218,.75)}
+body.custom-cursor{cursor:none}
+body.custom-cursor a,body.custom-cursor button{cursor:none}
+@media(pointer:coarse){.cursor-dot,.cursor-ring{display:none}}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .reveal,.reveal-left,.reveal-right,.reveal-scale{opacity:1!important;transform:none!important}
+}
+/* ═══════════════════════════════════════════════════
+   Interactive Labs — simulator / latency / voices
+   ═══════════════════════════════════════════════════ */
+.lab{position:relative;padding:150px 24px 130px;z-index:1}
+.lab .wrap{max-width:1160px;margin:0 auto}
+.lab-head{text-align:center;margin-bottom:52px}
+.sec-sub{max-width:580px;margin:18px auto 0;color:var(--muted);font-size:17px;line-height:1.7}
+.sim-actions{display:flex;gap:12px;align-items:center;justify-content:center;margin-top:24px;flex-wrap:wrap}
+
+/* ── 3D components · signal→structure · barge-in · language field ── */
+.flow-band{position:relative;padding:20px 0 10px;z-index:1}
+.flow-cv{display:block;width:100%;height:380px}
+.flow-tags{display:flex;justify-content:space-between;max-width:1080px;margin:-52px auto 0;padding:0 36px;pointer-events:none;position:relative;z-index:2}
+.flow-tag{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--dim)}
+.flow-tag b{display:block;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--fg);margin-top:6px}
+.flow-tag:last-child{text-align:right}
+
+.barge-shell{position:relative;max-width:1080px;margin:0 auto;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:24px;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);overflow:hidden;text-align:left}
+.barge-cv{display:block;width:100%;height:300px}
+.barge-cap{position:absolute;left:26px;top:22px;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+.barge-state{position:absolute;left:26px;bottom:20px;font-size:14px;color:var(--fg);opacity:.85}
+
+/* ─── Live Call Monitor ─── */
+.monitor{padding:120px 0}
+.monitor-shell{margin-top:48px;border-radius:20px;background:var(--glass-bg);border:1px solid var(--glass-border);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);overflow:hidden}
+.mon-head{display:flex;justify-content:space-between;align-items:center;padding:20px 28px;border-bottom:1px solid var(--border)}
+.mon-head h4{font-size:15px;font-weight:600;color:var(--fg)}
+.mon-live{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mon-live .dot{width:8px;height:8px;border-radius:50%;background:#9dbb97;box-shadow:0 0 10px rgba(157,187,151,.8);animation:pulse 1.5s ease infinite}
+.mon-counters{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--border)}
+.mc-tile{padding:22px 20px;background:var(--surface-solid);text-align:center;transition:background .3s}
+.mc-tile:hover{background:rgba(233,228,218,.03)}
+.mc-tile b{display:block;font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:600;color:var(--fg);line-height:1}
+.mc-tile span{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-top:8px}
+.mc-tile.accent b{color:var(--violet)}
+.mc-tile.warn b{color:#d9a05b}
+.mon-body{padding:20px 28px}
+.mon-chart{display:flex;align-items:flex-end;gap:6px;height:80px;padding:14px 0}
+.mon-bar{flex:1;border-radius:4px 4px 0 0;background:linear-gradient(to top,rgba(233,228,218,.08),rgba(233,228,218,.22));transition:height .6s cubic-bezier(.16,1,.3,1);position:relative;min-height:4px}
+.mon-bar::after{content:attr(data-n);position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dim)}
+.mon-bar-labels{display:flex;gap:6px;margin-top:8px}
+.mon-bar-labels span{flex:1;text-align:center;font-size:10px;color:var(--dim);letter-spacing:.04em}
+.mon-table{margin-top:20px;border-top:1px solid var(--border);padding-top:16px}
+.mon-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:13px;align-items:center;transition:background .2s}
+.mon-row:hover{background:rgba(255,255,255,.02);border-radius:8px}
+.mon-row.head{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--border)}
+.mon-row .name{color:var(--fg)}
+.mon-row .phone{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--dim)}
+.mon-row .status{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid;text-align:center;width:fit-content}
+.mon-row .status.ok{color:#9dbb97;border-color:rgba(157,187,151,.35);background:rgba(157,187,151,.08)}
+.mon-row .status.ringing{color:#d9bc84;border-color:rgba(217,188,132,.35);background:rgba(217,188,132,.08);animation:pulse 1.2s ease infinite}
+.mon-row .status.miss{color:var(--muted);border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.03)}
+.mon-row .status.busy{color:#d9a05b;border-color:rgba(217,160,91,.35);background:rgba(217,160,91,.08)}
+.mon-row .dur{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+@media(max-width:768px){.mon-counters{grid-template-columns:repeat(3,1fr)}.mon-row{grid-template-columns:1.5fr 1fr 1fr}.mon-row .phone{display:none}}
+
+/* ─── Conversation Replay ─── */
+.replay{padding:120px 0}
+.replay-shell{margin-top:48px;border-radius:20px;background:var(--glass-bg);border:1px solid var(--glass-border);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);overflow:hidden;display:grid;grid-template-columns:1.4fr 1fr;min-height:480px}
+.replay-transcript{padding:28px 32px;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:520px}
+.replay-transcript::-webkit-scrollbar{width:4px}
+.replay-transcript::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+.replay-turn{display:flex;gap:12px;align-items:flex-start;opacity:0;transform:translateY(12px);transition:opacity .5s ease,transform .5s ease}
+.replay-turn.show{opacity:1;transform:none}
+.replay-turn .avatar{width:32px;height:32px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:12px}
+.replay-turn.caller .avatar{background:rgba(255,255,255,.08);color:var(--muted)}
+.replay-turn.agent .avatar{background:var(--violet-soft);color:var(--violet)}
+.replay-turn .text{font-size:14px;line-height:1.6;padding:10px 14px;border-radius:14px;max-width:85%}
+.replay-turn.caller .text{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:var(--muted);border-bottom-left-radius:4px}
+.replay-turn.agent .text{background:var(--violet-soft);border:1px solid rgba(233,228,218,.15);color:var(--fg);border-bottom-right-radius:4px}
+.replay-turn .time{font-size:10px;color:var(--dim);margin-top:4px;font-variant-numeric:tabular-nums}
+.replay-side{padding:28px;display:flex;flex-direction:column;gap:16px}
+.replay-side h5{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+.replay-fields{display:flex;flex-direction:column;gap:12px}
+.rf-row{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:10px;border-bottom:1px dashed rgba(255,255,255,.06)}
+.rf-row .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.rf-row .v{font-size:14px;color:var(--fg);transition:color .3s}
+.rf-row .v.pending{color:var(--dim);font-style:italic}
+.rf-row .conf{font-size:10px;border-radius:5px;padding:2px 6px;margin-left:6px;letter-spacing:.06em}
+.rf-row .conf.hi{background:var(--violet-soft);color:var(--violet)}
+.rf-row .conf.md{background:rgba(217,188,132,.12);color:#d9bc84}
+.replay-wave{height:48px;margin-top:auto;padding-top:16px;border-top:1px solid var(--border)}
+.replay-wave canvas{width:100%;height:100%}
+@media(max-width:860px){.replay-shell{grid-template-columns:1fr}.replay-transcript{border-right:none;border-bottom:1px solid var(--border);max-height:320px}}
+
+.lang-band{position:relative;padding:110px 24px 40px;text-align:center;z-index:1}
+.lang-cv{display:block;width:min(900px,100%);height:340px;margin:8px auto 6px}
+@media(max-width:760px){
+  .flow-cv{height:250px}.flow-tags{margin:-34px auto 0;padding:0 20px}
+  .barge-cv{height:215px}.lang-cv{height:270px}
+}
+
+.sim-shell{display:grid;grid-template-columns:340px 1fr;gap:0;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:24px;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);overflow:hidden;text-align:left}
+.sim-side{border-right:1px solid var(--border);padding:24px;display:flex;flex-direction:column;gap:6px}
+.sim-side-h{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-bottom:8px;font-family:'JetBrains Mono',monospace}
+.sim-contact{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;transition:background .3s;font-size:14px}
+.sim-contact.hot{background:rgba(233,228,218,.06)}
+.sim-contact .avatar{width:34px;height:34px;border-radius:50%;background:rgba(233,228,218,.07);display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',serif;font-size:17px;color:var(--muted);flex:0 0 auto}
+.sim-contact .meta{flex:1;min-width:0}
+.sim-contact .nm{color:var(--fg)}
+.sim-contact .ph{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--dim)}
+.sim-chip{font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:999px;border:1px solid var(--border);color:var(--dim);white-space:nowrap;transition:.3s;font-weight:500}
+.sim-chip.calling{color:#161310;background:var(--violet);border-color:transparent;animation:pulse 1.1s ease infinite}
+.sim-chip.done{color:var(--violet);border-color:rgba(233,228,218,.35)}
+.sim-chip.missed{color:var(--red);border-color:rgba(217,97,82,.4)}
+.sim-main{padding:24px;display:flex;flex-direction:column;gap:16px}
+.sim-counters{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.sim-counter{border:1px solid var(--border);border-radius:16px;padding:13px 15px;background:rgba(255,255,255,.02)}
+.sim-counter b{display:block;font-family:'Cormorant Garamond',serif;font-size:30px;line-height:1;color:var(--fg);margin-bottom:4px}
+.sim-counter span{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.sim-progress{height:6px;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden}
+.sim-progress i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#8f8676,var(--violet));transition:width .45s ease}
+.sim-feed{display:flex;flex-direction:column;gap:7px;min-height:212px}
+.sim-row{display:grid;grid-template-columns:140px 108px 58px 1fr 64px;gap:12px;align-items:center;padding:11px 15px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.02);font-size:13.5px;opacity:0;transform:translateY(10px);transition:.5s cubic-bezier(.16,1,.3,1)}
+.sim-row.in{opacity:1;transform:none}
+.sim-row .out{color:var(--muted)}
+.sim-row .out.ok{color:var(--violet)}
+.sim-row .out.bad{color:var(--red)}
+.sim-row .dur{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--dim)}
+.sim-row .field{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conf{justify-self:end;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--violet);border:1px solid rgba(233,228,218,.25);padding:2px 8px;border-radius:999px}
+.sim-summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:14px;font-size:14px;color:var(--muted);opacity:0;transition:.6s}
+.sim-summary.in{opacity:1}
+
+.lat-shell{display:grid;grid-template-columns:1fr 1fr;gap:20px;text-align:left}
+.lat-col{background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:24px;padding:28px;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);position:relative;transition:border-color .5s,box-shadow .5s}
+.lat-col.sarathi.done{border-color:rgba(233,228,218,.45);box-shadow:0 10px 50px rgba(233,228,218,.08),inset 0 0 60px rgba(233,228,218,.04)}
+.lat-tag{display:inline-flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-bottom:22px}
+.lat-tag i{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.lat-col.sarathi .lat-tag{color:var(--violet)}
+.lat-col.sarathi .lat-tag i{background:var(--violet);box-shadow:0 0 10px var(--violet-glow)}
+.lat-mrow{margin-bottom:15px}
+.lat-mhead{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.lat-mhead b{font-family:'JetBrains Mono',monospace;font-weight:500;color:var(--fg);font-size:12.5px;letter-spacing:0}
+.lat-track{position:relative;height:8px;border-radius:999px;background:rgba(255,255,255,.05)}
+.lat-fill{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:999px;background:linear-gradient(90deg,#8f8676,var(--violet));transition:width .85s cubic-bezier(.25,.1,.25,1)}
+.lat-col.bot .lat-fill{background:linear-gradient(90deg,#55504a,#8f8676)}
+.lat-tick{position:absolute;top:-3px;bottom:-3px;width:1px;background:rgba(233,228,218,.38);pointer-events:none}
+.lat-reply{margin-top:18px;border-top:1px dashed var(--border);padding-top:15px}
+.lat-q{font-size:13px;color:var(--dim);margin-bottom:9px}
+.lat-a{font-size:15.5px;line-height:1.55;color:var(--fg);min-height:50px}
+.typing i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--muted);margin-right:5px;animation:pulse 1s ease infinite}
+.typing i:nth-child(2){animation-delay:.18s}
+.typing i:nth-child(3){animation-delay:.36s}
+.lat-note{text-align:center;margin-top:24px;font-size:13px;color:var(--dim)}
+
+.voice-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;text-align:left}
+.voice-card{position:relative;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:20px;padding:20px;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);transition:border-color .3s,transform .3s cubic-bezier(.16,1,.3,1),box-shadow .3s;cursor:pointer;width:100%}
+.voice-card:hover{transform:translateY(-3px);border-color:rgba(233,228,218,.32)}
+.voice-card[aria-checked="true"]{border-color:var(--violet);box-shadow:0 0 0 1px var(--violet),0 12px 44px rgba(233,228,218,.10)}
+.voice-card canvas{width:100%;height:54px;display:block;margin-bottom:12px}
+.vc-name{font-family:'Marcellus',serif;font-size:19px;color:var(--fg)}
+.vc-traits{font-size:12.5px;letter-spacing:.06em;color:var(--muted);margin-top:3px}
+.vc-check{position:absolute;top:14px;right:14px;width:22px;height:22px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;transition:.3s}
+.voice-card[aria-checked="true"] .vc-check{background:var(--violet);border-color:var(--violet)}
+.vc-check svg{width:11px;height:11px;stroke:#161310;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:.3s}
+.voice-card[aria-checked="true"] .vc-check svg{opacity:1}
+.voice-preview{margin-top:22px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:18px;padding:20px 24px;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);display:flex;gap:16px;align-items:center;min-height:78px;text-align:left}
+.vp-voice{font-family:'Marcellus',serif;font-size:16px;color:var(--violet);white-space:nowrap}
+.vp-line{font-size:15.5px;line-height:1.55;color:var(--fg)}
+.type-caret{display:inline-block;width:2px;height:1.05em;background:var(--violet);vertical-align:-2px;margin-left:2px;animation:caretBlink 1s steps(1) infinite}
+
+@media(max-width:900px){
+  .lab{padding:110px 18px 100px}
+  .sim-shell{grid-template-columns:1fr}
+  .sim-side{border-right:none;border-bottom:1px solid var(--border)}
+  .lat-shell{grid-template-columns:1fr}
+  .voice-grid{grid-template-columns:repeat(2,1fr)}
+  .sim-counters{grid-template-columns:repeat(2,1fr)}
+  .sim-row{grid-template-columns:110px 84px 48px 1fr}
+  .sim-row .conf{display:none}
+}
+@media(max-width:560px){.voice-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<nav id="mainNav">
+  <div class="nav-inner">
+    <div class="nav-left">
+      <a href="#" class="logo" aria-label="Echo Sarathi — home">
+        <span class="logo-text">Echo Sarathi</span>
+      </a>
+      <a href="#product" class="nav-link">Product</a>
+      <a href="#usecases" class="nav-link">Use Cases</a>
+      <a href="pricing.html" class="nav-link">Pricing</a>
+      <a href="playground.html" class="nav-link">Playground</a>
+    </div>
+    <div class="nav-right">
+      <a href="roadmap.html" class="nav-link">Roadmap</a>
+      <a href="login.html" class="nav-link">Sign in</a>
+      <a href="login.html" class="nav-cta">Start free</a>
+      <div class="hamburger" id="hamburgerBtn" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="mobile-drawer" id="mobileDrawer">
+  <a href="#product">Product</a>
+  <a href="#usecases">Use Cases</a>
+  <a href="pricing.html">Pricing</a>
+  <a href="playground.html">Playground</a>
+  <a href="roadmap.html">Roadmap</a>
+  <a href="login.html" class="drawer-cta">Start free</a>
+</div>
+
+<!-- ─── HERO ─── -->
+<section class="hero">
+  <div class="hero-kicker">AI Voice Infrastructure</div>
+  <h1>Calls that <span class="accent">listen</span>, understand, and remember.</h1>
+  <p class="hero-sub">Outbound voice AI that holds real conversations — takes turns, yields when interrupted, and returns every answer as structured data you can act on.</p>
+  <div class="hero-btns">
+    <a class="btn-primary" href="login.html">Start making calls</a>
+    <a class="btn-ghost" href="#demo">Try the demo</a>
+  </div>
+  <div class="hero-visual">
+    <canvas id="waveCanvas"></canvas>
+    <div class="hero-visual-overlay">
+      <div class="hero-visual-pill">
+        <span class="pill-dot"></span>
+        <span class="pill-text"><strong>Live call</strong> — 01:42 elapsed</span>
+      </div>
+      <span class="wave-tag left">Your voice</span>
+      <span class="wave-tag right">Echo Sarathi</span>
+    </div>
+  </div>
+</section>
+
+
+<!-- ─── PROBLEM ─── -->
+<section class="problem" id="product">
+  <div class="wrap">
+    <span class="kick">The problem</span>
+    <h2 class="section-title display">Phone calls shouldn't need a human on the line.</h2>
+    <p class="section-sub">Teams spend hours on repetitive outbound calls — attendance checks, confirmations, follow-ups. The work is structured, but the conversations need to feel human.</p>
+    <div class="problem-grid">
+      <div class="problem-list">
+        <div class="problem-item reveal-left"><div class="problem-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><div><h4>Hours wasted on repetitive calls</h4><p>Same questions, same scripts, every day. Your team's time goes to conversations that could be automated.</p></div></div>
+        <div class="problem-item reveal-left"><div class="problem-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div><h4>IVR systems frustrate callers</h4><p>Press 1 for this, press 2 for that. People hang up. Information stays uncollected.</p></div></div>
+        <div class="problem-item reveal-left"><div class="problem-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div><div><h4>Data stays locked in recordings</h4><p>Call logs pile up but the insights — who said what, what was decided — stay buried in audio.</p></div></div>
+      </div>
+      <div class="problem-stat">
+        <div class="stat-card reveal-right"><div class="num">73%</div><div class="label">of outbound calls are routine, repeatable conversations</div><div class="stat-bar"></div></div>
+        <div class="stat-card reveal-right" style="transition-delay:.1s"><div class="num" style="color:var(--gold)">0.9s</div><div class="label">median end-to-end response time with Sarathi</div><div class="stat-bar" style="background:linear-gradient(90deg,var(--gold),var(--violet))"></div></div>
+        <div class="stat-card reveal-right" style="transition-delay:.2s"><div class="num" style="color:var(--fg)">5/5</div><div class="label">fields extracted per attendance call on average</div><div class="stat-bar" style="background:linear-gradient(90deg,var(--cyan),var(--violet))"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── PRODUCT SHOWCASE ─── -->
+<section class="showcase reveal-scale">
+  <div class="wrap">
+    <span class="kick">The product</span>
+    <h2 class="section-title display">See it run a real call.</h2>
+    <p class="section-sub">Upload contacts, pick an agent, launch. The AI handles the conversation — and every answer lands in a structured table you can export.</p>
+    <div class="showcase-visual">
+      <div class="showcase-header">
+        <h4>Campaign: Attendance Check — Sunrise Academy</h4>
+        <div class="showcase-dots"><span></span><span></span><span></span></div>
+      </div>
+      <div class="showcase-body">
+        <div class="showcase-main">
+          <div class="s-bar">
+            <span class="s-pill"><b></b>Active</span>
+            <span class="s-timer">42 / 80 calls</span>
+          </div>
+          <div class="s-waveform" id="showWave"></div>
+          <div class="s-bubbles">
+            <div class="s-bubble agent"><span class="who">Sarathi Agent</span>Good morning! Am I speaking with Mrs. Devi, parent of Rohan?</div>
+            <div class="s-bubble caller"><span class="who">Caller</span>Yes, this is she.</div>
+            <div class="s-bubble agent"><span class="who">Sarathi Agent</span>Thank you. I'm calling from Sunrise Academy to confirm — will Rohan be attending classes today?</div>
+            <div class="s-bubble caller"><span class="who">Caller</span>He has a fever today, won't be coming.</div>
+            <div class="s-bubble agent"><span class="who">Sarathi Agent</span>I'm sorry to hear that. I've noted the absence. Is there anything else you'd like us to know?</div>
+          </div>
+        </div>
+        <div class="showcase-side">
+          <span class="pane-h">Extracted data</span>
+          <div class="s-fields">
+            <div class="s-frow"><span class="k">student_name</span><span class="v">Rohan <span class="conf hi">96%</span></span></div>
+            <div class="s-frow"><span class="k">parent_name</span><span class="v">Mrs. Devi <span class="conf hi">94%</span></span></div>
+            <div class="s-frow"><span class="k">present_today</span><span class="v">No <span class="conf hi">91%</span></span></div>
+            <div class="s-frow"><span class="k">reason</span><span class="v">Sick leave <span class="conf md">88%</span></span></div>
+            <div class="s-frow"><span class="k">callback</span><span class="v">— <span class="conf wait">pending</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── HOW IT WORKS ─── -->
+<section class="how">
+  <div class="wrap">
+    <span class="kick">How it works</span>
+    <h2 class="section-title display">Four steps. Zero infrastructure.</h2>
+    <p class="section-sub">No phone hardware. No scripts to record. No call-center setup. Upload, configure, launch, review.</p>
+    <div class="how-steps">
+      <div class="step reveal" style="transition-delay:0s">
+        <span class="step-ghost">1</span>
+        <div class="step-icon"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 20h16"/></svg></div>
+        <h4>Upload contacts</h4>
+        <p>Drop a CSV or Excel file. Columns map to conversation variables — names, IDs, anything the agent should know.</p>
+        <span class="step-bar"></span>
+      </div>
+      <div class="step reveal" style="transition-delay:.12s">
+        <span class="step-ghost">2</span>
+        <div class="step-icon"><svg viewBox="0 0 24 24"><path d="M4 6h8M18 6h2M4 12h2M10 12h10M4 18h12"/><circle cx="15" cy="6" r="2"/><circle cx="7" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></div>
+        <h4>Configure your agent</h4>
+        <p>Set questions, context, voice, and what data to extract. Save as an immutable version you can always roll back to.</p>
+        <span class="step-bar"></span>
+      </div>
+      <div class="step reveal" style="transition-delay:.24s">
+        <span class="step-ghost">3</span>
+        <div class="step-icon"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+        <h4>Launch campaign</h4>
+        <p>The AI calls each contact, holds a natural conversation, and handles busy signals, no-answers, and callbacks automatically.</p>
+        <span class="step-bar"></span>
+      </div>
+      <div class="step reveal" style="transition-delay:.36s">
+        <span class="step-ghost">4</span>
+        <div class="step-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg></div>
+        <h4>Review &amp; export</h4>
+        <p>Every call returns a transcript, extracted fields with confidence scores, and a structured outcome — all exportable as CSV.</p>
+        <span class="step-bar"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── TRANSFORMATION ─── -->
+<section class="transform" id="usecases">
+  <div class="wrap">
+    <span class="kick">The difference</span>
+    <h2 class="section-title display">What changes when your calls answer themselves.</h2>
+    <p class="section-sub">Every workflow that used to eat your team's hours now runs autonomously — with structured results, not voicemail.</p>
+  </div>
+  <div class="wrap">
+    <div class="transform-grid">
+
+      <div class="transform-card reveal-left">
+        <div class="tc-before">
+          <span class="tc-label">Before</span>
+          <h3 class="tc-title">A staff member dials 200 numbers to take attendance</h3>
+          <p class="tc-desc">Half don't pick up. The ones who do give one-word answers written on sticky notes. Nobody knows who was reached by end of day.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>3 hours manual work</span>
+        </div>
+        <div class="tc-divider"><div class="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
+        <div class="tc-after">
+          <span class="tc-label">After</span>
+          <h3 class="tc-title">Sarathi calls every number simultaneously, in parallel</h3>
+          <p class="tc-desc">Each call is a real conversation — it asks who's present, captures the reason for absence, and flags students who need follow-up. Results appear in your dashboard before the first period ends.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Done in 8 minutes</span>
+        </div>
+      </div>
+
+      <div class="transform-card reveal-right">
+        <div class="tc-before">
+          <span class="tc-label">Before</span>
+          <h3 class="tc-title">A survey agency hires 40 callers for a week-long project</h3>
+          <p class="tc-desc">Training takes two days. Half the callers quit mid-project. Data comes back inconsistent — some skipped questions, some added opinions. Analysis takes another week.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>10 days, 40 people</span>
+        </div>
+        <div class="tc-divider"><div class="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
+        <div class="tc-after">
+          <span class="tc-label">After</span>
+          <h3 class="tc-title">Sarathi runs the entire survey, every question, every respondent</h3>
+          <p class="tc-desc">Upload your question flow. Sarathi asks each question naturally, adapts to answers, and extracts structured responses with confidence scores. Every response is consistent, timestamped, and exportable.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>2 days, zero staff</span>
+        </div>
+      </div>
+
+      <div class="transform-card reveal-left">
+        <div class="tc-before">
+          <span class="tc-label">Before</span>
+          <h3 class="tc-title">A hospital's follow-up team calls 150 post-surgery patients</h3>
+          <p class="tc-desc">Each call takes 3–5 minutes. The team gets through 30 per day. Patients who needed urgent attention get called back on day three — too late for some.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>5 days to reach everyone</span>
+        </div>
+        <div class="tc-divider"><div class="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
+        <div class="tc-after">
+          <span class="tc-label">After</span>
+          <h3 class="tc-title">Sarathi calls every patient within hours of discharge</h3>
+          <p class="tc-desc">It asks about pain levels, medication compliance, and symptoms. Urgent responses are flagged instantly with a transcript and structured summary. No patient falls through the cracks.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>All 150 in 4 hours</span>
+        </div>
+      </div>
+
+      <div class="transform-card reveal-right">
+        <div class="tc-before">
+          <span class="tc-label">Before</span>
+          <h3 class="tc-title">An events company sends 500 reminder calls before a conference</h3>
+          <p class="tc-desc">Receptionists read from a script. Some forget to confirm attendance. The catering team gets the wrong count. Day-of chaos.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>12 staff, 2 days</span>
+        </div>
+        <div class="tc-divider"><div class="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
+        <div class="tc-after">
+          <span class="tc-label">After</span>
+          <h3 class="tc-title">Sarathi confirms every attendee and updates your sheet in real time</h3>
+          <p class="tc-desc">Each person gets a natural call — date, time, venue confirmed. Dietary preferences captured. Special requests logged. Your team sees a live dashboard with confirmed, declined, and pending — exported to CSV with one click.</p>
+          <span class="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>500 calls, 6 hours</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─── 3D · SIGNAL → STRUCTURE ─── -->
+<section class="flow-band" aria-label="Conversations become structured data">
+  <canvas class="flow-cv" id="flowGl"></canvas>
+  <div class="flow-tags" aria-hidden="true">
+    <span class="flow-tag">In<b>A conversation</b></span>
+    <span class="flow-tag">Out<b>Your spreadsheet</b></span>
+  </div>
+</section>
+
+<!-- ─── INTERACTIVE DEMO ─── -->
+<section class="demo" id="demo">
+  <div class="wrap">
+    <span class="kick">Try it yourself</span>
+    <h2 class="section-title display">Don't read about it — hear it.</h2>
+    <p class="section-sub">This is an attendance call exactly as Sarathi runs it. Interrupt the agent mid-sentence; it stops instantly, absorbs what you say, and picks up where it left off.</p>
+    <div class="demo-box reveal-scale">
+      <canvas id="demoGl"></canvas>
+      <div class="demo-inner">
+        <div class="demo-left">
+          <div class="demo-bar">
+            <span class="s-pill" id="dChip"><b></b><span id="dChipTxt">Idle</span></span>
+            <span class="s-timer" id="dTimer">00:00</span>
+          </div>
+          <div class="s-waveform" id="dWave"></div>
+          <div class="demo-transcript" id="dTranscript"></div>
+          <div class="demo-choices" id="dChoices"></div>
+          <div class="demo-btns">
+            <button class="demo-orb" id="dOrb" data-m="idle">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#e9e4da"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="#e9e4da" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <button class="btn-interrupt" id="dIntBtn">Interrupt</button>
+            <button class="btn-end" id="dEndBtn">End call</button>
+          </div>
+        </div>
+        <div class="demo-right">
+          <span class="pane-h">Extracted fields</span>
+          <div class="demo-fields" id="dFields"></div>
+          <div class="demo-latency" id="dLatency"></div>
+          <div class="demo-summary" id="dSummary">
+            <h5>Call complete</h5>
+            <p id="dSumTxt"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CAMPAIGN SIMULATOR ─── -->
+<section class="lab" id="simulator">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Campaign simulator</span>
+      <h2 class="display">Launch a campaign. Watch results land.</h2>
+      <p class="sec-sub">This is the exact loop your team runs — upload a contact list, start the campaign, and watch conversations become structured rows you can export.</p>
+    </div>
+    <div class="sim-shell reveal-scale">
+      <div class="sim-side">
+        <div class="sim-side-h"><span>contacts · attendance.csv</span><span id="simClock">00:00</span></div>
+        <div id="simList"></div>
+      </div>
+      <div class="sim-main">
+        <div class="sim-counters">
+          <div class="sim-counter"><b id="cQueued">8</b><span>Queued</span></div>
+          <div class="sim-counter"><b id="cCalling">0</b><span>Calling</span></div>
+          <div class="sim-counter"><b id="cDone">0</b><span>Completed</span></div>
+          <div class="sim-counter"><b id="cMissed">0</b><span>Missed</span></div>
+        </div>
+        <div class="sim-progress"><i id="simBar"></i></div>
+        <div class="sim-feed" id="simFeed"></div>
+        <div class="sim-summary" id="simSummary"><span id="simSumTxt"></span><a href="campaign-detail.html" class="conf" style="text-decoration:none;cursor:pointer">Open dashboard →</a></div>
+      </div>
+    </div>
+    <div class="sim-actions">
+      <button class="btn-primary sm" id="simStart">Run this campaign</button>
+      <button class="btn-ghost sm" id="simReset">Reset</button>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LATENCY LAB ─── -->
+<section class="lab" id="latency" style="padding-top:40px">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Latency lab</span>
+      <h2 class="display">Feel what two seconds does to a conversation.</h2>
+      <p class="sec-sub">Same question, two systems. Watch how long each one takes to simply answer a person — then imagine every turn of a call feeling like the left column.</p>
+    </div>
+    <div class="lat-shell reveal-scale" id="latShell">
+      <div class="lat-col sarathi" id="latColS">
+        <span class="lat-tag"><i></i>Echo Sarathi</span>
+        <div id="latRowsS"></div>
+        <div class="lat-reply">
+          <div class="lat-q">“Hi — can we move my delivery to Friday?”</div>
+          <div class="lat-a" id="latAnsS"></div>
+        </div>
+      </div>
+      <div class="lat-col bot">
+        <span class="lat-tag"><i></i>Typical voicebot</span>
+        <div id="latRowsB"></div>
+        <div class="lat-reply">
+          <div class="lat-q">“Hi — can we move my delivery to Friday?”</div>
+          <div class="lat-a" id="latAnsB"></div>
+        </div>
+      </div>
+    </div>
+    <div class="sim-actions">
+      <button class="btn-primary sm" id="latRun">Run the turn</button>
+    </div>
+    <p class="lat-note">End-to-end = caller stops speaking → agent's voice responds. Hairline marks the 900 ms median target; second mark on End-to-end rows is the 1500 ms ceiling.</p>
+  </div>
+</section>
+
+<!-- ─── BARGE-IN THEATER ─── -->
+<section class="lab" id="interrupt" style="padding-top:40px">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Interruption, visualized</span>
+      <h2 class="display">Watch a barge-in land safely.</h2>
+      <p class="sec-sub">Most bots talk over people, or crash mid-turn. Sarathi hears you coming, stops within 200&nbsp;ms, absorbs the new instruction — and continues from exactly where it left off.</p>
+    </div>
+    <div class="barge-shell reveal-scale">
+      <canvas class="barge-cv" id="bargeGl"></canvas>
+      <span class="barge-cap" id="bargeCap">Sarathi is speaking…</span>
+      <span class="barge-state" id="bargeState">Live turn · response 240 ms</span>
+    </div>
+    <div class="sim-actions">
+      <button class="btn-primary sm" id="bargeBtn">Interrupt mid-sentence</button>
+    </div>
+  </div>
+</section>
+
+<!-- ─── VOICE GALLERY ─── -->
+<section class="lab" id="voices" style="padding-top:40px">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Voice gallery</span>
+      <h2 class="display">Six voices. One sounds like your brand.</h2>
+      <p class="sec-sub">Every agent ships with studio-grade voices. Pick one and watch its signature while it speaks — this choice takes seconds, and changes everything.</p>
+    </div>
+    <div class="voice-grid reveal-scale" role="radiogroup" aria-label="Agent voice presets" id="voiceGrid"></div>
+    <div class="voice-preview" id="voicePreview">
+      <span class="vp-voice" id="vpVoice">Asha</span>
+      <span class="vp-line" id="vpLine">Select a voice to hear how it introduces itself…</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LIVE CALL MONITOR ─── -->
+<section class="monitor" id="monitor">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Live dashboard</span>
+      <h2 class="display">Every call, tracked in real time.</h2>
+      <p class="sec-sub">Watch your campaign unfold as Sarathi makes calls — status, duration, and extracted data update as each conversation completes.</p>
+    </div>
+    <div class="monitor-shell reveal-scale" id="monShell">
+      <div class="mon-head"><h4>Campaign: Student Attendance — Week 12</h4><span class="mon-live"><span class="dot"></span>Live</span></div>
+      <div class="mon-counters">
+        <div class="mc-tile accent"><b id="monTotal">48</b><span>Total</span></div>
+        <div class="mc-tile"><b id="monDone">0</b><span>Completed</span></div>
+        <div class="mc-tile"><b id="monActive">0</b><span>Active</span></div>
+        <div class="mc-tile warn"><b id="monMiss">0</b><span>No answer</span></div>
+        <div class="mc-tile"><b id="monBusy">0</b><span>Busy</span></div>
+      </div>
+      <div class="mon-body">
+        <div class="mon-chart" id="monChart"></div>
+        <div class="mon-bar-labels" id="monLabels"></div>
+        <div class="mon-table">
+          <div class="mon-row head"><span>Contact</span><span>Phone</span><span>Status</span><span>Duration</span></div>
+          <div id="monRows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CONVERSATION REPLAY ─── -->
+<section class="replay" id="replay">
+  <div class="wrap">
+    <div class="lab-head">
+      <span class="kick" style="justify-content:center">Conversation replay</span>
+      <h2 class="display">From voice to structured data — live.</h2>
+      <p class="sec-sub">Watch a real call unfold: Sarathi listens, responds naturally, and extracts every data point with confidence scores. Transcript, fields, and waveform — all visible.</p>
+    </div>
+    <div class="replay-shell reveal-scale" id="replayShell">
+      <div class="replay-transcript" id="replayTranscript"></div>
+      <div class="replay-side">
+        <h5>Extracted fields</h5>
+        <div class="replay-fields" id="replayFields">
+          <div class="rf-row"><span class="k">Student</span><span class="v pending" data-val="Aarav Kumar">—</span></div>
+          <div class="rf-row"><span class="k">Status</span><span class="v pending" data-val="Absent">—</span></div>
+          <div class="rf-row"><span class="k">Reason</span><span class="v pending" data-val="Medical appointment">—</span></div>
+          <div class="rf-row"><span class="k">Parent</span><span class="v pending" data-val="Mrs. Kumar">—</span></div>
+          <div class="rf-row"><span class="k">Follow-up</span><span class="v pending" data-val="Medical certificate requested">—</span></div>
+          <div class="rf-row"><span class="k">Duration</span><span class="v pending" data-val="1:24">—</span></div>
+        </div>
+        <div class="replay-wave"><canvas id="replayWave"></canvas></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LANGUAGE FIELD ─── -->
+<section class="lang-band" id="languages">
+  <div class="wrap">
+    <span class="kick" style="justify-content:center">Built multilingual from day one</span>
+    <h2 class="display">English today. Every Indian voice next.</h2>
+    <canvas class="lang-cv" id="langGl" aria-hidden="true"></canvas>
+    <p class="sec-sub">Phase 1 runs on English. Telugu, Telugu–English code-switching and more Indian languages are already on the road — designed in from the start, not bolted on later.</p>
+    <div class="sim-actions"><a class="btn-ghost sm" href="roadmap.html">See the language roadmap →</a></div>
+  </div>
+</section>
+
+<!-- ─── CTA ─── -->
+<section class="cta reveal">
+  <canvas class="cta-orb" id="ctaOrb" aria-hidden="true"></canvas>
+  <div class="wrap">
+    <span class="kick" style="justify-content:center">Start in minutes</span>
+    <h2 class="display">A thousand conversations are waiting.</h2>
+    <p>Create an agent, upload your list, and hear the difference on your very first call. No hardware, no scripts to record.</p>
+    <div class="cta-btns">
+      <a class="btn-primary" href="login.html">Start free</a>
+      <a class="btn-ghost" href="roadmap.html">See the full flow</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div class="f-brand">
+        <a href="#" class="logo" aria-label="Echo Sarathi — home">
+          <svg class="logo-mark" width="38" height="22" viewBox="0 0 46 26" fill="none" aria-hidden="true">
+            <circle class="lm-src" cx="6" cy="13" r="2.2"/>
+            <path class="lm-a l1" d="M10.02 7.27 A7 7 0 0 1 10.02 18.73"/>
+            <path class="lm-a l2" d="M12.88 3.17 A12 12 0 0 1 12.88 22.83"/>
+            <circle class="lm-echo" cx="40" cy="13" r="2.2"/>
+            <path class="lm-b r1" d="M35.98 7.27 A7 7 0 0 0 35.98 18.73"/>
+            <path class="lm-b r2" d="M33.12 3.17 A12 12 0 0 0 33.12 22.83"/>
+          </svg>
+          <span class="logo-text" style="font-size:20px">Echo Sarathi</span>
+        </a>
+        <p>Voice infrastructure for real conversations — calls that listen, take turns, and return answers as data.</p>
+      </div>
+      <div class="f-col"><h6>Platform</h6><a href="overview.html">Overview</a><a href="agents.html">Agents</a><a href="campaigns.html">Campaigns</a><a href="calls.html">Call history</a></div>
+      <div class="f-col"><h6>Experience</h6><a href="playground.html">Playground</a><a href="agent-builder.html">Agent builder</a><a href="pricing.html">Pricing</a><a href="roadmap.html">Roadmap</a><a href="login.html">Sign in</a></div>
+      <div class="f-col"><h6>Company</h6><a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a><a href="roadmap.html#languages">Languages</a><a href="roadmap.html#guide">Guide</a></div>
+    </div>
+    <div class="f-base">
+      <span>&copy; 2026 Echo Sarathi Labs</span>
+      <span class="tl">English today &middot; తెలుగు next</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ─── FLOATING AGENT WIDGET ─── -->
+<div class="agent-fab" id="agentFab"><span class="fab-pulse"></span>
+  <span class="fab-mic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#e9e4da"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="#e9e4da" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+</div>
+<div class="agent-panel" id="agentPanel">
+  <div class="ap-head"><span class="dot"></span><span class="info"><b>Sarathi Agent</b><span>Online &middot; ready to help</span></span><span class="close" id="apClose">&times;</span></div>
+  <div class="ap-body" id="apBody"><div class="msg bot">Hi! I'm Sarathi — the voice agent behind Echo Sarathi. Ask me anything about how the platform works.</div></div>
+  <div class="ap-foot"><input type="text" id="apInput" placeholder="Type a message..." autocomplete="off"><button id="apSend" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="#e9e4da" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   Hero Waveform Canvas — multi-layered speech visualization
+   ═══════════════════════════════════════════════════ */
+(function(){
+  const cv=document.getElementById('waveCanvas');
+  const ctx=cv.getContext('2d');
+  let w,h;
+  function resize(){w=cv.width=cv.clientWidth;h=cv.height=cv.clientHeight}
+  resize();addEventListener('resize',resize);
+
+  /* Speech wave functions — each layer has its own character */
+  const layers=[
+    {freq:.018,speed:.003,amp:14,color:'163,154,142',alpha:.7,lw:1.8,offset:0},      /* stone — primary human voice */
+    {freq:.028,speed:-.004,amp:10,color:'163,154,142',alpha:.35,lw:1.2,offset:2},    /* stone ghost — human shadow */
+    {freq:.022,speed:.005,amp:16,color:'233,228,218',alpha:.85,lw:2.2,offset:0},     /* pearl — primary echo */
+    {freq:.035,speed:-.006,amp:8,color:'233,228,218',alpha:.3,lw:1,offset:4},        /* pearl ghost — echo shadow */
+    {freq:.012,speed:.002,amp:6,color:'143,134,118',alpha:.2,lw:.8,offset:6},        /* deep harmonic */
+  ];
+
+  function waveY(x,t,layer){
+    return Math.sin(x*layer.freq+t*layer.speed)*layer.amp
+      +Math.sin(x*layer.freq*2.3-t*layer.speed*1.7)*layer.amp*.3
+      +Math.cos(x*layer.freq*.7+t*layer.speed*.5)*layer.amp*.15;
+  }
+
+  (function draw(t){
+    ctx.clearRect(0,0,w,h);
+    const cx=w*.5,cy=h*.48;
+    const halfW=Math.min(w,h)*.48;
+
+    /* Ambient glow behind center */
+    const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,halfW*.6);
+    cg.addColorStop(0,'rgba(233,228,218,.08)');cg.addColorStop(.5,'rgba(233,228,218,.02)');cg.addColorStop(1,'rgba(233,228,218,0)');
+    ctx.fillStyle=cg;ctx.fillRect(0,0,w,h);
+
+    /* Expanding echo rings from center */
+    for(let r=0;r<5;r++){
+      const ph=(t*.00035+r*.2)%1,rad=8+ph*halfW*.85;
+      ctx.beginPath();ctx.arc(cx,cy,rad,0,Math.PI*2);
+      ctx.strokeStyle='rgba(233,228,218,'+((1-ph)*.18).toFixed(3)+')';ctx.lineWidth=.8;ctx.stroke();
+    }
+
+    /* Center orb — the "voice origin" */
+    const pulse=.85+Math.sin(t*.003)*.15;
+    const orbGrad=ctx.createRadialGradient(cx,cy,0,cx,cy,28*pulse);
+    orbGrad.addColorStop(0,'rgba(233,228,218,.95)');orbGrad.addColorStop(.3,'rgba(233,228,218,.4)');orbGrad.addColorStop(.7,'rgba(233,228,218,.08)');orbGrad.addColorStop(1,'rgba(233,228,218,0)');
+    ctx.fillStyle=orbGrad;ctx.beginPath();ctx.arc(cx,cy,28*pulse,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='rgba(250,248,244,.95)';ctx.beginPath();ctx.arc(cx,cy,3.5,0,Math.PI*2);ctx.fill();
+
+    ctx.lineJoin='round';ctx.lineCap='round';
+
+    /* Draw all waveform layers — left side (human) and right side (echo) */
+    layers.forEach(layer=>{
+      const eneLeft=layer.color==='163,154,142';
+      const eneRight=layer.color==='233,228,218';
+      if(!eneLeft&&!eneRight)return;
+
+      ctx.beginPath();
+      ctx.strokeStyle='rgba('+layer.color+','+layer.alpha+')';
+      ctx.lineWidth=layer.lw;
+      if(layer.alpha>.5){ctx.shadowColor='rgba('+layer.color+','+(layer.alpha*.6)+')';ctx.shadowBlur=8;}
+
+      const startX=eneLeft?0:cx;
+      const endX=eneLeft?cx:w;
+      for(let x=startX;x<=endX;x+=2){
+        const u=(x-startX)/(endX-startX);
+        /* Envelope: fade in, sustain, fade out */
+        const fadeIn=Math.sin(Math.min(1,u*1.2)*Math.PI*.5);
+        const fadeOut=Math.sin(Math.max(0,Math.min(1,(1-u)*7))*Math.PI*.5);
+        const env=fadeIn*fadeOut;
+        const y=cy+waveY(x+layer.offset,t,layer)*env;
+        x===startX?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.stroke();ctx.shadowBlur=0;
+    });
+
+    /* Ghost reflection — faint inverted echo on right side */
+    ctx.beginPath();
+    ctx.strokeStyle='rgba(233,228,218,.12)';ctx.lineWidth=.8;
+    for(let x=cx;x<=w;x+=3){
+      const u=(x-cx)/(w-cx);
+      const env=Math.sin(Math.min(1,u*1.08)*Math.PI*.5);
+      const y=cy-waveY(x,t,layers[2])*env*.5;
+      x===cx?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    /* Floating particles — sparse, atmospheric */
+    for(let i=0;i<18;i++){
+      const px=cx+Math.sin(t*.0008+i*1.7)*halfW*.7;
+      const py=cy+Math.cos(t*.0006+i*2.3)*halfW*.35;
+      const sz=.8+Math.sin(t*.002+i)*.5;
+      const a=.08+Math.sin(t*.0015+i*3)*.06;
+      ctx.fillStyle='rgba(233,228,218,'+a.toFixed(3)+')';
+      ctx.beginPath();ctx.arc(px,py,sz,0,Math.PI*2);ctx.fill();
+    }
+
+    requestAnimationFrame(draw);
+  })(0);
+})();
+
+/* ═══════════════════════════════════════════════════
+   Nav scroll
+   ═══════════════════════════════════════════════════ */
+addEventListener('scroll',()=>{
+  document.getElementById('mainNav').classList.toggle('scrolled',scrollY>40);
+},{passive:true});
+
+/* Hamburger toggle */
+const hBtn=document.getElementById('hamburgerBtn');
+const mDr=document.getElementById('mobileDrawer');
+if(hBtn&&mDr){
+  hBtn.addEventListener('click',()=>{
+    hBtn.classList.toggle('open');
+    mDr.classList.toggle('open');
+    document.body.style.overflow=mDr.classList.contains('open')?'hidden':'';
+  });
+  mDr.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>{
+    hBtn.classList.remove('open');
+    mDr.classList.remove('open');
+    document.body.style.overflow='';
+  }));
+}
+
+/* ═══════════════════════════════════════════════════
+   Reveal on scroll (with stagger support)
+   ═══════════════════════════════════════════════════ */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in')}),{threshold:.12});
+document.querySelectorAll('.reveal,.reveal-left,.reveal-right,.reveal-scale').forEach(el=>io.observe(el));
+
+/* ═══════════════════════════════════════════════════
+   Showcase waveform
+   ═══════════════════════════════════════════════════ */
+(function(){
+  const el=document.getElementById('showWave');
+  for(let i=0;i<48;i++)el.appendChild(document.createElement('i'));
+  const bars=[...el.children];
+  (function anim(t){
+    bars.forEach((b,i)=>{
+      const n=Math.sin(t/200+i*.5)*.5+.5;
+      b.style.height=Math.max(4,30*(.3+.7*n)*(0.7+Math.random()*.3))+'px';
+    });
+    requestAnimationFrame(anim);
+  })(0);
+})();
+
+/* ═══════════════════════════════════════════════════
+   Demo WebGL background
+   ═══════════════════════════════════════════════════ */
+(function(){
+  const cv=document.getElementById('demoGl');
+  try{
+    const gl=cv.getContext('webgl',{antialias:false,alpha:true});
+    if(!gl)return;
+    const vs='attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
+    const fs=`precision lowp float;uniform float t;uniform vec2 r;
+      void main(){
+        vec2 uv=gl_FragCoord.xy/r;
+        float v=sin(uv.x*8.+t*.3)*sin(uv.y*6.-t*.22)*.5+.5;
+        vec3 c=mix(vec3(.03,.03,.034),vec3(.075,.073,.068),v);
+        gl_FragColor=vec4(c,.6);
+      }`;
+    function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o}
+    const pr=gl.createProgram();
+    gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+    gl.linkProgram(pr);gl.useProgram(pr);
+    const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+    const loc=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    const ut=gl.getUniformLocation(pr,'t'),ur=gl.getUniformLocation(pr,'r');
+    function size(){cv.width=cv.clientWidth*.35;cv.height=cv.clientHeight*.35;gl.viewport(0,0,cv.width,cv.height)}
+    size();addEventListener('resize',size);
+    (function draw(tm){gl.uniform1f(ut,tm*.001);gl.uniform2f(ur,cv.width,cv.height);gl.drawArrays(gl.TRIANGLES,0,3);requestAnimationFrame(draw)})(0);
+  }catch(e){}
+})();
+
+/* ═══════════════════════════════════════════════════
+   Demo waveform bars
+   ═══════════════════════════════════════════════════ */
+const dWaveEl=document.getElementById('dWave');
+for(let i=0;i<48;i++)dWaveEl.appendChild(document.createElement('i'));
+const dBars=[...dWaveEl.children];
+let dAmp=.06,dTarget=.06;
+(function dWaveAnim(t){
+  dAmp+=(dTarget-dAmp)*.08;
+  dBars.forEach((b,i)=>{
+    const n=Math.sin(t/200+i*.5)*.5+.5;
+    b.style.height=Math.max(4,dAmp*60*(.3+.7*n)*(0.7+Math.random()*.3))+'px';
+  });
+  requestAnimationFrame(dWaveAnim);
+})(0);
+
+/* ═══════════════════════════════════════════════════
+   Interactive Demo Call
+   ═══════════════════════════════════════════════════ */
+const dTranscript=document.getElementById('dTranscript');
+const dChoices=document.getElementById('dChoices');
+const dChip=document.getElementById('dChip');
+const dChipTxt=document.getElementById('dChipTxt');
+const dOrb=document.getElementById('dOrb');
+const dIntBtn=document.getElementById('dIntBtn');
+const dEndBtn=document.getElementById('dEndBtn');
+const dTimer=document.getElementById('dTimer');
+const dFieldsEl=document.getElementById('dFields');
+const dLatEl=document.getElementById('dLatency');
+const dSumEl=document.getElementById('dSummary');
+
+const FIELD_DEFS=[['student_name','—'],['parent_name','—'],['present_today','—'],['reason','—'],['callback_requested','—']];
+FIELD_DEFS.forEach(([k])=>{
+  const r=document.createElement('div');r.className='d-frow';r.dataset.k=k;
+  r.innerHTML=`<span class="k">${k.replace(/_/g,' ')}</span><span class="v">— <span class="conf wait">waiting</span></span>`;
+  dFieldsEl.appendChild(r);
+});
+function setField(k,v,conf){
+  const row=dFieldsEl.querySelector(`[data-k="${k}"]`);
+  if(row)row.querySelector('.v').innerHTML=`${v} <span class="conf ${conf>=85?'hi':'md'}">${conf}%</span>`;
+}
+function addLat(stt,llm,tts,e2e){
+  dLatEl.innerHTML+=`<div class="lat-row"><span>${stt?'Turn '+(dLatEl.children.length+1):'Connecting'}</span><b>STT ${stt||'—'}ms · LLM ${llm}ms · TTS ${tts}ms · E2E ${e2e}ms</b></div>`;
+}
+
+let dMode='idle',dSec=0,dTimerIv=null,dWordIv=null,dCurResolve=null;
+
+function dSetState(m,label){
+  dMode=m;dOrb.dataset.m=m;
+  if(label!==false){dChip.dataset.s=m==='thinking'?'listening':m;dChipTxt.textContent=label||m.charAt(0).toUpperCase()+m.slice(1);}
+  dTarget=m==='speaking'?.9:m==='listening'?.34:m==='interrupted'?.12:.06;
+  dIntBtn.classList.toggle('show',m==='speaking');
+}
+function dBubble(who,text,instant){
+  const b=document.createElement('div');b.className='d-bub '+who;
+  b.innerHTML=`<span class="who">${who==='agent'?'Sarathi Agent':'Caller'}</span><span class="txt"></span>`;
+  dTranscript.appendChild(b);dTranscript.scrollTop=dTranscript.scrollHeight;
+  const txt=b.querySelector('.txt');
+  if(instant){txt.textContent=text;return Promise.resolve();}
+  const words=text.split(' ');let i=0;
+  return new Promise(res=>{
+    dCurResolve=res;
+    dWordIv=setInterval(()=>{
+      txt.textContent=words.slice(0,++i).join(' ');
+      dTranscript.scrollTop=dTranscript.scrollHeight;
+      if(i>=words.length){clearInterval(dWordIv);dCurResolve=null;res();}
+    },who==='agent'?95:130);
+  });
+}
+function dStopSpeech(){if(dCurResolve){clearInterval(dWordIv);const r=dCurResolve;dCurResolve=null;r();}}
+function dChoice(opts){
+  return new Promise(res=>{
+    dChoices.innerHTML='';
+    opts.forEach(o=>{
+      const b=document.createElement('button');b.className='choice-btn';b.textContent=o;
+      b.onclick=()=>{dChoices.innerHTML='';dBubble('caller',o,true).then(()=>res(o));};
+      dChoices.appendChild(b);
+    });
+  });
+}
+function dWait(ms){return new Promise(r=>setTimeout(r,ms))}
+async function runDemo(){
+  dTranscript.innerHTML='';dLatEl.innerHTML='';dChoices.innerHTML='';
+  dSumEl.classList.remove('show');
+  FIELD_DEFS.forEach(([k])=>{const r=dFieldsEl.querySelector(`[data-k="${k}"]`);r.querySelector('.v').innerHTML='— <span class="conf wait">waiting</span>';});
+  dSec=0;dTimer.textContent='00:00';
+  dTimerIv=setInterval(()=>{dSec++;dTimer.textContent=String(Math.floor(dSec/60)).padStart(2,'0')+':'+String(dSec%60).padStart(2,'0')},1000);
+  dOrb.classList.add('live');
+  dSetState('connecting','Connecting');await dWait(800);
+  dSetState('listening');await dWait(500);
+  setField('parent_name','Mr. Rao',96);
+  await dBubble('agent','Hello, am I speaking with Mr. Rao, Anika\'s father?');
+  addLat(180,320,195,695);dSetState('listening');
+  const ans=await dChoice(["Yes, speaking.","Sorry, who is this?"]);
+  if(ans.startsWith("Sorry")){await dBubble('agent','This is Sarathi, calling from Sunrise Academy about Anika\'s attendance.');addLat(180,340,190,710);dSetState('listening');}
+  setField('student_name','Anika',94);dSetState('speaking');
+  await dBubble('agent','Thank you. Could you tell me whether Anika will attend classes today?');
+  addLat(180,310,188,678);dSetState('listening');
+  const att=await dChoice(["She\'s unwell today.","Yes, she\'ll be there."]);
+  if(att.startsWith("She")){
+    setField('present_today','No',91);setField('reason','Sick leave',88);
+    dSetState('speaking');
+    await dBubble('agent','I\'m sorry to hear that. Should I ask her class teacher to call you back this evening?');
+    addLat(180,300,192,672);dSetState('listening');
+    const cb=await dChoice(["Yes, please.","No, that\'s fine."]);
+    setField('callback_requested',cb.startsWith("Yes")?'Yes':'No',90);
+    dSetState('speaking');
+    await dBubble('agent','Noted. I\'ve recorded everything for the school. Wishing Anika a quick recovery — thank you, Mr. Rao.');
+    addLat(180,290,185,655);
+  }else{
+    setField('present_today','Yes',93);setField('reason','Attending',87);setField('callback_requested','No',84);
+    dSetState('speaking');
+    await dBubble('agent','Wonderful. That\'s recorded for the school register — thank you, Mr. Rao. Have a good day.');
+    addLat(180,310,190,680);
+  }
+  finishDemo();
+}
+function finishDemo(){
+  clearInterval(dTimerIv);dSetState('completed','Completed');dOrb.classList.remove('live');
+  document.getElementById('dSumTxt').textContent=`Duration ${dTimer.textContent} · 5 of 5 fields captured · outcome logged to campaign sheet.`;
+  dSumEl.classList.add('show');
+}
+dIntBtn.onclick=()=>{dStopSpeech();dSetState('interrupted','Interrupted');setTimeout(async()=>{dSetState('speaking');await dBubble('agent','Of course — go ahead.');addLat(180,295,188,663);dSetState('listening');},400);};
+dEndBtn.onclick=()=>{dStopSpeech();clearInterval(dTimerIv);dChoices.innerHTML='';finishDemo();};
+dOrb.onclick=()=>{if(dMode==='idle'||dMode==='completed')runDemo();};
+
+/* ═══════════════════════════════════════════════════
+   Floating Agent Widget
+   ═══════════════════════════════════════════════════ */
+const agentFab=document.getElementById('agentFab');
+const agentPanel=document.getElementById('agentPanel');
+const apClose=document.getElementById('apClose');
+const apBody=document.getElementById('apBody');
+const apInput=document.getElementById('apInput');
+const apSend=document.getElementById('apSend');
+agentFab.onclick=()=>{agentPanel.classList.toggle('open');agentFab.classList.toggle('open');if(agentPanel.classList.contains('open'))apInput.focus()};
+apClose.onclick=()=>{agentPanel.classList.remove('open');agentFab.classList.remove('open')};
+
+const AGENT_REPLIES=[
+  "Sarathi makes outbound phone calls using AI voice agents. Upload a contact list, pick an agent, and it handles the conversation — then returns structured data.",
+  "Each agent can be customized with questions, context, and an extraction schema. The agent weaves questions into natural conversation, not a rigid script.",
+  "Right now we support English. Telugu is next on the roadmap, followed by Telugu+English code-switching and multiple Indian languages.",
+  "Try the Playground to test an agent with zero telephony cost. You can speak or type, and see extracted fields populate in real time.",
+  "Campaigns run during 9 AM – 9 PM IST. The system handles busy signals, no-answers, and callbacks automatically.",
+  "Every call returns a transcript, extracted fields with confidence scores, call duration, and outcome — all exportable as CSV or Excel.",
+  "The interrupt handling is real: if a caller speaks while the agent is talking, the agent stops immediately and listens.",
+  "You can build agents for attendance calls, surveys, fee reminders, confirmations, follow-ups, qualification — anything that needs a structured phone conversation."
+];
+let agentMsgIdx=0;
+function agentReply(text){const d=document.createElement('div');d.className='msg bot';d.textContent=text;apBody.appendChild(d);apBody.scrollTop=apBody.scrollHeight;}
+function agentUserMsg(text){const d=document.createElement('div');d.className='msg user';d.textContent=text;apBody.appendChild(d);apBody.scrollTop=apBody.scrollHeight;}
+function handleAgentSend(){const v=apInput.value.trim();if(!v)return;agentUserMsg(v);apInput.value='';setTimeout(()=>{agentReply(AGENT_REPLIES[agentMsgIdx%AGENT_REPLIES.length]);agentMsgIdx++},500);}
+apSend.onclick=handleAgentSend;
+apInput.onkeydown=e=>{if(e.key==='Enter')handleAgentSend()};
+
+/* ═══════════════════════════════════════════════════
+   Custom cursor (fine pointers only)
+   ═══════════════════════════════════════════════════ */
+(function(){
+  if(!matchMedia('(pointer:fine)').matches)return;
+  const dot=document.createElement('div');dot.className='cursor-dot';
+  const ring=document.createElement('div');ring.className='cursor-ring';
+  document.body.append(dot,ring);
+  document.body.classList.add('custom-cursor');
+  let mx=-100,my=-100,rx=-100,ry=-100;
+  addEventListener('mousemove',e=>{
+    mx=e.clientX;my=e.clientY;
+    dot.style.left=mx+'px';dot.style.top=my+'px';
+  },{passive:true});
+  (function loop(){
+    rx+=(mx-rx)*.16;ry+=(my-ry)*.16;
+    ring.style.left=rx+'px';ring.style.top=ry+'px';
+    requestAnimationFrame(loop);
+  })();
+  document.querySelectorAll('a,button,.step,.transform-card,.problem-item,.stat-card').forEach(el=>{
+    el.addEventListener('mouseenter',()=>ring.classList.add('hover'));
+    el.addEventListener('mouseleave',()=>ring.classList.remove('hover'));
+  });
+})();
+
+/* ═══════════════════════════════════════════════════
+   Live Call Monitor — animated campaign dashboard
+   ═══════════════════════════════════════════════════ */
+(function(){
+  const contacts=[
+    {n:'Priya Sharma',p:'+91 98765 43210'},
+    {n:'Rahul Patel',p:'+91 87654 32109'},
+    {n:'Ananya Gupta',p:'+91 76543 21098'},
+    {n:'Vikram Singh',p:'+91 65432 10987'},
+    {n:'Deepa Nair',p:'+91 54321 09876'},
+    {n:'Arjun Reddy',p:'+91 43210 98765'},
+    {n:'Meera Joshi',p:'+91 32109 87654'},
+    {n:'Sanjay Kumar',p:'+91 21098 76543'},
+    {n:'Kavita Das',p:'+91 10987 65432'},
+    {n:'Rohan Verma',p:'+91 09876 54321'},
+  ];
+  const statuses=['ok','ringing','miss','busy'];
+  const weights=[.55,.2,.18,.07];
+  const durations=['0:42','1:18','0:56','—','1:04','0:33','1:31','0:47','0:59','—'];
+
+  const rowsEl=document.getElementById('monRows');
+  const chartEl=document.getElementById('monChart');
+  const labelsEl=document.getElementById('monLabels');
+
+  /* Build row HTML */
+  contacts.forEach((c,i)=>{
+    const row=document.createElement('div');row.className='mon-row';
+    row.id='mr'+i;
+    row.innerHTML='<span class="name">'+c.n+'</span><span class="phone">'+c.p+'</span><span class="status miss">Queued</span><span class="dur">—</span>';
+    rowsEl.appendChild(row);
+  });
+
+  /* Build chart bars */
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dayCounts=[12,18,24,8,31,6,0];
+  const maxD=Math.max(...dayCounts);
+  days.forEach((d,i)=>{
+    const bar=document.createElement('div');bar.className='mon-bar';
+    bar.style.height='4px';bar.setAttribute('data-n',dayCounts[i]);
+    bar.id='mb'+i;
+    chartEl.appendChild(bar);
+    const lb=document.createElement('span');lb.textContent=d;labelsEl.appendChild(lb);
+  });
+
+  /* Animate counters */
+  const done=document.getElementById('monDone');
+  const active=document.getElementById('monActive');
+  const miss=document.getElementById('monMiss');
+  const busy=document.getElementById('monBusy');
+  let dN=0,aN=0,mN=0,bN=0;
+
+  function pickStatus(){
+    let r=Math.random(),acc=0;
+    for(let i=0;i<weights.length;i++){acc+=weights[i];if(r<=acc)return statuses[i];}
+    return statuses[0];
+  }
+
+  /* Animate chart on scroll */
+  new IntersectionObserver((es,ob)=>es.forEach(e=>{
+    if(!e.isIntersecting)return;
+    ob.disconnect();
+    /* Stagger bar heights */
+    dayCounts.forEach((c,i)=>{
+      setTimeout(()=>{document.getElementById('mb'+i).style.height=(c/maxD*100)+'%'},i*80);
+    });
+    /* Animate contacts */
+    let idx=0;
+    function nextCall(){
+      if(idx>=contacts.length)return;
+      const row=document.getElementById('mr'+idx);
+      const st=row.querySelector('.status');
+      /* Ringing */
+      st.textContent='Ringing';st.className='status ringing';
+      active.textContent=++aN;
+      const dur=1200+Math.random()*1800;
+      setTimeout(()=>{
+        const s=pickStatus();
+        active.textContent=Math.max(0,--aN);
+        st.textContent=s==='ok'?'Answered':s==='miss'?'No answer':s==='busy'?'Busy':s;
+        st.className='status '+s;
+        if(s==='ok'){done.textContent=++dN;row.querySelector('.dur').textContent=durations[idx%durations.length]}
+        else if(s==='miss')miss.textContent=++mN;
+        else busy.textContent=++bN;
+        idx++;setTimeout(nextCall,400+Math.random()*600);
+      },dur);
+    }
+    setTimeout(nextCall,600);
+  }),{threshold:.3}).observe(document.getElementById('monShell'));
+})();
+
+/* ═══════════════════════════════════════════════════
+   Conversation Replay — step-by-step transcript
+   ═══════════════════════════════════════════════════ */
+(function(){
+  const turns=[
+    {who:'agent',text:'Good morning! This is Sarathi calling from Sunrise Academy. May I speak with Mrs. Kumar?',time:'0:00'},
+    {who:'caller',text:'Yes, this is she. Who is this?',time:'0:04'},
+    {who:'agent',text:'Mrs. Kumar, I\'m calling because Aarav was absent from school today. I wanted to check if everything is alright and if there\'s anything we should know.',time:'0:07'},
+    {who:'caller',text:'Oh yes, Aarav has a dental appointment this morning. He should be back by lunch.',time:'0:18'},
+    {who:'agent',text:'Thank you for letting us know. Could I get the reason documented — you mentioned a dental appointment?',time:'0:24'},
+    {who:'caller',text:'Yes, it\'s a routine dental checkup at Dr. Mehta\'s clinic.',time:'0:31'},
+    {who:'agent',text:'Perfect. And will Aarav return for the afternoon session?',time:'0:36'},
+    {who:'caller',text:'Yes, he\'ll be there by 1 PM.',time:'0:40'},
+    {who:'agent',text:'Wonderful. I\'ve noted the absence as a medical appointment. Is there anything else you\'d like us to know?',time:'0:43'},
+    {who:'caller',text:'No, that\'s all. Thank you for calling.',time:'0:52'},
+    {who:'agent',text:'You\'re welcome, Mrs. Kumar. Have a great day. Goodbye!',time:'0:55'},
+  ];
+
+  const fieldReveal=[
+    {at:1,field:0},{at:2,field:1},{at:3,field:2},{at:3,field:3},{at:9,field:4},{at:10,field:5}
+  ];
+
+  const transcript=document.getElementById('replayTranscript');
+  const fields=document.querySelectorAll('#replayFields .rf-row .v');
+
+  /* Build initial turn elements */
+  const turnEls=turns.map((t,i)=>{
+    const el=document.createElement('div');
+    el.className='replay-turn '+t.who;
+    el.innerHTML='<div class="avatar">'+(t.who==='agent'?'S':'P')+'</div><div><div class="text">'+t.text+'</div><div class="time">'+t.time+'</div></div>';
+    transcript.appendChild(el);
+    return el;
+  });
+
+  /* Animate on scroll */
+  new IntersectionObserver((es,ob)=>es.forEach(e=>{
+    if(!e.isIntersecting)return;
+    ob.disconnect();
+    let ti=0;
+    function showNext(){
+      if(ti>=turns.length)return;
+      turnEls[ti].classList.add('show');
+      transcript.scrollTop=transcript.scrollHeight;
+      /* Check if any fields should be revealed at this turn */
+      fieldReveal.forEach(fr=>{
+        if(fr.at===ti){
+          const f=fields[fr.field];
+          f.textContent=f.dataset.val;
+          f.classList.remove('pending');
+          f.style.color='var(--fg)';
+        }
+      });
+      ti++;
+      setTimeout(showNext,700);
+    }
+    showNext();
+  }),{threshold:.2}).observe(document.getElementById('replayShell'));
+
+  /* Mini waveform in replay panel */
+  const wv=document.getElementById('replayWave');
+  if(wv){
+    const wctx=wv.getContext('2d');
+    let rw,rh;
+    function wResize(){rw=wv.width=wv.clientWidth;rh=wv.height=wv.clientHeight}
+    wResize();addEventListener('resize',wResize);
+    (function drawW(t){
+      wctx.clearRect(0,0,rw,rh);
+      wctx.beginPath();wctx.strokeStyle='rgba(233,228,218,.4)';wctx.lineWidth=1.2;
+      for(let x=0;x<=rw;x+=2){
+        const u=x/rw;
+        const env=Math.sin(u*Math.PI);
+        const y=rh/2+env*(Math.sin(x*.04+t*.003)*6+Math.sin(x*.08-t*.005)*3);
+        x===0?wctx.moveTo(x,y):wctx.lineTo(x,y);
+      }
+      wctx.stroke();
+      requestAnimationFrame(drawW);
+    })(0);
+  }
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════
+   Interactive Labs — simulator / latency / voices
+   ═══════════════════════════════════════════════════ */
+(function(){
+'use strict';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function typeInto(el,text,delay,cps){
+  clearTimeout(el._t);el.textContent='';
+  const caret=document.createElement('span');caret.className='type-caret';el.appendChild(caret);
+  let i=0;const per=RM?0:Math.max(12,1000/cps);
+  setTimeout(function step(){
+    if(i<text.length){caret.insertAdjacentText('beforebegin',text[i]);i++;el._t=setTimeout(step,per)}
+  },delay);
+}
+
+/* ── Campaign simulator ── */
+const CONTACTS=[
+  {n:'Asha K.',ini:'A',ph:'+91 98××× ×2103',ok:1,f:'Confirmed — Friday 4 PM works',d:'0:52',c:96},
+  {n:'Ravi T.',ini:'R',ph:'+91 99××× ×8842',ok:1,f:'Will attend, asked for bus route',d:'0:47',c:92},
+  {n:'Meera S.',ini:'M',ph:'+91 97××× ×3327',ok:0,st:'Busy',d:'0:06'},
+  {n:'Deepak R.',ini:'D',ph:'+91 96××× ×5518',ok:0,st:'No answer',d:'—'},
+  {n:'Fathima Z.',ini:'F',ph:'+91 95××× ×9046',ok:1,f:'Absent — fever, back Monday',d:'1:04',c:95},
+  {n:'Karthik V.',ini:'K',ph:'+91 94××× ×7765',ok:1,f:'Confirmed, joining late',d:'0:41',c:91},
+  {n:'Lakshmi P.',ini:'L',ph:'+91 93××× ×2294',ok:1,f:'Confirmed — parent callback requested',d:'0:58',c:89},
+  {n:'Sana H.',ini:'S',ph:'+91 92××× ×6631',ok:1,f:'Confirmed',d:'0:38',c:97}
+];
+const simList=document.getElementById('simList');
+CONTACTS.forEach((p,i)=>{
+  const el=document.createElement('div');el.className='sim-contact';el.id='sc'+i;
+  el.innerHTML='<span class="avatar">'+p.ini+'</span><span class="meta"><span class="nm">'+p.n+'</span><br><span class="ph">'+p.ph+'</span></span><span class="sim-chip" id="schip'+i+'">Queued</span>';
+  simList.appendChild(el);
+});
+let simTimers=[],simRunning=false,clockInt=null;
+function chip(i,txt,cls){const c=document.getElementById('schip'+i);c.textContent=txt;c.className='sim-chip '+cls}
+function resetSim(){
+  simTimers.forEach(clearTimeout);simTimers=[];clearInterval(clockInt);simRunning=false;
+  document.getElementById('cQueued').textContent='8';
+  document.getElementById('cCalling').textContent='0';
+  document.getElementById('cDone').textContent='0';
+  document.getElementById('cMissed').textContent='0';
+  document.getElementById('simBar').style.width='0';
+  document.getElementById('simFeed').innerHTML='';
+  document.getElementById('simSummary').classList.remove('in');
+  document.getElementById('simClock').textContent='00:00';
+  CONTACTS.forEach((_,i)=>{chip(i,'Queued','');document.getElementById('sc'+i).classList.remove('hot')});
+}
+function runSim(){
+  if(simRunning)return;
+  resetSim();simRunning=true;
+  const feed=document.getElementById('simFeed'),bar=document.getElementById('simBar');
+  let q=8,cDone=0,cMiss=0;const t0=Date.now();
+  clockInt=setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);
+    document.getElementById('simClock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')},500);
+  let t=400;
+  CONTACTS.forEach((p,i)=>{
+    simTimers.push(setTimeout(()=>{
+      if(!simRunning)return;
+      document.getElementById('cQueued').textContent=String(--q);
+      const cc=document.getElementById('cCalling');cc.textContent=String(+cc.textContent+1);
+      chip(i,'Calling','calling');document.getElementById('sc'+i).classList.add('hot');
+    },t));
+    t+=RM?60:(900+Math.random()*450);
+    simTimers.push(setTimeout(()=>{
+      if(!simRunning)return;
+      const cc=document.getElementById('cCalling');cc.textContent=String(Math.max(0,+cc.textContent-1));
+      document.getElementById('sc'+i).classList.remove('hot');
+      const row=document.createElement('div');row.className='sim-row';
+      row.innerHTML='<span class="nm">'+p.n+'</span>'+
+        '<span class="out '+(p.ok?'ok':'bad')+'">'+(p.ok?'Completed':p.st)+'</span>'+
+        '<span class="dur">'+p.d+'</span>'+
+        '<span class="field">'+(p.ok?p.f:'— retry scheduled')+'</span>'+
+        (p.ok?'<span class="conf">'+p.c+'%</span>':'<span></span>');
+      feed.appendChild(row);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>row.classList.add('in')));
+      if(p.ok){cDone++;chip(i,'Done','done')}else{cMiss++;chip(i,p.st,'missed')}
+      document.getElementById('cDone').textContent=String(cDone);
+      document.getElementById('cMissed').textContent=String(cMiss);
+      bar.style.width=(((i+1)/CONTACTS.length)*100)+'%';
+      if(i===CONTACTS.length-1){
+        simRunning=false;clearInterval(clockInt);
+        document.getElementById('simSumTxt').innerHTML='<strong style="color:var(--fg)">6 of 8 answered</strong> · 5 confirmations captured · 1 flagged for human follow-up · results ready to export.';
+        setTimeout(()=>document.getElementById('simSummary').classList.add('in'),250);
+      }
+    },t));
+  });
+}
+document.getElementById('simStart').addEventListener('click',runSim);
+document.getElementById('simReset').addEventListener('click',resetSim);
+
+/* ── Latency lab ── */
+const LAT=[{key:'ls_',d:{stt:180,llm:260,tts:200,e2e:640},col:'latColS',ans:'latAnsS',
+             reply:'Done — I\u2019ve moved it to Friday between 2 and 6 PM. You\u2019ll get a confirmation text.',cps:46,delay:1450},
+            {key:'lb_',d:{stt:430,llm:1180,tts:530,e2e:2140},col:null,ans:'latAnsB',
+             reply:'Sorry… could you repeat that? Friday… delivery… moved… I think. Confirming… maybe.',cps:24,delay:2450}];
+const MAXMS=2400;
+LAT.forEach(L=>{
+  const box=document.getElementById(L.key==='ls_'?'latRowsS':'latRowsB');box.innerHTML='';
+  [['Speech recognition','stt'],['Reasoning','llm'],['Voice synthesis','tts'],['End-to-end','e2e']].forEach(([lab,k])=>{
+    const d=L.d[k];
+    const ticks=k==='e2e'
+      ?'<span class="lat-tick" style="left:37.5%"></span><span class="lat-tick" style="left:62.5%"></span>'
+      :'<span class="lat-tick" style="left:37.5%"></span>';
+    const row=document.createElement('div');row.className='lat-mrow';
+    row.innerHTML='<div class="lat-mhead"><span>'+lab+'</span><b id="'+L.key+k+'">—</b></div>'+
+      '<div class="lat-track"><span class="lat-fill" id="'+L.key+'fill'+k+'" style="width:0"></span>'+ticks+'</div>';
+    box.appendChild(row);
+  });
+});
+function countTo(el,target,dur){
+  if(RM||dur<=0){el.textContent=target+' ms';return}
+  const t0=performance.now();
+  (function step(t){const p=Math.min(1,(t-t0)/dur);
+    el.textContent=Math.round(target*(1-Math.pow(1-p,3)))+' ms';
+    if(p<1)requestAnimationFrame(step)})(t0);
+}
+let latBusy=false;
+function runTurn(){
+  if(latBusy)return;latBusy=true;
+  const colS=document.getElementById('latColS');colS.classList.remove('done');
+  const aS=document.getElementById('latAnsS'),aB=document.getElementById('latAnsB');
+  clearTimeout(aS._t);clearTimeout(aB._t);aS.textContent='';
+  aB.innerHTML='<span class="typing"><i></i><i></i><i></i></span>';
+  LAT.forEach(L=>{
+    ['stt','llm','tts','e2e'].forEach((k,idx)=>{
+      const f=document.getElementById(L.key+'fill'+k),num=document.getElementById(L.key+k);
+      const dur=RM?0:Math.max(380,L.d[k]*0.9);
+      const stag=RM?0:idx*240;
+      f.style.transition='none';f.style.width='0%';
+      void f.offsetWidth;
+      f.style.transitionDelay=stag+'ms';
+      f.style.transition='width '+dur+'ms cubic-bezier(.25,.1,.25,1)';
+      requestAnimationFrame(()=>{f.style.width=(L.d[k]/MAXMS*100)+'%'});
+      setTimeout(()=>countTo(num,L.d[k],dur),stag);
+    });
+    typeInto(document.getElementById(L.ans),L.reply,RM?0:L.delay,L.cps);
+  });
+  setTimeout(()=>{colS.classList.add('done');latBusy=false},RM?60:3900);
+}
+document.getElementById('latRun').addEventListener('click',runTurn);
+new IntersectionObserver((es,ob)=>es.forEach(e=>{
+  if(e.isIntersecting){setTimeout(runTurn,350);ob.disconnect()}
+}),{threshold:.35}).observe(document.getElementById('latShell'));
+
+/* ── Voice gallery ── */
+const VOICES=[
+  {name:'Asha',traits:'Warm · Measured',line:'Hello! This is Asha calling from Sunrise Academy about Aarav\u2019s attendance today.'},
+  {name:'Rohan',traits:'Calm · Reassuring',line:'Hi, this is Rohan. Just a gentle reminder about tomorrow\u2019s appointment at ten.'},
+  {name:'Meera',traits:'Bright · Energetic',line:'Hey! Meera here — a quick call to confirm your slot for Saturday\u2019s session.'},
+  {name:'Arjun',traits:'Deep · Authoritative',line:'Good evening. Arjun calling regarding the pending fee reminder for this month.'},
+  {name:'Divya',traits:'Soft · Patient',line:'Hello, this is Divya. Take your time — I have two small questions when you\u2019re ready.'},
+  {name:'Kabir',traits:'Crisp · Professional',line:'Kabir from operations. One confirmation and I\u2019ll let you go — thirty seconds.'}
+];
+const grid=document.getElementById('voiceGrid');
+const cvs=[];
+VOICES.forEach((v,i)=>{
+  const b=document.createElement('button');b.className='voice-card';b.type='button';
+  b.setAttribute('role','radio');b.setAttribute('aria-checked','false');
+  b.innerHTML='<span class="vc-check"><svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg></span>'+
+    '<canvas width="260" height="54"></canvas>'+
+    '<div class="vc-name">'+v.name+'</div><div class="vc-traits">'+v.traits+'</div>';
+  b.addEventListener('click',()=>selectVoice(i));
+  grid.appendChild(b);cvs.push(b.querySelector('canvas'));
+});
+const SIG=i=>({f:.085+i*.013,a:8+(i%3)*3.5,j:i*.9,sp:.0016+i*.00022});
+const speak=new Float32Array(VOICES.length);let sel=-1,vInt=null;
+function drawSig(cv,i,t){
+  const ctx=cv.getContext('2d'),w=cv.width,h=cv.height;ctx.clearRect(0,0,w,h);
+  const s=SIG(i),spk=speak[i];
+  ctx.beginPath();
+  for(let x=0;x<=w;x+=2){
+    const env=Math.sin(x/w*Math.PI);
+    const y=h/2+env*(Math.sin(x*s.f+t*s.sp+s.j)*s.a*(1+spk*1.7)+Math.sin(x*s.f*2.7-t*s.sp*1.7)*s.a*.35*(1+spk));
+    x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle=i===sel?'rgba(233,228,218,.92)':'rgba(163,154,142,.5)';
+  ctx.lineWidth=i===sel?2:1.3;ctx.stroke();
+}
+if(RM){cvs.forEach((cv,i)=>drawSig(cv,i,4200))}
+else{(function loop(t){cvs.forEach((cv,i)=>drawSig(cv,i,t));requestAnimationFrame(loop)})(0)}
+function selectVoice(i){
+  sel=i;
+  [...grid.children].forEach((c,j)=>c.setAttribute('aria-checked',j===i?'true':'false'));
+  document.getElementById('vpVoice').textContent=VOICES[i].name;
+  clearInterval(vInt);speak.fill(0);speak[i]=1;
+  vInt=setInterval(()=>{speak[i]=Math.max(0,speak[i]-.03);if(speak[i]<=0)clearInterval(vInt)},60);
+  typeInto(document.getElementById('vpLine'),'\u201C'+VOICES[i].line+'\u201D',120,30);
+}
+})();
+</script>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════
+   Echo Sarathi · 3D layer (Three.js)
+   B — "Orbital Voice Core": closing flourish in CTA
+   C — "Signal → Structure": speech ribbon → grid
+   D — "Barge-in Theater": interruption demo
+   E — "Language Field": multilingual roadmap
+   ═══════════════════════════════════════════════════ */
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const DPR=Math.min(devicePixelRatio||1,1.75);
+const PEARL=0xe9e4da,STONE=0xa39a8e;
+let mx=0,my=0;
+addEventListener('pointermove',e=>{mx=e.clientX/innerWidth*2-1;my=e.clientY/innerHeight*2-1},{passive:true});
+function makeRenderer(cv){
+  const r=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:false,powerPreference:'low-power'});
+  r.setPixelRatio(DPR);r.setClearColor(0x000000,0);
+  return r;
+}
+
+/* ── Scene A removed — hero uses CSS ambient glow + echo wave canvas ── */
+
+/* ── Scene B · Orbital Voice Core (CTA) ── */
+(function(){
+  const cv=document.getElementById('ctaOrb');if(!cv)return;
+  let renderer;try{renderer=makeRenderer(cv)}catch(e){return}
+  const scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(45,1,.1,30);
+  cam.position.set(0,0,6.6);
+  const group=new THREE.Group();scene.add(group);
+
+  const CN=850,R=1.28,cp=new Float32Array(CN*3),GA=Math.PI*(3-Math.sqrt(5));
+  for(let i=0;i<CN;i++){
+    const y=1-(i/(CN-1))*2,r=Math.sqrt(Math.max(0,1-y*y)),th=GA*i;
+    cp[i*3]=Math.cos(th)*r*R;cp[i*3+1]=y*R;cp[i*3+2]=Math.sin(th)*r*R;
+  }
+  const cg=new THREE.BufferGeometry();
+  cg.setAttribute('position',new THREE.BufferAttribute(cp,3));
+  const core=new THREE.Points(cg,new THREE.PointsMaterial({color:PEARL,size:.035,sizeAttenuation:true,transparent:true,opacity:.95,depthWrite:false}));
+  group.add(core);
+
+  const gc=document.createElement('canvas');gc.width=gc.height=128;
+  const gx=gc.getContext('2d');
+  const gg=gx.createRadialGradient(64,64,0,64,64,64);
+  gg.addColorStop(0,'rgba(233,228,218,.55)');gg.addColorStop(.4,'rgba(233,228,218,.14)');gg.addColorStop(1,'rgba(233,228,218,0)');
+  gx.fillStyle=gg;gx.fillRect(0,0,128,128);
+  const glow=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(gc),transparent:true,depthWrite:false,opacity:.8}));
+  glow.scale.setScalar(3.4);scene.add(glow);
+
+  function ring(rad,count,tx,tz){
+    const g=new THREE.BufferGeometry(),p=new Float32Array(count*3);
+    for(let i=0;i<count;i++){
+      const a=i/count*Math.PI*2;
+      p[i*3]=Math.cos(a)*rad;p[i*3+1]=(Math.random()-.5)*.06;p[i*3+2]=Math.sin(a)*rad;
+    }
+    g.setAttribute('position',new THREE.BufferAttribute(p,3));
+    const h=new THREE.Group();h.rotation.set(tx,0,tz);
+    h.add(new THREE.Points(g,new THREE.PointsMaterial({color:STONE,size:.03,sizeAttenuation:true,transparent:true,opacity:.7,depthWrite:false})));
+    group.add(h);return h;
+  }
+  const r1=ring(2.05,240,1.15,.35),r2=ring(2.55,300,-.9,-.5);
+  const head=new THREE.Points(
+    new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(new Float32Array([2.05,0,0]),3)),
+    new THREE.PointsMaterial({color:PEARL,size:.09,sizeAttenuation:true,transparent:true,opacity:1,depthWrite:false}));
+  r1.add(head);
+
+  const clock=new THREE.Clock();
+  function size(){
+    const s=cv.clientWidth||320;
+    renderer.setSize(s,s,false);cam.aspect=1;cam.updateProjectionMatrix();
+  }
+  size();addEventListener('resize',size);
+  let vis=true,raf=null;
+  function frame(){
+    const t=clock.getElapsedTime();
+    core.rotation.y=t*.22;core.rotation.x=Math.sin(t*.18)*.14;
+    group.rotation.y=t*.07;
+    r1.rotation.y=t*.5;r2.rotation.y=-t*.36;
+    const hp=t*1.4%(Math.PI*2);
+    head.position.set(Math.cos(hp)*2.05,0,Math.sin(hp)*2.05);
+    glow.material.opacity=.66+Math.sin(t*2.1)*.16;
+    glow.scale.setScalar(3.25+Math.sin(t*2.1)*.3);
+    cam.position.x+=(mx*.5-cam.position.x)*.05;
+    cam.position.y+=(-my*.4-cam.position.y)*.05;
+    cam.lookAt(0,0,0);
+    renderer.render(scene,cam);
+    raf=(vis&&!document.hidden)?requestAnimationFrame(frame):null;
+  }
+  if(RM){core.rotation.y=.6;r1.rotation.y=1.1;r2.rotation.y=-.8;renderer.render(scene,cam)}
+  else{
+    new IntersectionObserver(es=>es.forEach(e=>{
+      const was=!!raf;vis=e.isIntersecting;
+      if(vis&&!was){clock.getDelta();if(!raf)frame()}
+    }),{threshold:.05}).observe(cv);
+    document.addEventListener('visibilitychange',()=>{
+      if(!document.hidden&&vis&&!raf){clock.getDelta();frame()}
+    });
+    frame();
+  }
+})();
+/* ── Scene C · Signal → Structure (flow band) ── */
+(function(){
+  const cv=document.getElementById('flowGl');if(!cv)return;
+  let renderer;try{renderer=makeRenderer(cv)}catch(e){return}
+  const scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(50,2.8,.1,60);
+  cam.position.set(0,.3,11);
+
+  /* stream: organic speech ribbon feeding the grid */
+  const SN=1500;
+  const su=new Float32Array(SN),ss=new Float32Array(SN),sp=new Float32Array(SN*3);
+  for(let i=0;i<SN;i++){su[i]=Math.random();ss[i]=Math.random()*6.283}
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+  sg.setAttribute('u',new THREE.BufferAttribute(su,1));
+  sg.setAttribute('seed',new THREE.BufferAttribute(ss,1));
+  const smat=new THREE.ShaderMaterial({
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+    uniforms:{t:{value:0},px:{value:DPR}},
+    vertexShader:`attribute float u;attribute float seed;uniform float t;uniform float px;
+      varying float vA;
+      void main(){
+        float uu=fract(u+t*.06);
+        vec3 p;
+        p.x=uu*10.9-9.6;
+        float env=sin(min(uu/.62,1.)*3.1416);
+        p.y=sin(uu*24.+t*2.4+seed)*.62*env+sin(uu*11.-t*1.5+seed*.7)*.34*env;
+        p.z=sin(uu*17.-t*1.1+seed*2.1)*.85*env;
+        vA=smoothstep(0.,.05,uu)*(1.-smoothstep(.78,.97,uu))*.8;
+        vec4 mv=modelViewMatrix*vec4(p,1.);
+        gl_Position=projectionMatrix*mv;
+        gl_PointSize=1.9*(95.*px/-mv.z);
+      }`,
+    fragmentShader:`precision mediump float;varying float vA;
+      void main(){
+        float msk=smoothstep(.5,.12,length(gl_PointCoord-.5));
+        float a=msk*vA;
+        if(a<.004)discard;
+        gl_FragColor=vec4(vec3(.64,.604,.557),a);
+      }`
+  });
+  scene.add(new THREE.Points(sg,smat));
+
+  /* grid: 16×6 living spreadsheet, columns light up as data lands */
+  const GC=16,GR=6,GD=5,GN=GC*GR*GD;
+  const gp=new Float32Array(GN*3),gc=new Float32Array(GN),gs=new Float32Array(GN);
+  let k=0;
+  for(let c=0;c<GC;c++)for(let r=0;r<GR;r++)for(let d=0;d<GD;d++,k++){
+    gp[k*3]=.9+c*.56+(Math.random()-.5)*.36;
+    gp[k*3+1]=(r-2.5)*.62+(Math.random()-.5)*.42;
+    gp[k*3+2]=(Math.random()-.5)*.25;
+    gc[k]=c;gs[k]=Math.random()*6.283;
+  }
+  const gg2=new THREE.BufferGeometry();
+  gg2.setAttribute('position',new THREE.BufferAttribute(gp,3));
+  gg2.setAttribute('col',new THREE.BufferAttribute(gc,1));
+  gg2.setAttribute('seed',new THREE.BufferAttribute(gs,1));
+  const gmat=new THREE.ShaderMaterial({
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+    uniforms:{t:{value:0},px:{value:DPR}},
+    vertexShader:`attribute float col;attribute float seed;uniform float t;uniform float px;
+      varying float vB;
+      void main(){
+        float sweep=fract(t*.13)*17.5-1.;
+        float pulse=exp(-pow(col-sweep,2.)*1.4);
+        float shim=.82+.18*sin(t*2.1+seed*3.);
+        vB=clamp(.16+pulse*.95,0.,1.)*shim;
+        vec4 mv=modelViewMatrix*vec4(position,1.);
+        gl_Position=projectionMatrix*mv;
+        gl_PointSize=(1.5+vB*1.7)*(95.*px/-mv.z);
+      }`,
+    fragmentShader:`precision mediump float;varying float vB;
+      void main(){
+        float msk=smoothstep(.5,.12,length(gl_PointCoord-.5));
+        float a=msk*vB;
+        if(a<.004)discard;
+        vec3 c=mix(vec3(.42,.394,.362),vec3(.914,.894,.855),vB);
+        gl_FragColor=vec4(c,a*.9);
+      }`
+  });
+  scene.add(new THREE.Points(gg2,gmat));
+
+  const clock=new THREE.Clock();
+  function size(){
+    const w=cv.clientWidth||innerWidth,h=cv.clientHeight||380;
+    renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();
+  }
+  size();addEventListener('resize',size);
+  let vis=true,raf=null;
+  function frame(){
+    const t=clock.getElapsedTime();
+    smat.uniforms.t.value=t;gmat.uniforms.t.value=t;
+    cam.position.x+=(mx*.55-cam.position.x)*.03;
+    cam.position.y+=((.3-my*.35)-cam.position.y)*.03;
+    cam.lookAt(-.4,0,0);
+    renderer.render(scene,cam);
+    raf=(vis&&!document.hidden)?requestAnimationFrame(frame):null;
+  }
+  if(RM){smat.uniforms.t.value=6;gmat.uniforms.t.value=6;renderer.render(scene,cam)}
+  else{
+    new IntersectionObserver(es=>es.forEach(e=>{
+      const was=!!raf;vis=e.isIntersecting;
+      if(vis&&!was){clock.getDelta();if(!raf)frame()}
+    }),{threshold:.02}).observe(cv);
+    document.addEventListener('visibilitychange',()=>{
+      if(!document.hidden&&vis&&!raf){clock.getDelta();frame()}
+    });
+    frame();
+  }
+})();
+
+/* ── Scene D · Barge-in theater (interruption) ── */
+(function(){
+  const cv=document.getElementById('bargeGl');if(!cv)return;
+  let renderer;try{renderer=makeRenderer(cv)}catch(e){return}
+  const scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(46,3.5,.1,40);
+  cam.position.set(0,.5,10.8);
+
+  const gc=document.createElement('canvas');gc.width=gc.height=128;
+  const gx=gc.getContext('2d');
+  const gr=gx.createRadialGradient(64,64,0,64,64,64);
+  gr.addColorStop(0,'rgba(233,228,218,.5)');gr.addColorStop(.4,'rgba(233,228,218,.12)');gr.addColorStop(1,'rgba(233,228,218,0)');
+  gx.fillStyle=gr;gx.fillRect(0,0,128,128);
+  const glowTex=new THREE.CanvasTexture(gc);
+  function nodeGlow(x,scale,op){
+    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,depthWrite:false,opacity:op}));
+    s.position.x=x;s.scale.setScalar(scale);scene.add(s);return s;
+  }
+  const gHuman=nodeGlow(-6.7,1.5,.75),gAgent=nodeGlow(6.7,1.7,.9);
+
+  const NP=210,SPAN=13.2,DX=SPAN/(NP-1);
+  function makeRibbon(color,size,op){
+    const g=new THREE.BufferGeometry();
+    const arr=new Float32Array(NP*3);
+    g.setAttribute('position',new THREE.BufferAttribute(arr,3));
+    const pts=new THREE.Points(g,new THREE.PointsMaterial({color,size,sizeAttenuation:true,transparent:true,opacity:op,depthWrite:false}));
+    scene.add(pts);
+    return {g,arr,hist:new Float32Array(NP),headX:0,amp:.6,frozen:false,alpha:op};
+  }
+  const human=makeRibbon(STONE,.085,.85),agent=makeRibbon(PEARL,.1,.95);
+
+  const flash=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,depthWrite:false,opacity:0}));
+  flash.scale.setScalar(.1);scene.add(flash);
+
+  let phase='speaking',phaseT=0,timers=[];
+  const cap=document.getElementById('bargeCap'),st=document.getElementById('bargeState');
+  function setCap(c,s){if(cap)cap.textContent=c;if(st)st.textContent=s}
+  function clearTimers(){timers.forEach(clearTimeout);timers=[]}
+  function later(fn,ms){timers.push(setTimeout(fn,ms))}
+
+  function barge(){
+    clearTimers();
+    phase='surge';phaseT=perfNow();
+    human.frozen=false;
+    setCap('Caller barges in —','Sarathi stops instantly · 180 ms');
+    later(()=>{phase='absorb';setCap('Absorbing: “actually, move it to Friday.”','Understanding the new instruction…')},1100);
+    later(()=>{phase='resume';agent.frozen=false;setCap('Resumes mid-thought — nothing lost.','Turn continued · context intact')},2400);
+    later(()=>{if(phase==='resume'){phase='speaking';setCap('Sarathi is speaking…','Live turn · response 240 ms')}},5600);
+  }
+  function perfNow(){return performance.now()}
+
+  const clock=new THREE.Clock();
+  let emitAcc=0;
+  function writeRibbon(rb,dir,t){
+    for(let i=0;i<NP;i++){
+      const y=rb.hist[(NP+ (headIdx[dir>0?0:1]) -i)%NP];
+      rb.arr[i*3]=rb.headX-dir*i*DX;
+      rb.arr[i*3+1]=y;
+      rb.arr[i*3+2]=Math.sin(i*.24+t*.9)*.05*i/NP;
+    }
+    rb.g.attributes.position.needsUpdate=true;
+  }
+  const headIdx=[0,0];
+  function size(){
+    const w=cv.clientWidth||1060,h=cv.clientHeight||300;
+    renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();
+  }
+  size();addEventListener('resize',size);
+  let vis=true,raf=null;
+  function frame(){
+    const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+    emitAcc+=dt*90;
+    const steps=Math.floor(emitAcc);emitAcc-=steps;
+    for(let s=0;s<steps;s++){
+      headIdx[0]=(headIdx[0]+1)%NP;
+      headIdx[1]=(headIdx[1]+1)%NP;
+      const surge=phase==='surge';
+      human.hist[headIdx[0]]=Math.sin(perfNow()*.011)* .5*(surge?1.5:1)+Math.sin(perfNow()*.004)*.22*(surge?1.6:1);
+      if(agent.frozen){agent.hist[headIdx[1]]=agent.hist[(headIdx[1]+NP-1)%NP]*.86}
+      else{agent.hist[headIdx[1]]=Math.sin(perfNow()*.007)*.62+Math.sin(perfNow()*.0027)*.28}
+    }
+    const collide=human.headX>=-.45&&human.headX<=.45;
+    human.headX+=dt*(phase==='surge'?9:2.6);
+    if(human.headX>6.6){human.headX=-6.6;human.hist.fill(0)}
+    agent.headX-=dt*(agent.frozen?0:(phase==='resume'?2.2:2.6));
+    if(agent.headX<-6.6){agent.headX=6.6;agent.hist.fill(0)}
+    if(phase==='surge'&&collide&&!agent.frozen){
+      agent.frozen=true;flash.position.set(human.headX,0,0);
+      flash.material.opacity=.95;
+    }
+    flash.material.opacity*= .92;
+    flash.scale.setScalar(.4+(1-flash.material.opacity)*2.4);
+    writeRibbon(human,1,t);writeRibbon(agent,-1,t);
+    gHuman.material.opacity=.6+Math.sin(t*3.1)*.15;
+    gAgent.material.opacity=agent.frozen?.3:.75+Math.sin(t*2.6)*.15;
+    cam.position.x+=(mx*.4-cam.position.x)*.04;
+    cam.position.y+=((.5-my*.3)-cam.position.y)*.04;
+    cam.lookAt(0,0,0);
+    renderer.render(scene,cam);
+    raf=(vis&&!document.hidden)?requestAnimationFrame(frame):null;
+  }
+  const bb=document.getElementById('bargeBtn');
+  if(bb)bb.addEventListener('click',barge);
+  if(RM){
+    for(let i=0;i<NP;i++){
+      human.arr[i*3]=-6.6+i*DX;human.arr[i*3+1]=Math.sin(i*.3)*.4;
+      agent.arr[i*3]=6.6-i*DX;agent.arr[i*3+1]=Math.sin(i*.27)*.5;
+    }
+    human.g.attributes.position.needsUpdate=true;agent.g.attributes.position.needsUpdate=true;
+    renderer.render(scene,cam);
+  }else{
+    new IntersectionObserver((es,ob)=>es.forEach(e=>{
+      const was=!!raf;vis=e.isIntersecting;
+      if(vis&&!was){clock.getDelta();if(!raf)frame()}
+      if(vis&&!ob._ran){ob._ran=true;setTimeout(barge,900)}
+    }),{threshold:.45}).observe(cv);
+    document.addEventListener('visibilitychange',()=>{
+      if(!document.hidden&&vis&&!raf){clock.getDelta();frame()}
+    });
+    frame();
+  }
+})();
+
+/* ── Scene E · Language field (roadmap tie-in) ── */
+(function(){
+  const cv=document.getElementById('langGl');if(!cv)return;
+  let renderer;try{renderer=makeRenderer(cv)}catch(e){return}
+  const scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(42,2.6,.1,40);
+  cam.position.set(0,1.6,7.6);cam.lookAt(0,0,0);
+  const tilt=new THREE.Group();tilt.rotation.x=-.52;scene.add(tilt);
+  const spin=new THREE.Group();tilt.add(spin);
+
+  const DN=850,dp=new Float32Array(DN*3);
+  for(let i=0;i<DN;i++){
+    const a=Math.random()*6.283,r=1.15+Math.pow(Math.random(),.7)*2.05;
+    dp[i*3]=Math.cos(a)*r;dp[i*3+1]=(Math.random()-.5)*.16;dp[i*3+2]=Math.sin(a)*r;
+  }
+  const dg=new THREE.BufferGeometry();
+  dg.setAttribute('position',new THREE.BufferAttribute(dp,3));
+  spin.add(new THREE.Points(dg,new THREE.PointsMaterial({color:STONE,size:.03,sizeAttenuation:true,transparent:true,opacity:.5,depthWrite:false})));
+
+  function label(text,live){
+    const cw=384,ch=88,c=document.createElement('canvas');c.width=cw;c.height=ch;
+    const x=c.getContext('2d');
+    x.font=(live?'600 ':'500 ')+'40px "DM Sans","Nirmala UI","Segoe UI",sans-serif';
+    x.textAlign='center';x.textBaseline='middle';
+    x.fillStyle=live?'rgba(233,228,218,.96)':'rgba(163,154,142,.78)';
+    x.fillText(text,cw/2,ch/2);
+    const tx=new THREE.CanvasTexture(c);
+    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tx,transparent:true,depthWrite:false}));
+    s.scale.set(1.55,.355,1);return s;
+  }
+  const LANGS=[
+    {t:'English',r:1.35,a:0,live:true},
+    {t:'తెలుగు',r:2.1,a:2.3},
+    {t:'తెలుగు + English',r:2.5,a:4.1},
+    {t:'हिन्दी',r:2.85,a:1.15},
+    {t:'தமிழ்',r:2.65,a:5.2},
+    {t:'ಕನ್ನಡ',r:3.0,a:3.3}];
+  LANGS.forEach(L=>{
+    const x=Math.cos(L.a)*L.r,z=Math.sin(L.a)*L.r;
+    const dot=new THREE.Points(
+      new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(new Float32Array([x,0,z]),3)),
+      new THREE.PointsMaterial({color:L.live?PEARL:STONE,size:L.live?.13:.09,sizeAttenuation:true,transparent:true,opacity:L.live?1:.85,depthWrite:false}));
+    spin.add(dot);
+    const lb=label(L.t,L.live);lb.position.set(x,.3,z);spin.add(lb);
+    if(L.live){
+      const RN=72,rp=new Float32Array(RN*3);
+      for(let i=0;i<RN;i++){const a=i/RN*6.283;rp[i*3]=Math.cos(a)*L.r;rp[i*3+2]=Math.sin(a)*L.r}
+      const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.BufferAttribute(rp,3));
+      L.ringMat=new THREE.PointsMaterial({color:PEARL,size:.035,sizeAttenuation:true,transparent:true,opacity:.4,depthWrite:false});
+      spin.add(new THREE.Points(rg,L.ringMat));
+    }
+  });
+
+  const clock=new THREE.Clock();
+  function size(){
+    const w=cv.clientWidth||880,h=cv.clientHeight||340;
+    renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();
+  }
+  size();addEventListener('resize',size);
+  let vis=true,raf=null;
+  function frame(){
+    const t=clock.getElapsedTime();
+    spin.rotation.y=t*.14;
+    dg.attributes.position.needsUpdate=false;
+    LANGS.forEach(L=>{if(L.ringMat)L.ringMat.opacity=.26+.18*Math.sin(t*2.3)});
+    cam.position.x+=(mx*.45-cam.position.x)*.04;
+    cam.position.y+=((1.6-my*.3)-cam.position.y)*.04;
+    cam.lookAt(0,-.1,0);
+    renderer.render(scene,cam);
+    raf=(vis&&!document.hidden)?requestAnimationFrame(frame):null;
+  }
+  if(RM){spin.rotation.y=1.2;renderer.render(scene,cam)}
+  else{
+    new IntersectionObserver(es=>es.forEach(e=>{
+      const was=!!raf;vis=e.isIntersecting;
+      if(vis&&!was){clock.getDelta();if(!raf)frame()}
+    }),{threshold:.05}).observe(cv);
+    document.addEventListener('visibilitychange',()=>{
+      if(!document.hidden&&vis&&!raf){clock.getDelta();frame()}
+    });
+    frame();
+  }
+})();
+</script>
+</body>
+</html>

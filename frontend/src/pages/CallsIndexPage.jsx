@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
-const PAGE_SIZE = 25;
-const LATENCY_TARGET_MS = 900;
+const PAGE_SIZE = 50;
+const LATENCY_OVER_MS = 1500;
 
 function fmtDuration(seconds) {
   if (seconds == null || Number.isNaN(Number(seconds))) return '—';
@@ -12,57 +12,34 @@ function fmtDuration(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** "2m ago" style relative stamp with absolute time in the tooltip. */
-function relTime(value) {
-  if (!value) return { label: '—', full: '' };
-  const then = new Date(value).getTime();
-  if (Number.isNaN(then)) return { label: String(value), full: String(value) };
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  let label;
-  if (diffSec < 45) label = 'just now';
-  else if (diffSec < 3600) label = `${Math.round(diffSec / 60)}m ago`;
-  else if (diffSec < 86400) label = `${Math.round(diffSec / 3600)}h ago`;
-  else if (diffSec < 86400 * 30) label = `${Math.round(diffSec / 86400)}d ago`;
-  else label = new Date(value).toLocaleDateString();
-  return {
-    label,
-    full: new Date(value).toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-  };
-}
-
 function KindIcon({ kind }) {
   if (kind === 'playground' || kind === 'web') {
     return (
-      <span className="kind-icon web" title="Web test (Playground)" aria-label="Web call">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="2.5" y="4" width="19" height="13" rx="2.5" />
-          <path d="M8 21h8M12 17v4" />
+      <span className="kicon" style={{ color: 'var(--brand)' }} title="Web test (Playground)" aria-label="Web call">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+          <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       </span>
     );
   }
   return (
-    <span className="kind-icon" title="Phone call" aria-label="Phone call">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" />
+    <span className="kicon" title="Phone call" aria-label="Phone call">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+        <path d="M5 4h4l1.5 4.5L8 10a12 12 0 0 0 6 6l1.5-2.5L20 15v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
       </svg>
     </span>
   );
 }
 
-/** Call History — Vapi-style index of every org call, paginated client-side. */
 export default function CallsIndexPage() {
   const navigate = useNavigate();
   const [calls, setCalls] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   function load() {
     setLoading(true);
@@ -76,23 +53,35 @@ export default function CallsIndexPage() {
 
   useEffect(load, []);
 
-  const pageCount = calls ? Math.max(1, Math.ceil(calls.length / PAGE_SIZE)) : 1;
+  const filtered = useMemo(() => {
+    if (!calls) return [];
+    const q = searchQuery.toLowerCase();
+    return calls.filter(
+      (c) =>
+        (!statusFilter || c.status === statusFilter) &&
+        (!q ||
+          (c.agent_name && c.agent_name.toLowerCase().includes(q)) ||
+          (c.contact_name && c.contact_name.toLowerCase().includes(q)))
+    );
+  }, [calls, statusFilter, searchQuery]);
+
+  const pageCount = filtered.length > 0 ? Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)) : 1;
   const safePage = Math.min(page, pageCount);
   const pageRows = useMemo(
-    () => (calls ? calls.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE) : []),
-    [calls, safePage]
+    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filtered, safePage]
   );
 
   useEffect(() => {
     setPage(1);
-  }, [calls]);
+  }, [calls, statusFilter, searchQuery]);
 
   return (
     <div>
       <div className="page-head">
         <div>
           <h2 className="page-title">Call history</h2>
-          <p className="page-sub">Every call this organization has placed or simulated — newest first.</p>
+          <p className="page-sub">Every conversation — phone and playground — with latency per call.</p>
         </div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={load} disabled={loading}>
           {loading ? 'Refreshing…' : 'Refresh'}
@@ -108,109 +97,126 @@ export default function CallsIndexPage() {
         </div>
       )}
 
-      <div className="card flush">
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
+      <div className="filters">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="completed">completed</option>
+          <option value="no-answer">no-answer</option>
+          <option value="busy">busy</option>
+          <option value="failed">failed</option>
+          <option value="in-progress">in-progress</option>
+        </select>
+        <input
+          type="text"
+          placeholder="Search agent or contact…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {calls && (
+          <span style={{ alignSelf: 'center', color: 'var(--dim)', fontSize: '12.5px' }}>
+            {filtered.length} results
+          </span>
+        )}
+      </div>
+
+      <div className="card" style={{ overflowX: 'auto' }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th></th>
+              <th>#</th>
+              <th>Status</th>
+              <th>Agent</th>
+              <th>Contact</th>
+              <th>Started</th>
+              <th>Duration</th>
+              <th>E2E avg</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {!loading && !error && filtered.length === 0 && (
               <tr>
-                <th>Call</th>
-                <th>Status</th>
-                <th>Type</th>
-                <th>Agent</th>
-                <th>Contact</th>
-                <th className="nowrap">Duration</th>
-                <th className="nowrap">Latency e2e</th>
-                <th className="nowrap">Started</th>
+                <td colSpan={9} className="table-state">
+                  {calls && calls.length === 0
+                    ? `No calls yet — run one from the `
+                    : 'No matching calls — try adjusting the filters.'}
+                  {calls && calls.length === 0 && (
+                    <>
+                      <Link to="/playground">Playground</Link> or launch a{' '}
+                      <Link to="/campaigns">campaign</Link>.
+                    </>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {!loading && !error && calls && calls.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="table-state">
-                    No calls yet — run one from the <Link to="/playground">Playground</Link> or launch a{' '}
-                    <Link to="/campaigns">campaign</Link>.
+            )}
+            {pageRows.map((call) => {
+              const startedAt = call.started_at || call.created_at;
+              const startedLabel = startedAt
+                ? new Date(startedAt).toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : '—';
+              const latencyMs = call.avg_e2e_ms != null ? Math.round(call.avg_e2e_ms) : null;
+              const latencyClass = latencyMs != null && latencyMs > LATENCY_OVER_MS ? ' over' : '';
+              return (
+                <tr key={call.id} className="clickable" onClick={() => navigate(`/calls/${call.id}`)}>
+                  <td><KindIcon kind={call.kind} /></td>
+                  <td className="mono">#{call.id}</td>
+                  <td><StatusBadge status={call.status} /></td>
+                  <td>{call.agent_name || <span className="text-muted">—</span>}</td>
+                  <td>
+                    {call.contact_name ? (
+                      <>
+                        {call.contact_name}
+                        {call.contact_phone && <span className="text-muted"> · {call.contact_phone}</span>}
+                      </>
+                    ) : (
+                      <span className="text-muted">{call.kind === 'playground' ? 'Browser test' : '—'}</span>
+                    )}
+                  </td>
+                  <td className="mono" title={startedAt ? new Date(startedAt).toLocaleString() : ''}>
+                    {startedLabel}
+                  </td>
+                  <td className="mono">{fmtDuration(call.duration_seconds)}</td>
+                  <td className={`mono${latencyClass}`}>
+                    {latencyMs != null ? `${latencyMs.toLocaleString()} ms` : '—'}
+                  </td>
+                  <td>
+                    {call.flagged_for_human ? (
+                      <span className="flag" title="Escalated to human">⚑</span>
+                    ) : null}
                   </td>
                 </tr>
-              )}
-              {pageRows.map((call) => {
-                const started = relTime(call.started_at || call.created_at);
-                const latency =
-                  call.avg_e2e_ms != null ? `${Math.round(call.avg_e2e_ms).toLocaleString()} ms` : null;
-                return (
-                  <tr key={call.id} className="clickable" onClick={() => navigate(`/calls/${call.id}`)}>
-                    <td className="cell-strong nowrap">#{call.id}</td>
-                    <td>
-                      <StatusBadge status={call.status} />
-                      {call.flagged_for_human && (
-                        <span className="badge badge-red-outline" style={{ marginLeft: 6 }} title="Flagged for human review">
-                          flagged
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <KindIcon kind={call.kind} />
-                    </td>
-                    <td>{call.agent_name || <span className="text-muted">—</span>}</td>
-                    <td>
-                      {call.contact_name ? (
-                        <>
-                          {call.contact_name}
-                          {call.contact_phone && <span className="text-muted"> · {call.contact_phone}</span>}
-                        </>
-                      ) : (
-                        <span className="text-muted">{call.kind === 'playground' ? 'Browser test' : '—'}</span>
-                      )}
-                    </td>
-                    <td className="nowrap">{fmtDuration(call.duration_seconds)}</td>
-                    <td className="nowrap">
-                      {latency ? (
-                        <span
-                          className={`latency-pill${call.avg_e2e_ms > LATENCY_TARGET_MS ? ' slow' : ''}`}
-                          title="Average end-to-end turn latency across this call"
-                        >
-                          {latency}
-                        </span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="nowrap rel-time" title={started.full}>
-                      {started.label}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
 
-        {calls && calls.length > 0 && (
-          <div className="pagination">
-            <span className="page-info">
-              Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, calls.length)} of {calls.length}{' '}
-              calls
+        {filtered.length > 0 && (
+          <div className="pager">
+            <span>
+              Page {safePage} of {pageCount} · {filtered.length} calls
             </span>
-            <div className="page-btns">
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                disabled={safePage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                ← Prev
-              </button>
-              <span className="page-num">
-                Page {safePage} of {pageCount}
-              </span>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                disabled={safePage >= pageCount}
-                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-              >
-                Next →
-              </button>
-            </div>
+            <button
+              type="button"
+              className="btn sm ghost"
+              disabled={safePage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              className="btn sm ghost"
+              disabled={safePage >= pageCount}
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            >
+              Next →
+            </button>
           </div>
         )}
       </div>

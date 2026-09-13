@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { API_BASE } from '../api.js';
+import { API_BASE, callExportUrl } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
-import StatusBadge from '../components/StatusBadge.jsx';
+import { cleanTranscriptText } from '../utils/transcript.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'no_answer', 'busy', 'canceled', 'cancelled', 'invalid']);
 
@@ -56,36 +56,11 @@ function titleCase(s) {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
-function ConfidenceBar({ value }) {
-  if (value == null || value === '' || Number.isNaN(Number(value))) {
-    return <span className="text-muted">—</span>;
-  }
+function confChipClass(value) {
+  if (value == null || value === '') return '';
   const num = Number(value);
   const pct = num <= 1 ? num * 100 : num;
-  const clamped = Math.min(100, Math.max(0, pct));
-  const cls = clamped >= 80 ? 'high' : clamped >= 50 ? 'mid' : 'low';
-  return (
-    <div className="conf">
-      <div className={`conf-bar conf-${cls}`}>
-        <div className="conf-fill" style={{ width: `${clamped}%` }} />
-      </div>
-      <span className="conf-pct">{Math.round(clamped)}%</span>
-    </div>
-  );
-}
-
-function StatRow({ items }) {
-  if (!items.length) return null;
-  return (
-    <div className="stat-row">
-      {items.map(([label, value]) => (
-        <div key={label} className="stat-chip">
-          <div className="stat-value">{value}</div>
-          <div className="stat-label">{label}</div>
-        </div>
-      ))}
-    </div>
-  );
+  return pct >= 85 ? 'hi' : 'md';
 }
 
 function resolveUrl(url) {
@@ -98,6 +73,7 @@ export default function CallDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [isLive, setIsLive] = useState(true);
+  const [playing, setPlaying] = useState(false);
 
   const { data: call, error, loading, reload } = usePoll(`/api/calls/${id}`, 3000, isLive);
 
@@ -134,172 +110,205 @@ export default function CallDetailPage() {
   const live = call.status && !TERMINAL_STATUSES.has(call.status);
   const transcript = call.transcript || [];
   const extracted = call.extracted_fields || [];
-  const latencyEntries = call.latency ? Object.entries(call.latency) : [];
-  const costEntries = call.cost ? Object.entries(call.cost) : [];
-  const costSorted = costEntries
-    .filter(([k]) => k !== 'total')
-    .concat(costEntries.filter(([k]) => k === 'total'));
   const recordingUrl = resolveUrl(call.recording_url);
+
+  const latencyEntries = call.latency ? Object.entries(call.latency) : [];
+  const e2eMs = call.latency?.e2e ?? call.latency?.total ?? call.latency?.end_to_end ?? null;
+  const durationSec = call.duration_seconds;
+
+  const metaLine = [
+    call.started_at ? `Started ${fmtDateTime(call.started_at)}` : null,
+    durationSec != null ? `duration ${fmtDuration(durationSec)}` : null,
+    e2eMs != null ? `median E2E ${fmtNum(e2eMs, 0)} ms` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div className="call-detail">
-      <button className="btn btn-ghost" onClick={() => navigate(-1)}>
-        ← Back
-      </button>
-
-      <div className="page-head">
-        <div>
-          <div className="title-row">
-            <h2 className="page-title">Call {call.id}</h2>
-            <StatusBadge status={call.status} />
-            {live && (
-              <span className="live-indicator">
-                <span className="live-dot" /> Live — refreshing every 3 seconds
-              </span>
-            )}
-            {call.flagged_for_human ? <StatusBadge status="flagged" /> : null}
-          </div>
-          {call.outcome && (
-            <p className="meta-line">
-              <span>
-                <strong>Outcome:</strong> <span className="chip">{String(call.outcome)}</span>
-              </span>
-            </p>
-          )}
-          <p className="meta-line">
-            <span>
-              <strong>Started:</strong> {fmtDateTime(call.started_at)}
-            </span>
-            {call.ended_at && (
-              <span>
-                <strong>Ended:</strong> {fmtDateTime(call.ended_at)}
-              </span>
-            )}
-            <span>
-              <strong>Duration:</strong> {fmtDuration(call.duration_seconds)}
-            </span>
-          </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button className="btn btn-ghost" onClick={() => navigate(-1)}>
+          ← Back
+        </button>
+        <div className="export-group" style={{ marginLeft: 'auto' }}>
+          <span className="export-label">Export:</span>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => window.open(callExportUrl(id, 'csv'), '_blank')}
+          >
+            CSV
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => window.open(callExportUrl(id, 'xlsx'), '_blank')}
+          >
+            XLSX
+          </button>
         </div>
       </div>
 
       {error && <div className="banner banner-error">{error}</div>}
 
-      {call.summary ? (
-        <div className="card">
-          <h3 className="card-title">AI summary</h3>
-          <p className="summary-text">{call.summary}</p>
-        </div>
-      ) : (
-        <div className="card">
-          <h3 className="card-title">AI summary</h3>
-          <p className="hint">No summary yet{live ? ' — appears when the call completes.' : '.'}</p>
-        </div>
+      {call.flagged_for_human && (
+        <div className="banner gold">⚑ Escalated — needs human follow-up.</div>
       )}
 
-      {latencyEntries.length > 0 && (
-        <div className="card">
-          <h3 className="card-title">Latency</h3>
-          <StatRow items={latencyEntries.map(([k, v]) => [titleCase(k).replace(/ Ms$/i, ' (ms)'), `${fmtNum(v, 0)} ms`])} />
-        </div>
-      )}
-
-      {costSorted.length > 0 && (
-        <div className="card">
-          <h3 className="card-title">Cost breakdown</h3>
-          <StatRow items={costSorted.map(([k, v]) => [titleCase(k), fmtNum(v, 4)])} />
-        </div>
-      )}
-
-      {recordingUrl && (
-        <div className="card">
-          <h3 className="card-title">Recording</h3>
-          <audio controls preload="none" src={recordingUrl} />
-          <p className="hint">
-            <a href={recordingUrl} target="_blank" rel="noreferrer">
-              Open recording in a new tab
-            </a>
-          </p>
-        </div>
-      )}
-
-      <div className="card">
-        <h3 className="card-title">Extracted fields</h3>
-        {extracted.length === 0 ? (
-          <p className="hint">No structured fields extracted{live ? ' yet.' : ' for this call.'}</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Field</th>
-                  <th>Value</th>
-                  <th style={{ width: '180px' }}>Confidence</th>
-                  <th>Source turn</th>
-                </tr>
-              </thead>
-              <tbody>
-                {extracted.map((f, i) => (
-                  <tr key={f.field_name != null ? `${f.field_name}-${i}` : i}>
-                    <td className="cell-strong">{f.field_name}</td>
-                    <td>{f.field_value != null ? String(f.field_value) : '—'}</td>
-                    <td>
-                      <ConfidenceBar value={f.confidence} />
-                    </td>
-                    <td>
-                      {f.source_turn_index != null ? (
-                        <button
-                          type="button"
-                          className="link-btn"
-                          onClick={() => {
-                            const el = document.getElementById(`turn-${f.source_turn_index}`);
-                            if (el) {
-                              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                              el.classList.add('flash');
-                              setTimeout(() => el.classList.remove('flash'), 1200);
-                            }
-                          }}
-                        >
-                          Turn #{f.source_turn_index}
-                        </button>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h3 className="card-title">Transcript</h3>
-        {transcript.length === 0 ? (
-          <p className="hint">No transcript{live ? ' yet — turns appear here as the call progresses.' : ' available.'}</p>
-        ) : (
-          <div className="transcript">
-            {transcript.map((t, i) => {
-              const agent = speakerIsAgent(t.speaker);
-              const clock = fmtClock(t.timestamp);
-              return (
-                <div
-                  key={t.turn_index != null ? `turn-${t.turn_index}` : i}
-                  id={`turn-${t.turn_index != null ? t.turn_index : i}`}
-                  className={`bubble-row ${agent ? 'agent' : 'caller'}`}
-                >
-                  <div className={`bubble ${agent ? 'bubble-agent' : 'bubble-caller'}`}>
-                    <div className="bubble-meta">
-                      <span className="bubble-speaker">{agent ? 'Agent' : titleCase(t.speaker || 'Caller')}</span>
-                      {clock && <span className="bubble-time">{clock}</span>}
+      <div className="detail">
+        {/* Left column */}
+        <div>
+          <div className="card">
+            <div className="card-h">
+              <h3>Transcript</h3>
+              <span>auto-punctuated · speaker-labeled</span>
+            </div>
+            <div style={{ padding: 20 }} className="turns">
+              {transcript.length === 0 ? (
+                <p className="hint">
+                  No transcript{live ? ' yet — turns appear here as the call progresses.' : ' available.'}
+                </p>
+              ) : (
+                transcript.map((t, i) => {
+                  const agent = speakerIsAgent(t.speaker);
+                  const clock = fmtClock(t.timestamp);
+                  const label = agent
+                    ? 'SARATI AGENT'
+                    : titleCase(t.speaker || 'CALLER');
+                  return (
+                    <div
+                      key={t.turn_index != null ? `turn-${t.turn_index}` : i}
+                      id={`turn-${t.turn_index != null ? t.turn_index : i}`}
+                      className={`trow ${agent ? 'agent' : 'caller'}`}
+                    >
+                      <span className="meta">
+                        {label}
+                        {clock ? ` · ${clock}` : ''}
+                      </span>
+                      <div className="tbubble">{cleanTranscriptText(t.text)}</div>
                     </div>
-                    <div className="bubble-text">{t.text}</div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })
+              )}
+            </div>
           </div>
-        )}
+
+          {recordingUrl && (
+            <div className="recplayer">
+              <button
+                className="btn sm primary"
+                onClick={() => {
+                  const audio = document.getElementById('call-audio');
+                  if (!audio) return;
+                  if (playing) {
+                    audio.pause();
+                  } else {
+                    audio.play();
+                  }
+                  setPlaying(!playing);
+                }}
+              >
+                {playing ? '❚❚ Pause' : '▶ Play recording'}
+              </button>
+              <div className="rtrack">
+                <div className="rfill" />
+              </div>
+              <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {fmtDuration(durationSec)}
+              </span>
+              <audio id="call-audio" preload="none" src={recordingUrl} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />
+            </div>
+          )}
+
+          {latencyEntries.length > 0 && (
+            <div className="card" style={{ marginTop: 18 }}>
+              <div className="card-h">
+                <h3>Latency per turn</h3>
+                <span>ticks at 900 / 1500 ms</span>
+              </div>
+              <div style={{ padding: 20 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {latencyEntries.map(([key, val]) => {
+                    const ms = Number(val);
+                    if (Number.isNaN(ms)) return null;
+                    const color = ms > 1500 ? 'var(--red)' : ms > 900 ? 'var(--amber)' : 'var(--green)';
+                    const barH = Math.min(100, (ms / 1800) * 100);
+                    return (
+                      <div key={key}>
+                        <div className="latmeta">
+                          <span>{titleCase(key)}</span>
+                          <span style={{ fontFamily: 'var(--font-m)', color }}>
+                            {fmtNum(ms, 0)} ms
+                          </span>
+                        </div>
+                        <div className="gbar">
+                          <b style={{ height: `${barH}%` }} title={`${titleCase(key)} ${ms}ms`} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="legend">
+                  <span><i style={{ background: 'var(--brand)' }} />STT</span>
+                  <span><i style={{ background: 'var(--cyan)' }} />LLM</span>
+                  <span><i style={{ background: 'var(--gold)' }} />TTS</span>
+                  <span><i style={{ background: 'rgba(148, 163, 205, .45)' }} />E2E total</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right column */}
+        <div>
+          <div className="card pad">
+            <h3 style={{ fontFamily: 'var(--font-d)', fontSize: 15 }}>Extracted information</h3>
+            <div style={{ marginTop: 10 }}>
+              {extracted.length === 0 ? (
+                <p className="hint">
+                  No structured fields were extracted during this call.
+                  {live ? ' The agent collects fields during calls; check the transcript for what it has asked so far.' : ' The agent collects fields during calls; check the transcript for what it asked.'}
+                </p>
+              ) : (
+                extracted.map((f, i) => {
+                  const chipCls = confChipClass(f.confidence);
+                  const pct =
+                    f.confidence != null
+                      ? Math.round(Number(f.confidence) <= 1 ? Number(f.confidence) * 100 : Number(f.confidence))
+                      : null;
+                  return (
+                    <div key={f.field_name != null ? `${f.field_name}-${i}` : i} className="frow2">
+                      <span className="k">{f.field_name}</span>
+                      <span>
+                        {f.field_value != null ? String(f.field_value) : '—'}
+                        {pct != null && (
+                          <span className={`confchip ${chipCls}`}>{pct}%</span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="card pad" style={{ marginTop: 18 }}>
+            <h3 style={{ fontFamily: 'var(--font-d)', fontSize: 15 }}>AI summary</h3>
+            {call.summary ? (
+              <>
+                <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.7, marginTop: 10 }}>{call.summary}</p>
+                {call.outcome && (
+                  <div style={{ marginTop: 14 }}>
+                    <span className="outcome-tag">Outcome · {String(call.outcome)}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="hint">No summary yet{live ? ' — appears when the call completes.' : '.'}</p>
+            )}
+            {metaLine && (
+              <div style={{ marginTop: 16, fontSize: 12, color: 'var(--dim)' }}>{metaLine}</div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

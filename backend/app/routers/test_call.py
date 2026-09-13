@@ -92,10 +92,19 @@ def place_test_call(
         agent = db.get(Agent, version.agent_id)
         domain_config_id = ensure_domain_config(db, agent, version).id
 
-    campaign = db.scalar(select(Campaign).where(Campaign.name == TEST_CAMPAIGN_NAME))
+    # NOTE: org-scoped reads (calls list/detail) hide rows whose campaign has
+    # no org — a missing org_id here made every test call invisible (404).
+    campaign = db.scalar(
+        select(Campaign).where(
+            Campaign.name == TEST_CAMPAIGN_NAME, Campaign.org_id == user.org_id
+        )
+    )
     if campaign is None:
         campaign = Campaign(
-            name=TEST_CAMPAIGN_NAME, domain_config_id=domain_config_id, status="draft"
+            name=TEST_CAMPAIGN_NAME,
+            domain_config_id=domain_config_id,
+            status="draft",
+            org_id=user.org_id,
         )
         db.add(campaign)
         db.flush()

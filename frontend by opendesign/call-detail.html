@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call #1042 — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.detail{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
+@media(max-width:1050px){.detail{grid-template-columns:1fr}}
+.trow{display:flex;flex-direction:column;margin-bottom:14px}
+.trow .meta{font-size:11px;color:var(--dim);font-family:var(--font-m);margin-bottom:4px}
+.tbubble{padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.55;max-width:92%}
+.trow.agent{align-items:flex-end}
+.trow.agent .tbubble{background:var(--brand-soft);border:1px solid rgba(233,228,218,.28)}
+.trow.caller .tbubble{background:var(--surface2);border:1px solid var(--line)}
+.turns{display:flex;flex-direction:column;gap:16px}
+.gbar{display:flex;align-items:flex-end;gap:3px;height:64px}
+.gbar .grp{flex:1;display:flex;align-items:flex-end;gap:2px;height:100%}
+.gbar b{flex:1;border-radius:3px 3px 0 0;background:var(--brand)}
+.gbar b.llm{background:var(--cyan)}.gbar b.tts{background:var(--gold)}.gbar b.e2e{background:rgba(148,163,205,.45)}
+.legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin-top:10px;flex-wrap:wrap}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
+.recplayer{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;margin-top:14px}
+.rtrack{flex:1;height:26px;border-radius:6px;background:repeating-linear-gradient(90deg,var(--surface2) 0 2px,transparent 2px 5px);position:relative;overflow:hidden;cursor:pointer}
+.rfill{position:absolute;inset:0;width:0%;background:linear-gradient(90deg,rgba(233,228,218,.35),rgba(163,154,142,.35))}
+.outcome-tag{display:inline-block;background:rgba(16,185,129,.12);color:var(--green);border:1px solid rgba(16,185,129,.35);border-radius:8px;padding:5px 12px;font-size:13px}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+ES.shell({
+  active:'calls',
+  title:'Call #1042',
+  subtitle:'Absentee Follow-up · v3 · completed · 2 min 04 s',
+  action:`<button class="btn ghost sm" onclick="window.print()">Export report</button>`,
+  body:`
+  <div class="banner gold">⚑ Escalated — needs human follow-up. Reason: parent requested a callback from the class teacher this evening.</div>
+  <div class="detail">
+    <div>
+      <div class="card">
+        <div class="card-h"><h3>Transcript</h3><span>auto-punctuated · speaker-labeled</span></div>
+        <div style="padding:20px" class="turns" id="turns"></div>
+      </div>
+      <div class="recplayer">
+        <button class="btn sm primary" id="playB">▶ Play recording</button>
+        <div class="rtrack"><div class="rfill" id="rfill"></div></div>
+        <span class="mono" style="font-size:12px;color:var(--muted)" id="rtime">0:00 / 2:04</span>
+      </div>
+      <div class="card" style="margin-top:18px">
+        <div class="card-h"><h3>Latency per turn</h3><span>ticks at 900 / 1500 ms</span></div>
+        <div style="padding:20px">
+          <div style="display:flex;flex-direction:column;gap:14px" id="latList"></div>
+          <div class="legend">
+            <span><i style="background:var(--brand)"></i>STT</span>
+            <span><i style="background:var(--cyan)"></i>LLM</span>
+            <span><i style="background:var(--gold)"></i>TTS</span>
+            <span><i style="background:rgba(148,163,205,.45)"></i>E2E total</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card pad">
+        <h3 style="font-family:var(--font-d);font-size:15px">Extracted information</h3>
+        <div id="xfields" style="margin-top:10px"></div>
+      </div>
+      <div class="card pad" style="margin-top:18px">
+        <h3 style="font-family:var(--font-d);font-size:15px">AI summary</h3>
+        <p style="font-size:14px;color:var(--muted);line-height:1.7;margin-top:10px">Parent confirmed Anika is absent today due to sick leave. The agent showed empathy, offered a teacher callback, and the parent accepted for this evening. No further action needed from the school office today beyond scheduling that callback.</p>
+        <div style="margin-top:14px"><span class="outcome-tag">Outcome · absence logged + callback booked</span></div>
+        <div style="margin-top:16px;font-size:12px;color:var(--dim)">
+          Started 9:41 AM IST · duration 2:04 · interruption handled ×2 · median E2E 742 ms
+        </div>
+      </div>
+    </div>
+  </div>`
+});
+
+const TURNS=[
+ ['agent','9:41:05','Hello, am I speaking with Mr. Rao, Anika’s father?'],
+ ['caller','9:41:12','Yes, speaking.'],
+ ['agent','9:41:15','Thank you. This is Sarathi calling from Sunrise Academy. Could you tell me if Anika will attend classes today?'],
+ ['caller','9:41:31','Actually she’s unwell — she has a fever since last night, so no school today.'],
+ ['agent','9:41:36','I’m sorry to hear that, I hope she feels better soon. I’ve noted sick leave as the reason. Should I ask her class teacher to call you back this evening?'],
+ ['caller','9:41:52','Yes please, that would help.'],
+ ['agent','9:41:55','Noted — Ms. Divya will call after 5 PM. Wishing Anika a quick recovery. Thank you, Mr. Rao.'],
+];
+document.getElementById('turns').innerHTML=TURNS.map(([w,t,x])=>`
+  <div class="trow ${w}"><span class="meta">${w==='agent'?'SARATI AGENT':'MR. RAO'} · ${t}</span><div class="tbubble">${x}</div></div>`).join('');
+
+const XF=[
+ ['student_name','Anika Rao',94],['parent_name','Mr. Rao',96],['present_today','No',91],
+ ['reason','Sick leave (fever)',88],['callback_requested','Yes — after 5 PM',93]];
+document.getElementById('xfields').innerHTML=XF.map(([k,v,c])=>`
+  <div class="frow2"><span class="k">${k}</span><span>${v} <span class="confchip ${c>=85?'hi':'md'}">${c}%</span></span></div>`).join('');
+
+const LATS=[[214,302,196,712],[198,287,188,673],[231,341,205,777]];
+document.getElementById('latList').innerHTML=LATS.map((l,i)=>{
+  const [stt,llm,tts]=l,e2e=l[3];
+  return `<div>
+    <div class="latmeta"><span>Turn ${i+1}</span><span style="font-family:var(--font-m);color:${e2e>1500?'var(--red)':e2e>900?'var(--amber)':'var(--green)'}">${e2e} ms E2E</span></div>
+    <div class="gbar">${[stt,llm,tts].map((v,j)=>`<b class="${['stt','llm','tts'][j]}" style="height:${v/900*100}%" title="${['STT','LLM','TTS'][j]} ${v}ms"></b>`).join('')}<b class="e2e" style="height:${e2e/1800*100}%" title="E2E ${e2e}ms"></b></div>
+  </div>`;
+}).join('');
+
+let playing=false,rp=0,rIv=null;
+document.getElementById('playB').onclick=e=>{
+  playing=!playing;
+  e.target.textContent=playing?'❚❚ Pause':'▶ Play recording';
+  clearInterval(rIv);
+  if(playing)rIv=setInterval(()=>{
+    rp=(rp+1)%124;
+    document.getElementById('rfill').style.width=(rp/124*100)+'%';
+    document.getElementById('rtime').textContent=`${Math.floor(rp/60)}:${String(rp%60).padStart(2,'0')} / 2:04`;
+  },1000);
+};
+setTimeout(()=>ES.toast('Call report loaded — flagged for follow-up','gold'),500);
+</script>
+</body>
+</html>

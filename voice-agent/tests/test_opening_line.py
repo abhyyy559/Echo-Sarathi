@@ -45,8 +45,19 @@ def test_opening_line_uses_short_sentences_for_tts_clarity() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(CONFIG, _tokens(contact), contact)
     assert "Hello Suresh Kumar." in out
-    assert "This is an AI assistant calling from Demo School." in out
+    # Disclosure already says who/where — the greeting must not repeat it.
+    assert "This is an AI assistant calling from Demo School." not in out
     assert "I'm calling about Aarav Kumar." in out
+
+
+def test_opening_line_repeats_intro_when_disclosure_is_bare() -> None:
+    config = {
+        "disclosure_script": "This call is recorded.",
+        "question_flow": [{"question": "Why?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+    assert "This is an AI assistant calling from Demo School." in out
 
 
 class _FakeSession:

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Call, Contact
 from app.services.calls_service import TWILIO_STATUS_MAP, end_call, log_call_event
+from app.services.media_bridge import drain_track, make_frame, put_sentinel
 from app.services.twilio_bridge import build_phone_room_token
 from app.services.twilio_bridge import parse_stream_event as _parse_bridge_event
 from app.timeutil import utcnow
@@ -69,20 +70,6 @@ def _build_voice_twiml(ws_base_url: str, call_id: int) -> str:
 # --- media streams bridge (Twilio <-> LiveKit phone rooms) -------------------
 
 
-def _make_frame(pcm16_8k: bytes) -> Any:
-    """Build an rtc.AudioFrame from 16-bit LE PCM at 8 kHz."""
-    from livekit import rtc
-
-    if hasattr(rtc.AudioFrame, "from_s16"):
-        return rtc.AudioFrame.from_s16(pcm16_8k, sample_rate=8000, num_channels=1)
-    return rtc.AudioFrame(
-        data=pcm16_8k,
-        samples_per_channel=len(pcm16_8k) // 2,
-        sample_rate=8000,
-        num_channels=1,
-    )
-
-
 async def _pump_twilio_to_room(
     ws: WebSocket, source: Any, stream_sid_box: dict[str, str]
 ) -> None:
@@ -110,51 +97,8 @@ async def _pump_twilio_to_room(
         except binascii.Error:
             logger.debug("dropping non-base64 twilio media frame")
             continue
-        frame = _make_frame(ulaw_to_pcm16(pcm))
+        frame = make_frame(ulaw_to_pcm16(pcm))
         await source.capture_frame(frame)
-
-
-def _put_sentinel(queue: Any) -> None:
-    """Enqueue the b"" end-of-stream sentinel, dropping backlog if full."""
-    import asyncio
-
-    try:
-        queue.put_nowait(b"")
-    except asyncio.QueueFull:
-        try:
-            queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
-        try:
-            queue.put_nowait(b"")
-        except asyncio.QueueFull:
-            pass
-
-
-async def _drain_track(track: Any, queue: Any) -> None:
-    """Forward one subscribed remote audio track into the bridge queue."""
-    import asyncio
-
-    from livekit import rtc
-
-    from app.services.g711 import downsample_pcm16, pcm16_to_ulaw
-
-    audio_stream = rtc.AudioStream(track)
-    try:
-        # track_subscribed hands us a Track (not frames); AudioStream is the
-        # async iterator over AudioFrameEvent in the installed SDK.
-        async for event in audio_stream:
-            pcm = bytes(event.frame.data)
-            factor = max(1, round(int(event.frame.sample_rate) / 8000))
-            if factor > 1:
-                pcm = downsample_pcm16(pcm, factor)
-            try:
-                queue.put_nowait(pcm16_to_ulaw(pcm))
-            except asyncio.QueueFull:
-                pass  # drop backlog: live caller audio wins over stale frames
-    finally:
-        await audio_stream.aclose()
-        _put_sentinel(queue)
 
 
 async def _pump_room_to_twilio(
@@ -276,11 +220,11 @@ async def twilio_media(websocket: WebSocket) -> None:
         if key in seen_tracks:
             return  # belt-and-braces scan may double-report an existing track
         seen_tracks.add(key)
-        drains.append(asyncio.ensure_future(_drain_track(track, queue)))
+        drains.append(asyncio.ensure_future(drain_track(track, queue)))
 
     def _on_room_disconnected(_room: Any = None) -> None:
         room_gone.set()
-        _put_sentinel(queue)
+        put_sentinel(queue)
 
     # Register BEFORE connect so no track_subscribed event can be missed.
     room.on("track_subscribed", _on_frame)
@@ -298,7 +242,11 @@ async def twilio_media(websocket: WebSocket) -> None:
 
     source = rtc.AudioSource(sample_rate=8000, num_channels=1)
     caller_track = rtc.LocalAudioTrack.create_audio_track(f"twilio-{call_pk}", source)
-    await room.local_participant.publish_track(caller_track)
+    # Worker sessions only read SOURCE_MICROPHONE tracks (see vobiz.py).
+    await room.local_participant.publish_track(
+        caller_track,
+        rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
+    )
 
     to_agent = asyncio.ensure_future(_pump_twilio_to_room(websocket, source, stream_sid_box))
     from_agent = asyncio.ensure_future(_pump_room_to_twilio(queue, websocket, stream_sid_box))

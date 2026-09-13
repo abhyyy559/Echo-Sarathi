@@ -158,7 +158,7 @@ export default function TextPlayground({ versionId, onFinishReport, autoStart = 
         </button>
       </div>
 
-      <div className="chat-log" ref={logRef}>
+      <div className="chat-log tchat" ref={logRef}>
         {messages.length === 0 && !busy && !error && <p className="hint">Starting the conversation…</p>}
         {messages.map((m, i) => (
           <div key={i} className={`chat-row ${m.speaker === 'caller' ? 'caller' : 'agent'}`}>

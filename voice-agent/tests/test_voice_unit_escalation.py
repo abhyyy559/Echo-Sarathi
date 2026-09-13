@@ -7,7 +7,7 @@ network. Complements the Lane E contract suite in test_escalation.py.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import pytest
 
@@ -44,13 +44,8 @@ def test_low_confidence_flags_field_and_ends_call(fake_backend: Any) -> None:
     assert "reason_for_absence" in coordinator.flagged
     assert "reason_for_absence" not in coordinator.recorded
 
-    # The value was still persisted (for audit), with its low confidence.
-    assert len(fake_backend.field_posts) == 1
-    call_id, rows = fake_backend.field_posts[0]
-    assert call_id == CALL_ID
-    row: Dict[str, Any] = dict(rows[0])
-    assert row["field_name"] == "reason_for_absence"
-    assert row["confidence"] == pytest.approx(0.35)
+    # A rejected (low-confidence) value must NOT be persisted at all.
+    assert fake_backend.field_posts == []
 
     # Escalation: a wrap-up/complete was posted (end-call path).
     assert len(fake_backend.completions) == 1

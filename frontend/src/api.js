@@ -72,6 +72,11 @@ function extractErrorDetail(body) {
 // Core fetch wrapper
 // ---------------------------------------------------------------------------
 
+/** Local offline-demo tokens (never sent by a real backend session). */
+function isMockToken(t) {
+  return typeof t === 'string' && t.startsWith('demo-');
+}
+
 /** Paths that may legitimately return 401 without killing the session. */
 function isAuthPath(path) {
   return path.startsWith('/api/auth/login') || path.startsWith('/api/auth/register');
@@ -99,7 +104,11 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (!res.ok) {
-    if (res.status === 401 && !isAuthPath(path)) {
+    // Offline demo sessions carry a local mock token the backend will never
+    // accept — kicking back to /login on every 401 would trap demo users in
+    // a login loop. Real expired sessions still redirect; mock sessions let
+    // each page render its own error state instead.
+    if (res.status === 401 && !isAuthPath(path) && !isMockToken(token)) {
       clearSession();
       // Full navigation is intentional: resets every in-memory state cleanly.
       if (!window.location.pathname.startsWith('/login')) {

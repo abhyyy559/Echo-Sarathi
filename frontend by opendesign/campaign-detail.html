@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaign Monitor — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.tiles{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-bottom:20px}
+@media(max-width:1000px){.tiles{grid-template-columns:repeat(3,1fr)}}
+.tile{padding:14px 16px;text-align:left}
+.tile .n{font-family:var(--font-d);font-size:24px;font-weight:600}
+.tile .l{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-top:4px}
+.tile.t-cyan{border-color:rgba(163,154,142,.4)}
+.tile.t-green{border-color:rgba(16,185,129,.35)}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+const c=ES.CAMPAIGNS[0];
+let T={Queued:c.total-c.done,Calling:2,Answered:c.done,Completed:c.done-6,'No-answer':4,Busy:1,Failed:1};
+ES.shell({
+  active:'campaigns',
+  title:c.name,
+  subtitle:`${c.agent} · created ${c.created} · live monitor`,
+  action:`<button class="btn ghost sm" id="pauseB">Pause</button>
+          <button class="btn ghost sm" style="margin-left:8px" onclick="exportCSV()">⬇ Export results</button>`,
+  body:`
+  <div class="banner brand">Tiles update live as the dialer works through the queue.</div>
+  <div class="tiles" id="tiles"></div>
+  <div class="card" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th>Contact</th><th>Phone</th><th>Status</th><th>Last outcome</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="ctBody"></tbody>
+    </table>
+  </div>`
+});
+
+const CONTACTS=[];
+for(let i=0;i<14;i++){
+  const name=ES.pick(ES.FIRST)+' '+ES.pick(ES.LAST);
+  const r=Math.random();
+  const st=r<.5?'completed':r<.62?'in-progress':r<.72?'queued':r<.82?'no-answer':r<.92?'busy':'failed';
+  CONTACTS.push({name,phone:'+91 '+ES.ri(70,99)+ES.ri(10000,99999)+ES.ri(1000,9999),status:st,
+    outcome:st==='completed'?ES.pick(ES.REASONS):'—',dur:st==='completed'?ES.ri(40,160):null});
+}
+
+function renderTiles(){
+  document.getElementById('tiles').innerHTML=Object.entries(T).map(([k,v])=>`
+    <div class="card tile ${k==='Calling'?'t-cyan':''}${k==='Completed'?'t-green':''}">
+      <div class="n">${v}</div><div class="l">${k}</div></div>`).join('');
+}
+function renderRows(){
+  document.getElementById('ctBody').innerHTML=CONTACTS.map((p,i)=>`
+    <tr onclick="location.href='call-detail.html'">
+      <td>${p.name}</td><td class="mono">${p.phone}</td>
+      <td>${ES.chip(p.status)}</td><td>${p.outcome}</td>
+      <td class="mono">${ES.fmtDur(p.dur)}</td>
+      <td><a href="call-detail.html" style="color:var(--brand);font-size:13px">Call →</a></td>
+    </tr>`).join('');
+}
+renderTiles();renderRows();
+
+ES.poll(()=>{
+  if(T.Queued<=0)return;
+  if(T.Calling<3&&T.Queued>0){T.Queued--;T.Calling++}
+  else{T.Calling--;Math.random()<.85?T.Completed++:(Math.random()<.5?T['No-answer']++:T.Busy++);if(Math.random()<.06)T.Failed++;T.Answered=T.Completed;T.Queued--}
+  if(T.Queued<0)T.Queued=0;
+  renderTiles();renderRows();
+},3000);
+
+document.getElementById('pauseB').onclick=()=>{
+  ES.confirmBox('Pause campaign?','In-flight calls finish politely; queued contacts wait here.','Pause campaign',()=>{
+    ES.toast('Campaign paused','gold');
+    document.getElementById('pauseB').textContent='Resume';
+    document.getElementById('pauseB').onclick=e=>{e.target.textContent='Pause';ES.toast('Campaign resumed','')};
+  });
+};
+function exportCSV(){
+  ES.csvDownload('campaign-101-results.csv',
+   ['contact','phone','status','outcome','duration_sec'],
+   CONTACTS.map(p=>[p.name,p.phone,p.status,p.outcome,p.dur||'']));
+  ES.toast('Results exported — includes transcripts &amp; extracted fields','');
+}
+setTimeout(()=>ES.toast('Live monitor connected — refreshing every 3s','info'),600);
+</script>
+</body>
+</html>

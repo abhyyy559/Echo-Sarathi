@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0a0b;--bg2:#101012;--surface:rgba(22,22,24,.65);--surface2:#18181b;--line:rgba(233,228,218,.12);--line2:rgba(233,228,218,.22);--fg:#f3efe6;--muted:#a89e8c;--dim:#6e6656;--brand:#e9e4da;--brand-soft:rgba(233,228,218,.12);--brand-glow:rgba(233,228,218,.3);--cyan:#a39a8e;--cyan-soft:rgba(163,154,142,.1);--gold:#f5f2ec;--gold-soft:rgba(245,242,236,.1);--red:#d96152;--amber:#c99742;--green:#5ba97c;--violet:#e9e4da;--r:12px;--r2:16px;--glow:0 0 0 1px var(--line),0 12px 40px rgba(0,0,0,.45);--font-d:'Cormorant Garamond',serif;--font-u:'DM Sans',sans-serif;--font-m:'JetBrains Mono',monospace}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'DM Sans',sans-serif;font-size:15px;-webkit-font-smoothing:antialiased;min-height:100vh;display:grid;grid-template-columns:minmax(420px,44%) 1fr}
+@media(max-width:860px){body{grid-template-columns:1fr}.brand-side{display:none}}
+.form-side{display:flex;flex-direction:column;justify-content:center;padding:48px clamp(24px,6vw,84px)}
+.logo-row{display:flex;align-items:center;gap:11px;margin-bottom:40px}
+.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(140deg,#26262b,#141418);border:1px solid rgba(233,228,218,.35);display:flex;align-items:center;justify-content:center}
+.logo-row b{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:500;font-style:italic}.logo-mark{flex:none}.lm-src{fill:#8f867a}.lm-a{fill:none;stroke:#8f867a;stroke-width:2;stroke-linecap:round}.lm-b{fill:none;stroke:#ece7dd;stroke-width:2;stroke-linecap:round;filter:drop-shadow(0 0 4px rgba(233,228,218,.45))}.lm-echo{fill:#ece7dd;filter:drop-shadow(0 0 5px rgba(233,228,218,.6))}.l1,.l2,.r1,.r2{animation:lmPulse 2.8s ease-in-out infinite}.l2{animation-delay:.16s}.r1{animation-delay:.5s}.r2{animation-delay:.66s}@keyframes lmPulse{0%{opacity:.14}18%{opacity:1}55%{opacity:.85}100%{opacity:.12}}@media(prefers-reduced-motion:reduce){.l1,.l2,.r1,.r2{animation:none;opacity:.75}}
+h1{font-family:'Cormorant Garamond',serif;font-size:27px;font-weight:600;margin-bottom:6px}
+.sub{color:var(--muted);font-size:14px;margin-bottom:28px}
+.mode-tabs{display:flex;gap:6px;background:var(--surface);border:1px solid var(--line);padding:5px;border-radius:12px;width:max-content;margin-bottom:26px}
+.mode-tabs button{padding:8px 22px;border-radius:8px;font-size:13.5px;color:var(--muted)}
+.mode-tabs button.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
+input{width:100%;background:var(--surface);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;color:var(--fg);font-size:14.5px;outline:none;transition:.2s;font-family:inherit}
+input:focus{border-color:rgba(233,228,218,.6);box-shadow:0 0 0 3px rgba(233,228,218,.12)}
+.err{display:none;background:rgba(224,110,95,.09);border:1px solid rgba(224,110,95,.35);color:#eec4b8;border-radius:10px;padding:11px 14px;font-size:13.5px;margin-top:18px}
+.err.show{display:block}
+.demo-hint{margin-top:20px;border:1px dashed var(--line2);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--dim);line-height:1.7}
+.demo-hint b{color:var(--muted);font-family:'JetBrains Mono';font-weight:400;font-size:12px}
+.cta-btn{width:100%;margin-top:26px;background:var(--brand);color:#1a140a;border:none;border-radius:11px;padding:13px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:.2s}
+.cta-btn:hover{filter:brightness(1.08);box-shadow:0 8px 30px rgba(233,228,218,.25)}
+.spin{width:16px;height:16px;border:2px solid rgba(26,20,10,.3);border-top-color:#1a140a;border-radius:50%;animation:sp .7s linear infinite;display:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.legal{margin-top:26px;font-size:12px;color:var(--dim);text-align:center}
+.brand-side{position:relative;overflow:hidden;background:radial-gradient(900px 600px at 70% 20%,rgba(233,228,218,.09),transparent 60%),radial-gradient(700px 500px at 20% 85%,rgba(245,242,236,.07),transparent 55%),linear-gradient(170deg,#0a0a0b,#08080a);display:flex;flex-direction:column;justify-content:center;padding:64px clamp(32px,6vw,96px)}
+.bwave{display:flex;align-items:center;gap:5px;height:120px;margin-bottom:44px}
+.bwave i{flex:1;max-width:7px;border-radius:4px;background:linear-gradient(to top,rgba(233,228,218,.2),var(--brand));animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{0%,100%{height:12%}50%{height:var(--h)}}
+.brand-side h2{font-family:'Cormorant Garamond',serif;font-size:clamp(30px,3.4vw,44px);font-weight:700;line-height:1.12;max-width:480px}
+.brand-side h2 em{font-style:normal;background:linear-gradient(90deg,var(--brand),#ccc4b7);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-side p{margin-top:20px;color:var(--muted);font-size:15.5px;line-height:1.75;max-width:430px}
+.lang-line{margin-top:40px;font-size:13px;color:var(--dim);letter-spacing:.06em}
+.lang-line b{color:var(--gold);font-weight:500}
+</style>
+</head>
+<body>
+<div class="form-side">
+  <div class="logo-row"><svg class="logo-mark" width="38" height="22" viewBox="0 0 46 26" fill="none" aria-hidden="true"><circle class="lm-src" cx="6" cy="13" r="2.2"/><path class="lm-a l1" d="M10.02 7.27 A7 7 0 0 1 10.02 18.73"/><path class="lm-a l2" d="M12.88 3.17 A12 12 0 0 1 12.88 22.83"/><circle class="lm-echo" cx="40" cy="13" r="2.2"/><path class="lm-b r1" d="M35.98 7.27 A7 7 0 0 0 35.98 18.73"/><path class="lm-b r2" d="M33.12 3.17 A12 12 0 0 0 33.12 22.83"/></svg>
+    <span class="mark"><svg width="20" height="20" viewBox="0 0 32 32"><path d="M6 16v0M11 8v16M16 4v24M21 10v12M26 13v6" stroke="#e9e4da" stroke-width="3" stroke-linecap="round"/></svg></span>
+    <b>Echo Sarathi</b>
+  </div>
+  <h1 id="formTitle">Welcome back</h1>
+  <p class="sub" id="formSub">Sign in to your voice console.</p>
+  <div class="mode-tabs">
+    <button class="on" data-mode="login">Sign in</button>
+    <button data-mode="signup">Create account</button>
+  </div>
+  <div id="orgField" style="display:none">
+    <label for="org">Organization name</label>
+    <input id="org" type="text" placeholder="e.g. Sunrise Academy" autocomplete="organization">
+  </div>
+  <label for="email">Email</label>
+  <input id="email" type="email" placeholder="you@school.edu" autocomplete="email">
+  <label for="pass">Password</label>
+  <input id="pass" type="password" placeholder="Minimum 8 characters" autocomplete="current-password">
+  <div class="err" id="err"></div>
+  <div class="demo-hint">Demo environment — try <b>demo@echosarathi.ai</b> / <b>voice1234</b></div>
+  <button class="cta-btn" id="go"><span class="spin" id="spin"></span><span id="goTxt">Sign in to console</span></button>
+  <p class="legal">By continuing you agree to the Terms of Service and Privacy Policy.</p>
+</div>
+
+<div class="brand-side">
+  <div class="bwave" id="bwave"></div>
+  <h2>Build AI voice agents that <em>talk to your customers</em>.</h2>
+  <p>Create an agent once, test it in the browser, then launch outbound campaigns that call real people — and return every conversation as clean, structured results.</p>
+  <p class="lang-line">English today · <b>తెలుగు next</b> · code-switching on the roadmap</p>
+</div>
+
+<script>
+const wave=document.getElementById('bwave');
+for(let i=0;i<34;i++){const b=document.createElement('i');b.style.setProperty('--h',(25+Math.random()*70)+'%');b.style.animationDelay=(Math.random()*-2.4)+'s';wave.appendChild(b)}
+
+let mode='login';
+const tabs=document.querySelectorAll('.mode-tabs button');
+tabs.forEach(t=>t.onclick=()=>{
+  tabs.forEach(x=>x.classList.remove('on'));t.classList.add('on');mode=t.dataset.mode;
+  document.getElementById('orgField').style.display=mode==='signup'?'block':'none';
+  document.getElementById('formTitle').textContent=mode==='signup'?'Create your workspace':'Welcome back';
+  document.getElementById('formSub').textContent=mode==='signup'?'Set up your organization and start calling in minutes.':'Sign in to your voice console.';
+  document.getElementById('goTxt').textContent=mode==='signup'?'Create account':'Sign in to console';
+});
+function fail(msg){const e=document.getElementById('err');e.textContent=msg;e.classList.add('show')}
+document.querySelectorAll('input').forEach(i=>i.addEventListener('input',()=>document.getElementById('err').classList.remove('show')));
+document.getElementById('go').onclick=()=>{
+  const email=document.getElementById('email').value.trim(),pass=document.getElementById('pass').value,org=document.getElementById('org').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return fail('Enter a valid email address.');
+  if(pass.length<8)return fail('Password must be at least 8 characters.');
+  if(mode==='signup'&&!org)return fail('Organization name is required.');
+  const btn=document.getElementById('go');btn.disabled=true;
+  document.getElementById('spin').style.display='inline-block';
+  setTimeout(()=>{
+    if(mode==='login'&&!(email==='demo@echosarathi.ai'&&pass==='voice1234')){
+      btn.disabled=false;document.getElementById('spin').style.display='none';
+      return fail('Wrong email or password (HTTP 401). Try the demo credentials.');
+    }
+    if(mode==='signup'&&email==='demo@echosarathi.ai'){
+      btn.disabled=false;document.getElementById('spin').style.display='none';
+      return fail('That email already exists (HTTP 422). Try signing in instead.');
+    }
+    localStorage.setItem('es_user',JSON.stringify({email,org:org||'Sunrise Academy'}));
+    location.href='overview.html';
+  },900);
+};
+</script>
+</body>
+</html>

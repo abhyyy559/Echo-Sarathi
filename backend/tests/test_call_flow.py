@@ -115,6 +115,40 @@ def test_happy_path_stamps_version_and_room(
         call = db.get(Call, body["call_id"])
         assert call.agent_version_id == version_id
 
+def test_contact_details_reach_contact_custom_fields(
+    client, session_factory, fake_telephony, allowlisted
+):
+    """The agent must KNOW whom it is calling: per-contact details supplied in
+    the test-call request are stored on the contact and reach the room metadata
+    path (custom_fields -> CALLER CONTEXT)."""
+    token, user = register(client)
+    with session_factory() as db:
+        dc_id, version_id = _seed_domain_and_agent(db, user["org_id"])
+    resp = _post(
+        client,
+        token,
+        {
+            "to": TO,
+            "domain_config_id": dc_id,
+            "agent_version_id": version_id,
+            "contact": {
+                "student_name": "Abhiram",
+                "parent_name": "Suresh",
+                "class_section": "10-B",
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        from app.models import Contact
+
+        contact = (
+            db.query(Contact).filter(Contact.phone == TO).one()
+        )
+        fields = contact.custom_fields or {}
+        assert fields["student_name"] == "Abhiram"
+        assert fields["parent_name"] == "Suresh"
+        assert fields["class_section"] == "10-B"
 
 def test_latest_org_version_used_when_omitted(
     client, session_factory, fake_telephony, allowlisted

@@ -18,7 +18,10 @@ except ImportError:  # pragma: no cover
     load_dotenv = None  # type: ignore[assignment]
 
 DEFAULT_BACKEND_INTERNAL_URL = "http://localhost:8000"
-DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+# Fast default for voice (gpt-oss-20b runs ~1000 tok/s on Groq dev tier).
+# llama-3.1-8b-instant went Enterprise-only (404 for dev keys). Reasoning is
+# disabled per-request in pipeline.py. Per-agent override: voice_settings.
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 

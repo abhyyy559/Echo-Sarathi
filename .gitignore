@@ -60,6 +60,7 @@ out/
 # Logs
 logs/
 *.log
+tools/cloudflared/tunnel.err
 
 # Testing
 .coverage

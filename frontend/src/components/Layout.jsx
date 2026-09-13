@@ -122,7 +122,7 @@ function titleFor(pathname) {
   if (pathname.startsWith('/dev')) return ['Developer tools', 'Service health, provider keys, API catalog'];
   if (pathname.startsWith('/phone-numbers')) return ['Phone numbers', 'Provision and manage DIDs'];
   if (pathname.startsWith('/guide')) return ['Guide', 'From empty account to first campaign'];
-  return ['VocalIQ', 'AI voice calling console'];
+  return ['Echo Sarathi', 'AI voice calling console'];
 }
 
 const navClass = ({ isActive }) => `nav-link${isActive ? ' active' : ''}`;
@@ -142,10 +142,14 @@ export default function Layout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-mark">V</div>
+          <div className="brand-mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 12h2l3-8 4 16 4-12 3 6h4" />
+            </svg>
+          </div>
           <div>
-            <div className="brand-name">VocalIQ</div>
-            <div className="brand-sub">Voice calling console</div>
+            <div className="brand-name">Echo Sarathi</div>
+            <div className="brand-sub">AI voice calling console</div>
           </div>
         </div>
         <nav className="sidebar-nav" aria-label="Main navigation">

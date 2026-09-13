@@ -20,15 +20,38 @@ export default function Login() {
     setError(null);
   }
 
+  // Demo logins try the REAL backend account first (seeded by
+  // backend/scripts/seed_demo.py), so the dashboard and all APIs work with a
+  // genuine JWT. Only when the backend is down or unseeded do we fall back to
+  // an offline mock session — api.js knows mock tokens and won't kick a demo
+  // user back to /login on 401s; pages render their own error states instead.
+  const DEMO_LOGINS = [
+    { email: 'demo@example.com', password: 'demo1234' },
+    { email: 'demo@echosarathi.ai', password: 'voice1234' },
+  ];
+
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      if (!isRegister && form.email.trim() === 'demo@echosarathi.ai' && form.password === 'voice1234') {
-        setSession('demo-token', { email: 'demo@echosarathi.ai', role: 'admin' });
-        navigate(from, { replace: true });
-        return;
+      const isDemo =
+        !isRegister &&
+        DEMO_LOGINS.some((d) => form.email.trim() === d.email && form.password === d.password);
+      if (isDemo) {
+        try {
+          const demoRes = await authApi.login({ email: 'demo@example.com', password: 'demo1234' });
+          if (demoRes && demoRes.token) {
+            setSession(demoRes.token, demoRes.user);
+            navigate(from, { replace: true });
+            return;
+          }
+          throw new Error('no token');
+        } catch {
+          setSession('demo-token', { email: form.email.trim(), role: 'admin' });
+          navigate(from, { replace: true });
+          return;
+        }
       }
       const res = isRegister
         ? await authApi.register({
@@ -104,6 +127,7 @@ export default function Login() {
           </button>
         </div>
 
+        <form onSubmit={submit}>
         {isRegister && (
           <div className="field">
             <label htmlFor="login-org">
@@ -153,15 +177,14 @@ export default function Login() {
 
         {!isRegister && (
           <div className="demo-hint">
-            Demo — use <b>demo@echosarathi.ai</b> / <b>voice1234</b>
+            Demo — use <b>demo@example.com</b> / <b>demo1234</b> (full data when the backend is seeded)
           </div>
         )}
 
         <div className="form-actions">
           <button
-            type="button"
+            type="submit"
             className="cta-btn"
-            onClick={submit}
             disabled={
               busy ||
               !form.email.trim() ||
@@ -173,6 +196,7 @@ export default function Login() {
             {busy ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in to console'}
           </button>
         </div>
+        </form>
 
         <p className="legal">By continuing you agree to the Terms of Service and Privacy Policy.</p>
 

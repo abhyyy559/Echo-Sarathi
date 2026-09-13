@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap & Guide — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.journey-steps{display:flex;gap:0;overflow-x:auto;padding:6px 0 18px;margin-bottom:8px}
+.js{flex:0 0 auto;width:150px;text-align:center;position:relative;cursor:pointer}
+.js .node{width:44px;height:44px;margin:0 auto;border-radius:50%;border:1.5px solid var(--line2);display:flex;align-items:center;justify-content:center;font-family:var(--font-m);font-size:14px;color:var(--dim);transition:.25s;background:var(--surface);position:relative;z-index:2}
+.js:not(:last-child)::after{content:"";position:absolute;top:22px;left:calc(50% + 26px);width:calc(100% - 52px);height:1.5px;background:var(--line)}
+.js.seen:not(:last-child)::after{background:rgba(233,228,218,.5)}
+.js:hover .node{border-color:var(--muted);color:var(--fg)}
+.js.on .node{border-color:var(--brand);color:#fff;background:var(--brand);box-shadow:0 0 20px rgba(233,228,218,.35)}
+.js.seen .node{border-color:rgba(16,185,129,.55);color:var(--green)}
+.js p{margin-top:10px;font-size:12.5px;color:var(--muted)}
+.js.on p{color:var(--fg)}
+.detail-card{min-height:280px}
+.dc-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+@media(max-width:900px){.dc-grid{grid-template-columns:1fr}}
+.dc-box h5{font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:9px}
+.dc-box.you h5{color:var(--brand)}.dc-box.sarati h5{color:var(--cyan)}.dc-box.tip h5{color:var(--gold)}
+.dc-box p{font-size:14px;color:var(--muted);line-height:1.7}
+.dia{font-family:'Cormorant Garamond',serif;font-size:clamp(64px,10vw,120px);line-height:1;background:linear-gradient(120deg,var(--brand),#ccc4b7 45%,#f5f2ec);-webkit-background-clip:text;background-clip:text;color:transparent}
+.phase{display:flex;gap:16px;align-items:center;padding:18px 0;border-bottom:1px solid var(--line)}
+.phase:last-child{border:none}
+.phase .pn{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-family:var(--font-m);flex:0 0 auto;border:1px solid var(--line2);color:var(--muted)}
+.phase.live .pn{background:var(--brand-soft);border-color:rgba(233,228,218,.4);color:var(--brand)}
+.phase.next .pn{background:var(--gold-soft);border-color:rgba(245,242,236,.4);color:var(--gold)}
+.pipe{display:flex;align-items:center;gap:0;overflow-x:auto;padding:26px 4px}
+.pnode{flex:0 0 auto;text-align:center;min-width:110px}
+.pnode .ic{width:52px;height:52px;margin:0 auto;border-radius:14px;border:1px solid var(--line2);background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--brand);transition:.3s}
+.pnode.hot .ic{border-color:var(--brand);box-shadow:0 0 18px rgba(233,228,218,.3)}
+.pnode small{display:block;margin-top:8px;font-size:11.5px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.pflow{flex:1;height:1.5px;min-width:34px;background:linear-gradient(90deg,var(--brand),var(--cyan));background-size:200% 100%;animation:flow 1.4s linear infinite;position:relative;top:-14px}
+@keyframes flow{to{background-position:-200% 0}}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+const STEPS=[
+ {t:'Create a campaign',you:'Name your campaign — “Aug absence sweep” is enough.',sarati:'Sets up a safe workspace where every call is tracked and reversible.',tip:'Campaigns can be paused anytime; queued people are never disturbed twice.'},
+ {t:'Upload contacts',you:'Drop in a CSV or Excel with names and phone numbers.',sarati:'Parses it locally, checks every number’s format, flags bad rows red before import.',tip:'Extra columns like student_name become words the agent can say naturally.'},
+ {t:'Configure the agent',you:'Pick questions to ask and the fields you want captured.',sarati:'Turns that list into a natural conversation plan — not a rigid script.',tip:'Every save creates a new version; old calls keep the version that made them.'},
+ {t:'Launch',you:'Press launch inside the calling window (9 AM – 9 PM IST).',sarati:'Dials contacts one by one, respects busy numbers, retries politely later.',tip:'Launch is disabled outside the window — nobody gets a midnight call.'},
+ {t:'AI holds the conversation',you:'Watch live tiles as calls connect, answer or miss.',sarati:'Listens, takes turns, handles interruptions — like a trained human caller.',tip:'Median response time target is under 900 ms so pauses feel natural.'},
+ {t:'Transcribe',you:'Nothing — this happens automatically.',sarati:'Writes down every word with speakers and timestamps, second by second.',tip:'Transcripts power the extraction step and stay attached to each contact.'},
+ {t:'Extract structured results',you:'Define what counts as an answer: reason, callback, yes/no.',sarati:'Fills those fields with confidence scores — low-confidence items get flagged.',tip:'Flagged calls surface with ⚑ so a human reviews only what needs review.'},
+ {t:'Review & export',you:'Open results, filter what matters, export to Excel.',sarati:'Produces one row per person: transcript link, fields, outcome, duration.',tip:'Exports include everything — perfect for feeding your existing systems.'}];
+let cur=0;
+
+ES.shell({
+  active:'roadmap',
+  title:'Roadmap & Guide',
+  subtitle:'The whole product story in plain words — no jargon required.',
+  action:`<a class="btn primary" href="playground.html">Try it now</a>`,
+  body:`
+  <div class="card pad" style="margin-bottom:20px">
+    <span style="font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold)">Start here</span>
+    <h2 style="font-family:var(--font-d);font-size:clamp(22px,3vw,30px);font-weight:600;margin-top:10px">From a spreadsheet to structured answers — in eight steps.</h2>
+    <p style="color:var(--muted);margin-top:10px;max-width:640px;line-height:1.7">Click any step below (or use the arrows) to see exactly what <b style="color:var(--brand)">you do</b>, what <b style="color:var(--cyan)">Sarathi does</b>, and one practical tip.</p>
+  </div>
+
+  <div class="journey-steps" id="jsteps"></div>
+  <div class="detail-card card pad">
+    <div class="dc-grid">
+      <div class="dc-box you"><h5>You do</h5><p id="dYou"></p></div>
+      <div class="dc-box sarati"><h5>Sarathi does</h5><p id="dSar"></p></div>
+      <div class="dc-box tip"><h5>Good to know</h5><p id="dTip"></p></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:26px">
+      <button class="btn ghost sm" id="pv">← Previous</button>
+      <button class="btn primary sm" id="nx">Next →</button>
+      <div class="progress" style="max-width:220px;margin-left:auto"><b id="jp"></b></div>
+    </div>
+  </div>
+
+  <h2 style="font-family:var(--font-d);font-size:24px;font-weight:600;margin:46px 0 6px" id="languages">Language roadmap</h2>
+  <p style="color:var(--muted);max-width:640px;line-height:1.7">Honest phases — we ship each language only when it passes our quality bar, not before.</p>
+  <div class="rowflex" style="margin-top:22px;align-items:stretch;gap:22px">
+    <div class="card pad" style="flex:1.1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:10px">
+      <div class="dia">తెలుగు</div>
+      <p style="font-size:13px;color:var(--dim)">Designed with Indian multilingual voice interaction in mind from day one.</p>
+    </div>
+    <div class="card pad" style="flex:2">
+      ${[['Phase 1 · English','Live today — full quality','live','ok'],
+         ['Phase 2 · Telugu','In training — rolling out after accent benchmarks pass','next','warn'],
+         ['Phase 3 · Telugu + English code-switching','Mixed sentences handled naturally (“fee pay cheyyandi please”)','next','warn'],
+         ['Phase 4 · More Indian languages','Hindi, Tamil, Kannada and beyond — community-driven order','planned','queued']]
+        .map(([t,d,k,c])=>`<div class="phase ${k}"><span class="pn">${k==='live'?'✓':k==='next'?'…':'→'}</span><div style="flex:1"><b style="font-size:15px">${t}</b><p style="font-size:13px;color:var(--muted)">${d}</p></div>${ES.chip(c)}</div>`).join('')}
+    </div>
+  </div>
+
+  <h2 style="font-family:var(--font-d);font-size:24px;font-weight:600;margin:46px 0 6px">Under the hood — every single turn</h2>
+  <p style="color:var(--muted);max-width:640px;line-height:1.7">This loop runs many times per call. Speed here is why Sarathi doesn’t sound like a robot.</p>
+  <div class="card pad" style="margin-top:18px">
+    <div class="pipe" id="pipe"></div>
+    <p class="hint" style="margin-top:6px">Streaming audio both ways means barge-in works — callers can interrupt mid-sentence and be heard.</p>
+  </div>`
+});
+
+function renderJourney(){
+  document.getElementById('jsteps').innerHTML=STEPS.map((s,i)=>`
+    <div class="js ${i===cur?'on':''} ${i<cur?'seen':''}" onclick="go(${i})">
+      <span class="node">${i<cur?'✓':i+1}</span><p>${s.t}</p></div>`).join('');
+  const s=STEPS[cur];
+  document.getElementById('dYou').textContent=s.you;
+  document.getElementById('dSar').textContent=s.sarati;
+  document.getElementById('dTip').textContent=s.tip;
+  document.getElementById('jp').style.width=((cur+1)/STEPS.length*100)+'%';
+  document.getElementById('pv').disabled=cur===0;
+  document.getElementById('nx').textContent=cur===STEPS.length-1?'+ Try the playground':'Next →';
+}
+function go(i){cur=Math.max(0,Math.min(STEPS.length-1,i));renderJourney()}
+document.getElementById('pv').onclick=()=>go(cur-1);
+document.getElementById('nx').onclick=()=>{
+  if(cur===STEPS.length-1){location.href='playground.html';return}
+  go(cur+1);
+};
+renderJourney();
+
+const PIPE=[['☎','Phone line'],['〰','Real-time audio'],['A|','Speech recognition'],['◆','Conversation engine'],['♪','Voice generation'],['☎','Back to caller']];
+document.getElementById('pipe').innerHTML=PIPE.map((p,i)=>
+  `${i>0?'<div class="pflow"></div>':''}<div class="pnode hot" style="animation-delay:${i*.2}s"><div class="ic" style="font-size:19px;font-family:var(--font-m)">${p[0]}</div><small>${p[1]}</small></div>`).join('');
+setTimeout(()=>ES.toast('Guide loaded — click through all eight steps','info'),600);
+</script>
+</body>
+</html>

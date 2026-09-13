@@ -162,7 +162,7 @@ const JOURNEY = [
 
 export default function GuidePage() {
   return (
-    <div className="guide narrow-wide">
+    <div className="guide narrow">
       <div className="page-head">
         <div>
           <h2 className="page-title">Guide</h2>
@@ -182,7 +182,7 @@ export default function GuidePage() {
             </div>
             {step.body}
             {step.link && (
-              <Link className="btn btn-secondary btn-sm guide-step-link" to={step.link.to}>
+              <Link className="btn primary guide-step-link" to={step.link.to}>
                 {step.link.label} →
               </Link>
             )}
@@ -190,7 +190,7 @@ export default function GuidePage() {
         ))}
       </ol>
 
-      <div className="banner banner-info">
+      <div className="hint">
         Stuck? Dev Tools (footer link below the nav) shows service health and the full API catalog if something
         looks broken.
       </div>

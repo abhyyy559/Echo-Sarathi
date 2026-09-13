@@ -18,26 +18,58 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings, get_settings
 from app.database import init_db
-from app.services.telephony import FakeTelephonyClient, TwilioClient
+from app.services.telephony import (
+    FakeTelephonyClient,
+    PlivoClient,
+    TelephonyClient,
+    TwilioClient,
+    VobizClient,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _build_telephony(settings: Settings):  # type: ignore[no-untyped-def]
-    """Twilio client only when credentials exist; otherwise a fake that never
-    dials (guardrail: no real outbound calls this phase)."""
-    if settings.twilio_account_sid and settings.twilio_auth_token:
+def _provider_configured(settings: Settings) -> bool:
+    """True when the selected (or auto-detected) provider has credentials.
+
+    The explicit ``telephony_provider`` setting wins; auto-detection prefers
+    Plivo (cheaper India legs) over Twilio. Never true without credentials —
+    the guardrail that stops the dialer from trying to place real calls.
+    """
+    provider = settings.telephony_provider
+    if provider == "plivo":
+        return bool(settings.plivo_auth_id and settings.plivo_auth_token)
+    if provider == "twilio":
+        return bool(settings.twilio_account_sid and settings.twilio_auth_token)
+    if provider == "vobiz":
+        return bool(settings.vobiz_auth_id and settings.vobiz_auth_token)
+    return bool(
+        (settings.plivo_auth_id and settings.plivo_auth_token)
+        or (settings.twilio_account_sid and settings.twilio_auth_token)
+        or (settings.vobiz_auth_id and settings.vobiz_auth_token)
+    )
+
+
+def _build_telephony(settings: Settings) -> TelephonyClient:
+    """Real provider client only when its credentials exist; otherwise a fake
+    that never dials (guardrail: no real outbound calls without credentials)."""
+    if not _provider_configured(settings):
+        return FakeTelephonyClient()
+    provider = settings.telephony_provider
+    if provider == "twilio":
         return TwilioClient(settings)
-    return FakeTelephonyClient()
+    if provider == "plivo":
+        return PlivoClient(settings)
+    if provider == "vobiz":
+        return VobizClient(settings)
+    if settings.plivo_auth_id and settings.plivo_auth_token:
+        return PlivoClient(settings)
+    return TwilioClient(settings)
 
 
 def _should_run_dialer(settings: Settings) -> bool:
     """The dialer places REAL calls — run it only with real telephony configured."""
-    return bool(
-        settings.dialer_enabled
-        and settings.twilio_account_sid
-        and settings.twilio_auth_token
-    )
+    return bool(settings.dialer_enabled and _provider_configured(settings))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -80,8 +112,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         export,
         internal,
         playground,
+        plivo,
         test_call,
         twilio,
+        vobiz,
     )
 
     fast_app.include_router(auth.router)
@@ -100,6 +134,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fast_app.include_router(test_call.router)
     # Mounted WITHOUT /api prefix by design (provider webhook URLs).
     fast_app.include_router(twilio.router)
+    fast_app.include_router(plivo.router)
+    fast_app.include_router(vobiz.router)
     # Internal voice-agent API (service-token protected).
     fast_app.include_router(internal.router)
 

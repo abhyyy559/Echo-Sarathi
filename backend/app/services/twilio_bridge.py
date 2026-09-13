@@ -60,7 +60,12 @@ def parse_stream_event(raw: Any) -> MediaEvent:
 
 
 def build_phone_room_token(
-    settings: Any, *, call_id: int, version_id: int, contact: Mapping[str, Any]
+    settings: Any,
+    *,
+    call_id: int,
+    version_id: int,
+    contact: Mapping[str, Any],
+    identity_prefix: str = "twilio",
 ) -> tuple[str, str]:
     """Mint a join token for the phone room carrying pipeline metadata."""
     from livekit import api as livekit_api
@@ -71,7 +76,7 @@ def build_phone_room_token(
     )
     token = (
         livekit_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
-        .with_identity(f"twilio-{str(call_id)[-8:]}")
+        .with_identity(f"{identity_prefix}-{str(call_id)[-8:]}")
         .with_metadata(metadata)
         .with_grants(livekit_api.VideoGrants(room_join=True, room=room_name))
         .to_jwt()

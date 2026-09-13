@@ -35,6 +35,7 @@ ROLE_MISSION_HEADER = (
 )
 CONTEXT_HEADER = "COMPANY KNOWLEDGE - facts you may use; never invent anything beyond this:"
 CALLER_CONTEXT_HEADER = "CALLER CONTEXT - who this specific call is about:"
+GREETING_HEADER = "GREETING RULE (hard) - state only what you know:"
 LANGUAGE_HEADER = "LANGUAGE INSTRUCTION:"
 QUESTIONS_HEADER = "YOUR GOALS - information to collect during the call:"
 EXTRACTION_HEADER = "RECORDING ANSWERS - extraction discipline:"
@@ -87,11 +88,24 @@ def apply_token_substitution(
 
 
 def _first_name(*candidates: Optional[Mapping[str, Any]]) -> str:
-    """First known name found across contact cards (student/name/contact_name...)."""
+    """First known name found across contact cards (any domain's name key)."""
     for card in candidates:
         if not isinstance(card, Mapping):
             continue
-        for key in ("student_name", "name", "contact_name", "full_name", "lead_name"):
+        for key in ("student_name", "patient_name", "name", "contact_name",
+                    "full_name", "lead_name", "candidate_name"):
+            value = str(card.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _known_field(*candidates: Optional[Mapping[str, Any]], keys: tuple[str, ...]) -> str:
+    """First non-empty value for any of ``keys`` across contact cards."""
+    for card in candidates:
+        if not isinstance(card, Mapping):
+            continue
+        for key in keys:
             value = str(card.get(key) or "").strip()
             if value:
                 return value
@@ -122,14 +136,22 @@ def build_token_map(
         "[Company Name]": institution,
         "[Student Name]": name,
         "[Lead Name]": name,
+        "[Patient Name]": name,
         "[Parent/Guardian Name]": name,
         "[Agent Name]": who,
+        "[Doctor Name]": _known_field(contact, ctx_contact,
+                                      keys=("doctor_name", "doctor")),
+        "[Appointment Date]": _known_field(contact, ctx_contact,
+                                           keys=("appointment_date", "date")),
+        "[Appointment Time]": _known_field(contact, ctx_contact,
+                                           keys=("appointment_time", "time")),
         "[Expected Return Date]": "",
     }
 
 
 _CARD_PARENT_KEYS = ("parent_name", "parent", "guardian", "contact_person")
-_CARD_SUBJECT_KEYS = ("student_name", "full_name", "contact_name", "lead_name", "candidate_name", "name")
+_CARD_SUBJECT_KEYS = ("student_name", "patient_name", "full_name", "contact_name",
+                      "lead_name", "candidate_name", "name")
 
 
 def _card_value(card: Mapping[str, Any], keys: tuple[str, ...]) -> str:
@@ -159,26 +181,38 @@ def build_opening_line(
     parent = _card_value(card, _CARD_PARENT_KEYS)
     subject = _card_value(card, _CARD_SUBJECT_KEYS)
     institution = tok.get("[Institution Name]", "") or tok.get("[Company Name]", "")
+    # The disclosure script usually names the institution already — repeating
+    # it in the greeting doubles ~15 words of TTS (~4s) for zero information.
+    if institution and institution.lower() in disclosure.lower():
+        institution = ""
     who = tok.get("[Agent Name]", "") or "an AI assistant"
+    # Redundancy elimination: the disclosure usually already says who is
+    # calling and from where — repeating either doubles TTS seconds for zero
+    # information (callers experience it as the agent "taking forever").
+    # The greeting carries only genuinely new information.
+    if who not in disclosure:
+        intro = f"This is {who} calling"
+        if institution:
+            intro += f" from {institution}"
+        intro += "."
+    elif institution:
+        intro = f"Calling from {institution}."
+    else:
+        intro = ""
     # Short standalone sentences (not one long clause): the TTS engine
     # synthesizes sentence by sentence, so names get clean prosodic breaks
     # and are pronounced far more clearly than mid-sentence.
     if parent and subject and parent != subject:
-        if institution:
-            greet = (
-                f"Hello {parent}. "
-                f"This is {who} calling from {institution}. "
-                f"I'm calling about {subject}."
-            )
-        else:
-            greet = f"Hello {parent}. This is {who} calling about {subject}."
+        greet = f"Hello {parent}."
+        if intro:
+            greet += f" {intro}"
+        greet += f" I'm calling about {subject}."
     elif subject:
-        if institution:
-            greet = f"Hello {subject}. This is {who} calling from {institution}."
-        else:
-            greet = f"Hello {subject}. This is {who} calling."
-    elif institution:
-        greet = f"Hello. This is {who} calling from {institution}."
+        greet = f"Hello {subject}."
+        if intro:
+            greet += f" {intro}"
+    elif intro:
+        greet = f"Hello. {intro}"
     else:
         greet = "Hello."
     first_question = ""
@@ -192,6 +226,16 @@ def build_opening_line(
     opening = f"{disclosure} {greet}"
     if first_question:
         opening += f" {first_question}"
+    # Loud failure over silent failure: an unsubstituted [Token] means the
+    # contact card lacked the data — speaking "appointment with on at" is
+    # worse than a hallucination because the caller cannot catch it. Log
+    # which tokens failed; the scrubbed output still ships so the call runs.
+    leftovers = _BRACKET_ARTIFACT_RE.findall(opening)
+    if leftovers:
+        logger.warning(
+            "opening line has unsubstituted tokens (missing contact data): %s",
+            sorted(set(leftovers)),
+        )
     return scrub_speech_text(opening)
 
 
@@ -211,15 +255,31 @@ def _question_text(item: Any) -> str:
     return str(item or "").strip()
 
 
-def render_caller_context(contact: Mapping[str, Any]) -> str:
+def render_caller_context(
+    contact: Mapping[str, Any],
+    known_keys: Optional[object] = None,
+) -> str:
     """CALLER CONTEXT block (P0-2) from the contact card packed in room/token
     metadata. Names the person the call is about, tells the agent who to ask
-    for, and enforces verify-relationship-before-details."""
+    for, and enforces verify-relationship-before-details.
+
+    ``known_keys`` (optional, from the domain config's ``known_context_keys``)
+    is the known-vs-discovered separation: only these fields are facts the
+    agent may state. Target/extraction fields (reason, slots, preferences)
+    must NEVER reach the prompt, or the agent asserts undiscovered facts
+    ("calling about Abhi's fever"). When None, all scalar fields render
+    (legacy behavior).
+    """
+    allow: Optional[set[str]] = None
+    if isinstance(known_keys, (list, tuple, set)):
+        allow = {str(k).strip() for k in known_keys if str(k).strip()}
     fields: dict[str, str] = {}
     if isinstance(contact, Mapping):
         for key, value in contact.items():
             name = str(key).strip()
             if not name or isinstance(value, (dict, list)):
+                continue
+            if allow is not None and name not in allow:
                 continue
             text = str(value).strip()
             if text:
@@ -377,9 +437,9 @@ def render_system_prompt(
         str(config.get("system_prompt") or "").strip(), tokens
     )
     role_lines: list[str] = [
-        "You are a human-sounding phone agent making a single outbound call.",
-        "This is a real-time SPOKEN conversation: the caller hears your words read aloud by a voice engine.",
-        "Your job is to have a natural short conversation, understand the caller, and complete the goals below.",
+        "You are a human-sounding phone agent on one outbound SPOKEN call "
+        "(your words are read aloud). Hold a natural short conversation and "
+        "complete the goals below.",
     ]
     sections.append("\n".join([PERSONA_HEADER] + [f"- {line}" for line in role_lines]))
 
@@ -406,8 +466,28 @@ def render_system_prompt(
         )
 
     # 3b. Caller context (P0-2) — who this specific call is about.
+    # known_context_keys enforces the known-vs-discovered split: target
+    # fields (reason, slots, preferences) stay out of the prompt entirely.
+    # Lives in voice_settings (free-form JSON column, no migration needed);
+    # top-level key kept as fallback for file-based configs.
+    _vs = config.get("voice_settings")
+    known_keys = config.get("known_context_keys")
+    if known_keys is None and isinstance(_vs, Mapping):
+        known_keys = _vs.get("known_context_keys")
     if contact:
-        sections.append(render_caller_context(contact))
+        sections.append(render_caller_context(contact, known_keys))
+
+    # 3c. Greeting rule — state only the trigger fact, never the undiscovered
+    # reason. Asking is the call's purpose; asserting it is a fabrication.
+    sections.append(
+        f"{GREETING_HEADER}\n"
+        "- State only the trigger fact: someone was absent, an appointment "
+        "is scheduled, a delivery is pending.\n"
+        "- Do NOT state the reason, cause, or any detail the caller has not "
+        "told you. Never assume it, never mention it, never offer it.\n"
+        '- Bad: "calling about the reason you have not shared". '
+        'Good: "calling about the scheduled appointment".'
+    )
 
     # 3c. Language instruction — tells the LLM which language to respond in.
     voice_settings = config.get("voice_settings") or {}
@@ -426,54 +506,38 @@ def render_system_prompt(
         )
     else:
         sections.append(
-            f"{LANGUAGE_HEADER}\n"
-            "- The primary language for this call is English.\n"
-            "- If the caller speaks another language, try to follow their lead "
-            "but default to English."
+            f"{LANGUAGE_HEADER}\n- English first; follow the caller's lead otherwise."
         )
 
     # 4. Speaking style — this is what makes it sound human instead of IVR-like.
+    # NOTE: every line below costs input tokens on EVERY turn (~2800 total
+    # burns Groq's 8000 TPM in ~3 turns). Keep terse; cut examples first.
     sections.append(
         "HOW TO SPEAK (critical):\n"
-        "- Keep every reply SHORT: usually 1-2 sentences, never more than 3.\n"
-        "- Plain conversational words only. This text is converted to speech:\n"
-        "  NO markdown, NO asterisks, NO bullet lists, NO numbering symbols,\n"
-        "  NO emoji, NO newlines inside a reply. Sentences and punctuation only.\n"
-        "- Listen first, then respond to what the caller ACTUALLY said before moving on.\n"
-        "  Reflect it back briefly and warmly, e.g. 'Sorry to hear you've been unwell.'\n"
-        "- Ask ONE thing per turn. After the caller answers, acknowledge their answer,\n"
-        "  then guide the conversation toward the next goal naturally - do not read\n"
-        "  questions like a robot reading a script.\n"
-        "- If the caller volunteers information early, accept it happily and skip that goal later.\n"
-        "- Never repeat a question they already answered. Never talk over long pauses with new content;\n"
-        "  a simple 'Are you still there?' is enough after silence.\n"
-        "- Stay polite and calm even if the caller is upset or wants to hang up."
+        "- Every reply SHORT: 1-2 sentences, never more than 3. Plain words only: "
+        "no markdown, lists, symbols, emoji, or newlines — this becomes speech.\n"
+        "- Respond to what the caller ACTUALLY said first (brief warm reflection), "
+        "ask ONE thing per turn, never repeat answered questions, never read like a script.\n"
+        "- Volunteered info counts: skip that goal later. After silence, just 'Are you still there?' "
+        "Stay polite even if the caller is upset."
     )
 
-    # 4b. Guardrails — on-topic only, privacy, brevity, human handoff.
+    # 4b. Guardrails. Same token warning as above: one line per rule.
     sections.append(
         "HARD RULES (non-negotiable):\n"
-        "- STAY ON TOPIC: you only discuss the purpose of this call defined above. "
-        "If asked anything unrelated (news, general knowledge, personal opinions), "
-        "politely decline: 'I can only help with <purpose> today' and steer back.\n"
-        "- PRIVACY: never share any information about any OTHER person, caller, or record. "
-        "Only discuss the specific person this call is about.\n"
-        "- VERIFY BEFORE SHARING: if the relationship of the person answering is unclear "
-        "for a sensitive topic, confirm who you are speaking with first.\n"
-        "- BE BRIEF: complete the goals and end the call promptly - every extra minute costs money.\n"
-        "- HUMAN HANDOFF: if the caller repeatedly drifts off-topic, demands things beyond "
-        "your scope, or needs more help than this call provides, say you will arrange a "
-        "human representative to follow up, then call `end_call` with that summary.\n"
-        "- VERIFY-THEN-CONTINUE: confirming identity is the START of the call, never the "
-        "end. The moment the caller confirms who they are, acknowledge them warmly BY NAME "
-        "and immediately move to the first unfilled goal in the same breath — e.g. 'Great, "
-        "thanks Dhanu! Now, could you share...'. NEVER reply with a bare 'thank you' and "
-        "stop, and NEVER call `end_call` right after verification.\n"
-        "- END ONLY WHEN DONE: call `end_call` only when every REQUIRED goal above is "
-        "covered, the caller explicitly says goodbye / asks you to hang up, or the "
-        "handoff/escalation rules trigger. A vague or partial answer ('yeah', 'you are "
-        "speaking with...') is NOT confirmation and NEVER a reason to end — ask a short "
-        "clarifying question and keep going."
+        "- ON TOPIC only (decline the rest, steer back). PRIVACY: discuss only "
+        "this call's person. Verify who answers before sensitive details.\n"
+        "- VERIFY-THEN-CONTINUE: identity confirmation STARTS the call — acknowledge "
+        "BY NAME and move to the first unfilled goal in the same breath. Never a bare "
+        "'thank you', never `end_call` right after verification.\n"
+        "- END ONLY WHEN DONE: `end_call` when all REQUIRED goals are covered, caller "
+        "says goodbye, or handoff/escalation triggers. Vague answers are NOT confirmation "
+        "and NEVER a reason to end — ask a short clarifying question.\n"
+        "- STOP SIGNALS (one closing line, then `end_call`, no further questions): not "
+        "interested / call later / busy / remove number / stop calling / wants a human. "
+        "If busy, offer the callback first.\n"
+        "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
+        "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
     )
 
     # 5. Goals (question flow) as a checklist, woven naturally.
@@ -490,9 +554,7 @@ def render_system_prompt(
         sections.append(
             f"{QUESTIONS_HEADER}\n"
             + "\n".join(goal_items)
-            + "\nCover ALL of these by the end of the call, in whatever order the "
-              "conversation makes natural. You do not need to use the exact wording - "
-              "weave each into the conversation naturally."
+            + "\nCover ALL goals by call end, in natural order and wording."
         )
     else:
         sections.append(
@@ -504,26 +566,18 @@ def render_system_prompt(
     extraction_schema = config.get("extraction_schema") or {}
     extraction_lines: list[str] = [
         EXTRACTION_HEADER,
-        "- The moment the caller states something that answers any goal above, IMMEDIATELY "
-        "call `record_extracted_field(field_name, value, confidence)` in that same turn. "
-        "Do not wait until the end of the call.",
-        "- Use the EXACT field names listed below. Value must be quoted as the caller said it.",
-        "- Invoke `record_extracted_field` through your real FUNCTION-CALLING mechanism. "
-        "NEVER write tool-call markup into your spoken text - never output `<tool_call>`, "
-        "`<function=...>`, `<parameter=...>`, or `tool_calls` JSON. If you don't yet have a "
-        "real value, keep asking a short clarifying question - do not invent one or fake a call.",
-        "- Give an honest confidence between 0.0 and 1.0. If you clearly heard it, say 0.9. "
-        "If you are guessing, do NOT record - ask a short clarifying question instead.",
-        "- NEVER fabricate or guess a value. Uncertain means ask again, differently.",
+        "- The moment the caller answers any goal, IMMEDIATELY call "
+        "`record_extracted_field(field_name, value, confidence)` that same turn — "
+        "exact field names, values quoted as spoken, via real function-calling "
+        "(never tool-call markup in speech).",
+        "- Honest confidence 0.0-1.0 (clearly heard = 0.9). Guessing = do NOT "
+        "record, ask again. NEVER fabricate or guess a value.",
         (
-            f"- If your confidence for a value stays below {LOW_CONFIDENCE_THRESHOLD}, treat that field as NOT captured: "
-            "wrap up gracefully and clearly flag it when you call `end_call`."
+            f"- Confidence below {LOW_CONFIDENCE_THRESHOLD}, or a required field "
+            f"still unfilled after up to {MAX_ASKS_PER_FIELD} asks: treat as NOT captured, "
+            "wrap up, flag it in `end_call`."
         ),
-        (
-            f"- If a required field is still unfilled after asking up to {MAX_ASKS_PER_FIELD} times, stop asking about it, wrap up gracefully, "
-            "and flag it in your `end_call` summary."
-        ),
-        "- To finish the call, call `end_call(summary)` with a factual summary of captured fields, flagged/unfilled fields, and the caller's mood.",
+        "- Finish with `end_call(summary)`: captured + flagged/unfilled fields, caller mood.",
     ]
     schema_lines: list[str] = ["Fields to capture:"]
     if isinstance(extraction_schema, Mapping):

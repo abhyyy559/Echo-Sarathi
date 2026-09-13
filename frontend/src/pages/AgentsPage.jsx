@@ -74,7 +74,7 @@ export default function AgentsPage() {
             immutable versions.
           </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => navigate('/agents/new')}>
+        <button type="button" className="btn primary" onClick={() => navigate('/agents/new')}>
           + New Agent
         </button>
       </div>
@@ -82,7 +82,7 @@ export default function AgentsPage() {
       {error && (
         <div className="banner banner-error">
           {error}{' '}
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNonce((n) => n + 1)}>
+          <button type="button" className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
             Retry
           </button>
         </div>
@@ -99,7 +99,7 @@ export default function AgentsPage() {
           <div className="empty-state">
             No agents yet. Create your first agent to start building a call flow.
             <div className="form-actions">
-              <button type="button" className="btn btn-primary" onClick={() => navigate('/agents/new')}>
+              <button type="button" className="btn primary" onClick={() => navigate('/agents/new')}>
                 + Create your first agent
               </button>
             </div>
@@ -108,34 +108,24 @@ export default function AgentsPage() {
       )}
 
       {hasAgents && (
-        <div className="agents-grid">
+        <div className="agent-grid">
           {agents.map((a) => {
             const info = versionInfo[a.id];
             return (
-              <div key={a.id} className="card agent-card">
-                <div className="agent-card-head">
-                  <span className={`status-dot dot-${a.status || 'draft'}`}>{a.status || 'draft'}</span>
-                  {info ? (
-                    <span className="version-chip">v{info.version}</span>
-                  ) : a.current_version_id != null ? (
-                    <span className="version-chip">#{a.current_version_id}</span>
-                  ) : (
-                    <span className="chip">no version</span>
-                  )}
+              <div key={a.id} className="card acard">
+                <div className="top">
+                  <span className={`sdot ${a.status || 'draft'}`}></span>
+                  <h3>{a.name || 'Untitled agent'}</h3>
+                  {info && <span className="vchip">v{info.version}</span>}
                 </div>
-                <div>
-                  <div className="agent-name">{a.name || 'Untitled agent'}</div>
-                  <p className="agent-card-desc">{a.description || 'No description yet.'}</p>
+                <p>{a.description || 'No description yet.'}</p>
+                <div className="meta">
+                  Updated {info && info.created_at ? fmtDate(info.created_at) : fmtDate(a.updated_at)} · {a.status || 'draft'}
                 </div>
-                <div className="agent-card-meta">
-                  <span className="text-muted" style={{ fontSize: 12 }}>
-                    {info && info.created_at ? `saved ${fmtDate(info.created_at)}` : `updated ${fmtDate(a.updated_at)}`}
-                  </span>
-                </div>
-                <div className="agent-card-actions">
+                <div className="acts">
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm"
+                    className="btn sm primary"
                     disabled={a.current_version_id == null}
                     title={
                       a.current_version_id == null
@@ -146,7 +136,7 @@ export default function AgentsPage() {
                   >
                     Test
                   </button>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate(`/agents/${a.id}`)}>
+                  <button type="button" className="btn sm ghost" onClick={() => navigate(`/agents/${a.id}`)}>
                     Configure
                   </button>
                 </div>

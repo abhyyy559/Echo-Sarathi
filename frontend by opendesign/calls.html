@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call History — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.filters select,.filters input{width:auto;min-width:180px}
+.pager{display:flex;align-items:center;gap:12px;justify-content:flex-end;padding:14px 18px;font-size:13px;color:var(--muted)}
+.kicon{width:22px;height:22px;border-radius:7px;background:var(--surface2);border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;color:var(--cyan)}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+const PAGE=50;
+let page=1,filtered=ES.CALLS;
+
+ES.shell({
+  active:'calls',
+  title:'Call History',
+  subtitle:'Every conversation — phone and playground — with latency per call.',
+  action:`<button class="btn ghost sm" onclick="ES.csvDownload('calls.csv',['id','kind','status','agent','contact','duration_sec','e2e_ms'],filtered.map(c=>[c.id,c.kind,c.status,c.agent,c.contact,c.duration,c.e2e]))">⬇ Export CSV</button>`,
+  body:`
+  <div class="filters">
+    <select id="fStatus"><option value="">All statuses</option><option>completed</option><option>no-answer</option><option>busy</option><option>failed</option><option>in-progress</option></select>
+    <input id="fSearch" placeholder="Search agent or contact…">
+    <span style="align-self:center;color:var(--dim);font-size:12.5px" id="countLbl"></span>
+  </div>
+  <div class="card" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th></th><th>#</th><th>Status</th><th>Agent</th><th>Contact</th><th>Started</th><th>Duration</th><th>E2E avg</th><th></th></tr></thead>
+      <tbody id="cBody"></tbody>
+    </table>
+    <div class="pager"><span id="pageLbl"></span><button class="btn sm ghost" id="prevP">← Prev</button><button class="btn sm ghost" id="nextP">Next →</button></div>
+  </div>`
+});
+
+function kindIcon(k){
+  return k==='phone'
+   ?`<span class="kicon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M5 4h4l1.5 4.5L8 10a12 12 0 0 0 6 6l1.5-2.5L20 15v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8"/></svg></span>`
+   :`<span class="kicon" style="color:var(--brand)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>`;
+}
+function apply(){
+  const st=document.getElementById('fStatus').value;
+  const q=document.getElementById('fSearch').value.toLowerCase();
+  filtered=ES.CALLS.filter(c=>(!st||c.status===st)&&(!q||c.agent.toLowerCase().includes(q)||c.contact.toLowerCase().includes(q)));
+  page=1;render();
+}
+function render(){
+  const max=Math.max(1,Math.ceil(filtered.length/PAGE));
+  page=Math.min(page,max);
+  const slice=filtered.slice((page-1)*PAGE,page*PAGE);
+  document.getElementById('cBody').innerHTML=slice.map(c=>`
+    <tr onclick="location.href='call-detail.html'">
+      <td>${kindIcon(c.kind)}</td>
+      <td class="mono">#${c.id}</td>
+      <td>${ES.chip(c.status)}</td>
+      <td>${c.agent}</td><td>${c.contact}</td>
+      <td class="mono">${c.started}</td>
+      <td class="mono">${ES.fmtDur(c.duration)}</td>
+      <td class="mono ${c.e2e>1500?'over':''}">${c.e2e?c.e2e+' ms':'—'}</td>
+      <td>${c.flagged?'<span class="flag" title="Escalated to human">⚑</span>':''}</td>
+    </tr>`).join('');
+  document.getElementById('pageLbl').textContent=`Page ${page} of ${max} · ${filtered.length} calls`;
+  document.getElementById('countLbl').textContent=filtered.length+' results';
+}
+document.getElementById('fStatus').onchange=apply;
+document.getElementById('fSearch').oninput=apply;
+document.getElementById('prevP').onclick=()=>{if(page>1){page--;render()}};
+document.getElementById('nextP').onclick=()=>{if(page*PAGE<filtered.length){page++;render()}};
+render();
+setTimeout(()=>ES.toast('Loaded latest 240 calls','info'),500);
+</script>
+</body>
+</html>

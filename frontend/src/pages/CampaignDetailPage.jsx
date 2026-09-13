@@ -6,7 +6,6 @@ import StatusBadge, { statusLabel } from '../components/StatusBadge.jsx';
 import DryRunReport from '../components/DryRunReport.jsx';
 import Modal from '../components/Modal.jsx';
 import DataTable from '../components/DataTable.jsx';
-import CountsCards from '../components/CountsCards.jsx';
 import ContactImport from '../components/ContactImport.jsx';
 
 const PAGE_SIZE = 50;
@@ -328,33 +327,6 @@ export default function CampaignDetailPage() {
     },
   ];
 
-  const callColumns = [
-    {
-      key: 'contact_name',
-      label: 'Contact',
-      render: (c) => <span className="cell-strong">{c.contact_name || '—'}</span>,
-    },
-    { key: 'phone', label: 'Phone' },
-    { key: 'status', label: 'Status', render: (c) => <StatusBadge status={c.status} /> },
-    {
-      key: 'outcome',
-      label: 'Outcome',
-      render: (c) => (c.outcome ? <span className="chip">{String(c.outcome)}</span> : <span className="text-muted">—</span>),
-    },
-    { key: 'started_at', label: 'Started', render: (c) => fmtDateTime(c.started_at), className: 'nowrap' },
-    {
-      key: 'duration_seconds',
-      label: 'Duration',
-      render: (c) => fmtDuration(c.duration_seconds),
-      className: 'nowrap',
-    },
-    {
-      key: 'flagged_for_human',
-      label: 'Flag',
-      render: (c) => (c.flagged_for_human ? <StatusBadge status="flagged" /> : <span className="text-muted">—</span>),
-    },
-  ];
-
   // ---- render ----
   if (campaignError && !campaign) {
     return (
@@ -580,25 +552,51 @@ export default function CampaignDetailPage() {
             </div>
           ) : (
             <>
-              {running ? (
-                <div className="live-indicator big">
-                  <span className="live-dot" /> Live — refreshing every 3 seconds
-                </div>
-              ) : (
-                <p className="hint">Campaign is not running — showing the latest snapshot. Counts update while a campaign runs.</p>
-              )}
-              <CountsCards counts={dash.counts} inFlight={dash.in_flight} />
-              <div className="card flush">
-                <div className="table-toolbar">
-                  <h3 className="card-title">Recent calls</h3>
-                </div>
-                <DataTable
-                  columns={callColumns}
-                  rows={dash.recent_calls || []}
-                  rowKey={(c) => c.id}
-                  onRowClick={(c) => navigate(`/calls/${c.id}`)}
-                  empty="No calls yet for this campaign."
-                />
+              <div className="banner brand">Tiles update live as the dialer works through the queue.</div>
+
+              <div className="tiles">
+                {Object.entries(dash.counts || {}).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className={`card tile${key === 'calling' ? ' t-cyan' : ''}${key === 'completed' ? ' t-green' : ''}`}
+                  >
+                    <div className="n">{value ?? 0}</div>
+                    <div className="l">{statusLabel(key)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="card" style={{ overflowX: 'auto' }}>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Contact</th>
+                      <th>Phone</th>
+                      <th>Status</th>
+                      <th>Last outcome</th>
+                      <th>Duration</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dash.recent_calls || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="table-state">No calls yet for this campaign.</td>
+                      </tr>
+                    ) : (
+                      (dash.recent_calls || []).map((c) => (
+                        <tr key={c.id} onClick={() => navigate(`/calls/${c.id}`)}>
+                          <td><span className="cell-strong">{c.contact_name || '—'}</span></td>
+                          <td className="mono">{c.phone || '—'}</td>
+                          <td><StatusBadge status={c.status} /></td>
+                          <td>{c.outcome ? <span className="chip">{String(c.outcome)}</span> : '—'}</td>
+                          <td className="mono">{fmtDuration(c.duration_seconds)}</td>
+                          <td><Link to={`/calls/${c.id}`} style={{ color: 'var(--brand)', fontSize: '13px' }}>Call →</Link></td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </>
           )}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "mode": "free-only",
+  "allowPaidModels": false,
+  "requireToolCalling": true,
+  "requireStructuredOutputs": false,
+  "preferredProviders": [],
+  "blockedProviders": [],
+  "ranking": [
+    "free_price",
+    "tool_calling",
+    "context_length",
+    "throughput",
+    "availability"
+  ],
+  "fallback": "openrouter/free",
+  "notes": "Refresh this catalog regularly. Free capacity and rate limits are dynamic."
+}
+

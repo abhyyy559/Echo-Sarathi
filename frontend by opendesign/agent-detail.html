@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Detail — Echo Sarathi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/app.css">
+<style>
+.detail{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
+@media(max-width:1000px){.detail{grid-template-columns:1fr}}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tab{padding:13px 18px;font-size:13.5px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--brand);border-color:var(--brand)}
+.tabbody{display:none;padding:22px}.tabbody.on{display:block;animation:fIn .25s ease}
+@keyframes fIn{from{opacity:0}to{opacity:1}}
+.cfg-list{display:flex;flex-direction:column;gap:11px;font-size:14.5px}
+.cfg-list li{list-style:none;display:flex;gap:10px;align-items:flex-start;color:var(--muted)}
+.cfg-list li::before{content:"›";color:var(--brand);font-family:var(--font-m)}
+.ver{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid rgba(148,163,205,.08)}
+.ver:last-child{border:none}
+.ver b{font-family:var(--font-m);font-weight:400;font-size:14px}
+.cur-badge{font-size:10.5px;background:var(--brand-soft);color:var(--brand);border-radius:6px;padding:2px 8px;letter-spacing:.06em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div id="shell-mount"></div>
+
+<script src="assets/app.js"></script>
+<script>
+ES.shell({
+  active:'agents',
+  title:'Absentee Follow-up',
+  subtitle:'Published · v3 is live on all new campaigns.',
+  action:`<a class="btn primary" href="agent-builder.html">Edit → creates v4</a>`,
+  body:`
+  <div class="banner brand">Editing always creates a new version — history stays intact and old calls keep the version that made them.</div>
+  <div class="detail">
+    <div class="card">
+      <div class="tabs" id="tabs"></div>
+      <div id="tbodies"></div>
+    </div>
+    <div class="card pad">
+      <h3 style="font-family:var(--font-d);font-size:15px;margin-bottom:6px">Version history</h3>
+      <p style="font-size:12.5px;color:var(--dim);margin-bottom:10px">Immutable snapshots — test any of them in the playground.</p>
+      <div id="vers"></div>
+    </div>
+  </div>`
+});
+
+const CFG={
+ 'Context':['Sunrise Academy · Grade 8 attendance desk','Timings 8:30 AM – 3:30 PM, calls before 6 PM','Warm and brief tone; never share other students’ data'],
+ 'Flow':['Is Anika attending classes today?','Could you share the reason?','Should the class teacher call you back?'],
+ 'Extraction':[['student_name','string · required · ≥90%'],['parent_name','string · required · ≥85%'],['present_today','boolean · required · ≥85%'],['reason','string · optional · ≥75%'],['callback_requested','boolean · optional · ≥80%']],
+ 'Voice &amp; Model':['Asha — warm female · 1.0× rate','Sarathi Pro model (~900ms median)']};
+const tabs=document.getElementById('tabs'),bodies=document.getElementById('tbodies');
+Object.keys(CFG).forEach((k,i)=>{
+  tabs.innerHTML+=`<button class="tab ${i===0?'on':''}" data-t="${i}">${k}</button>`;
+  bodies.innerHTML+=`<div class="tabbody ${i===0?'on':''}" data-b="${i}">
+    ${Array.isArray(CFG[k][0])
+      ?`<table class="tbl"><thead><tr><th>Field</th><th>Rules</th></tr></thead><tbody>${CFG[k].map(f=>`<tr><td><span class="kbd">${f[0]}</span></td><td class="mono">${f[1]}</td></tr>`).join('')}</tbody></table>`
+      :`<ul class="cfg-list">${CFG[k].map(x=>`<li>${x}</li>`).join('')}</ul>`}
+  </div>`;
+});
+tabs.onclick=e=>{
+  const t=e.target.closest('.tab');if(!t)return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.tabbody').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on');
+  bodies.querySelector(`[data-b="${t.dataset.t}"]`).classList.add('on');
+};
+
+document.getElementById('vers').innerHTML=[
+ ['v3','Aug 24 · current',true],['v2','Aug 9 · softer retry phrasing',false],['v1','Jul 28 · first published cut',false]
+].map(([v,d,c])=>`
+  <div class="ver"><b>${v}</b><span style="flex:1;font-size:12.5px;color:var(--dim)">${d}</span>
+  ${c?'<span class="cur-badge">current</span>':''}
+  <a class="btn sm ghost" href="playground.html">Test this version</a></div>`).join('');
+</script>
+</body>
+</html>

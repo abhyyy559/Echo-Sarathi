@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from typing import Any
 
 from openpyxl import Workbook
@@ -126,6 +127,125 @@ def export_xlsx(db: Session, campaign: Campaign) -> bytes:
         cell.font = Font(bold=True)
     for row in rows:
         sheet.append(row)
+    out = io.BytesIO()
+    workbook.save(out)
+    return out.getvalue()
+
+
+# --- per-call export --------------------------------------------------------
+
+_CALL_FIXED_HEADER = [
+    "Call ID",
+    "Kind",
+    "Status",
+    "Provider Call ID",
+    "Started",
+    "Ended",
+    "Duration (s)",
+    "Contact Name",
+    "Contact Phone",
+    "Outcome",
+    "Flagged For Human",
+    "Cost",
+    "Latency STT p50",
+    "Latency LLM p50",
+    "Latency TTS p50",
+    "Latency E2E p50",
+]
+_CALL_SUFFIX = ["Summary", "Recording URL", "Transcript"]
+
+
+def _latency_p50(latency: Any, prefix: str) -> Any:
+    if not isinstance(latency, dict):
+        return ""
+    for key in (f"{prefix}_p50_ms", f"{prefix}_p50", f"{prefix}_final_ms"):
+        value = latency.get(key)
+        if value is not None:
+            return value
+    return ""
+
+
+def _cost_display(cost: Any) -> Any:
+    if cost is None:
+        return ""
+    if isinstance(cost, dict):
+        for key in ("total_usd", "total", "usd"):
+            if cost.get(key) is not None:
+                return cost[key]
+        return json.dumps(cost)
+    if isinstance(cost, (int, float)):
+        return cost
+    return str(cost)
+
+
+def _collect_call_row(db: Session, call: Call) -> tuple[list[str], list[Any]]:
+    """Return (header, row) for a single call export."""
+    contact = db.get(Contact, call.contact_id) if call.contact_id else None
+    fields = list(
+        db.scalars(
+            select(ExtractedField)
+            .where(ExtractedField.call_id == call.id)
+            .order_by(ExtractedField.id)
+        )
+    )
+    turns = list(
+        db.scalars(
+            select(Transcript)
+            .where(Transcript.call_id == call.id)
+            .order_by(Transcript.turn_index)
+        )
+    )
+    latency = call.latency or {}
+    row: list[Any] = [
+        call.id,
+        call.kind,
+        call.status,
+        call.provider_call_id or "",
+        call.started_at.isoformat() if call.started_at else "",
+        call.ended_at.isoformat() if call.ended_at else "",
+        call.duration_seconds if call.duration_seconds is not None else "",
+        contact.name if contact and contact.name else "",
+        contact.phone if contact else "",
+        call.outcome or "",
+        bool(call.flagged_for_human),
+        _cost_display(call.cost),
+        _latency_p50(latency, "stt"),
+        _latency_p50(latency, "llm"),
+        _latency_p50(latency, "tts"),
+        _latency_p50(latency, "e2e"),
+    ]
+    extracted_names = [f.field_name for f in fields]
+    row += [f.field_value or "" for f in fields]
+    row += [
+        call.summary or "",
+        call.recording_url or "",
+        "\n".join(f"{t.speaker}: {t.text}" for t in turns),
+    ]
+    return _CALL_FIXED_HEADER + extracted_names + _CALL_SUFFIX, row
+
+
+def export_call_csv(db: Session, call: Call) -> bytes:
+    """Render one call as CSV bytes with a utf-8 BOM."""
+    header, row = _collect_call_row(db, call)
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
+    writer.writerow(header)
+    writer.writerow(row)
+    return buffer.getvalue().encode("utf-8-sig")
+
+
+def export_call_xlsx(db: Session, call: Call) -> bytes:
+    """Render one call as an XLSX workbook with a bold header row."""
+    header, row = _collect_call_row(db, call)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "call"
+    sheet.append(header)
+    from openpyxl.styles import Font
+
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    sheet.append(row)
     out = io.BytesIO()
     workbook.save(out)
     return out.getvalue()

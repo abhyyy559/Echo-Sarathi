@@ -141,6 +141,21 @@ def test_escalated_field_is_never_fabricated_in_end_call_summary(
             f"placeholder fabrication detected for {name}: {value!r}"
         )
 
+def test_placeholder_values_are_never_accepted(coordinator_cls: type) -> None:
+    """'unknown' / 'n/a' / empty are NOT values - record() must reject them
+    even at high confidence (PE the LLM hedging with 'unknown')."""
+    coordinator = make_coordinator(coordinator_cls, set())
+    for value in ("unknown", "n/a", "N/A", "none", "", "  "):
+        result = coordinator.record("any_field", value, 0.95)
+        assert result.accepted is False, (
+            f"placeholder {value!r} must not be accepted"
+        )
+        assert result.flagged is True
+        assert "any_field" not in coordinator.recorded
+    # A real value at the same confidence is accepted.
+    ok = coordinator.record("any_field", "high fever since yesterday", 0.95)
+    assert ok.accepted is True
+    assert coordinator.recorded["any_field"]["value"] == "high fever since yesterday"
 
 def test_tool_call_flags_and_posts_wrap_up_via_fake_backend(
     coordinator_cls: type,

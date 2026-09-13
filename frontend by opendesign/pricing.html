@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — Echo Sarathi</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0b'/%3E%3Cpath d='M8 16v0M12 10v12M16 6v20M20 11v10M24 14v4' stroke='%23e9e4da' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scrollbar-width:none}
+::-webkit-scrollbar{display:none}
+body{background:#0a0a0b;color:#f3efe6;font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(900px 640px at 78% 10%,rgba(163,154,142,.09),transparent 62%),radial-gradient(760px 560px at 10% 92%,rgba(233,228,218,.05),transparent 58%)}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+:root{--bg:#0a0a0b;--fg:#f3efe6;--muted:#a89e8c;--dim:#6e6656;--pearl:#e9e4da;--stone:#a39a8e;--ivory:#f5f2ec;--border:rgba(255,255,255,.08);--glass-blur:blur(20px) saturate(1.3)}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:16px 32px;transition:padding .4s cubic-bezier(.16,1,.3,1)}
+nav::before{content:'';position:absolute;inset:0;background:rgba(10,10,11,.55);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--border);transition:background .4s}
+nav.scrolled{padding:12px 32px}
+nav.scrolled::before{background:rgba(10,10,11,.9)}
+.nav-inner{position:relative;display:flex;align-items:center;justify-content:space-between;max-width:1200px;margin:0 auto}
+.nav-left{display:flex;align-items:center;gap:28px}
+.nav-right{display:flex;align-items:center;gap:8px}
+.nav-link{position:relative;font-size:13px;letter-spacing:.06em;font-weight:500;color:var(--muted);padding:8px 16px;border-radius:999px;transition:all .25s}
+.nav-link:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+.nav-link.active{color:var(--fg)}
+.nav-link.active::after{content:'';position:absolute;bottom:4px;left:50%;transform:translateX(-50%);width:18px;height:1px;background:var(--pearl)}
+.logo-mark{flex:none}.lm-src{fill:#8f867a}.lm-a{fill:none;stroke:#8f867a;stroke-width:2;stroke-linecap:round}.lm-b{fill:none;stroke:#ece7dd;stroke-width:2;stroke-linecap:round;filter:drop-shadow(0 0 4px rgba(233,228,218,.45))}.lm-echo{fill:#ece7dd;filter:drop-shadow(0 0 5px rgba(233,228,218,.6))}.l1,.l2,.r1,.r2{animation:lmPulse 2.8s ease-in-out infinite}.l2{animation-delay:.16s}.r1{animation-delay:.5s}.r2{animation-delay:.66s}@keyframes lmPulse{0%{opacity:.14}18%{opacity:1}55%{opacity:.85}100%{opacity:.12}}@media(prefers-reduced-motion:reduce){.l1,.l2,.r1,.r2{animation:none;opacity:.75}}
+.logo-text{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:600;font-style:italic;color:var(--fg)}
+.logo-text .dot{color:var(--pearl)}
+.nav-cta{background:var(--pearl);color:#0a0a0b;border-radius:999px;padding:10px 26px;font-size:13px;font-weight:600;transition:transform .2s,box-shadow .3s;margin-left:12px}
+.nav-cta:hover{transform:translateY(-1px);box-shadow:0 8px 28px rgba(233,228,218,.25)}
+.hamburger{display:none;flex-direction:column;justify-content:center;gap:5px;width:36px;height:36px;cursor:pointer;padding:4px}
+.hamburger span{display:block;width:100%;height:2px;background:var(--fg);border-radius:2px;transition:all .3s}
+.hamburger.open span:nth-child(1){transform:rotate(45deg) translate(5px,5px)}
+.hamburger.open span:nth-child(2){opacity:0}
+.hamburger.open span:nth-child(3){transform:rotate(-45deg) translate(5px,-5px)}
+.mobile-drawer{display:none;position:fixed;inset:0;z-index:99;background:rgba(10,10,11,.96);backdrop-filter:blur(32px);flex-direction:column;align-items:center;justify-content:center;gap:8px;opacity:0;pointer-events:none;transition:opacity .35s}
+.mobile-drawer.open{opacity:1;pointer-events:all}
+.mobile-drawer a{font-family:'Cormorant Garamond',serif;font-size:28px;color:var(--muted);padding:12px 32px}
+.mobile-drawer a:hover{color:var(--fg)}
+.mobile-drawer .drawer-cta{font-family:'DM Sans';font-size:15px;font-weight:600;background:var(--pearl);color:#0a0a0b;padding:14px 40px;border-radius:999px}
+@media(max-width:768px){nav{padding:14px 20px}.nav-left .nav-link,.nav-right .nav-link,.nav-cta{display:none}.hamburger{display:flex}.mobile-drawer{display:flex}}
+.page{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:170px 24px 80px;text-align:center}
+.kick{display:inline-flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--pearl)}
+.kick::before{content:'';width:20px;height:1px;background:var(--pearl);opacity:.5}
+h1{font-family:'Marcellus',serif;font-weight:400;font-size:clamp(36px,5.6vw,64px);line-height:1.08;margin-top:18px;letter-spacing:.01em}
+.sub{margin:16px auto 0;max-width:520px;color:var(--muted);font-size:16px;line-height:1.7}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:64px;text-align:left;align-items:stretch}
+@media(max-width:820px){.grid{grid-template-columns:1fr;gap:40px}}
+.pcard{position:relative;border-radius:24px;border:1px solid var(--border);background:linear-gradient(180deg,rgba(22,22,24,.72),rgba(14,14,16,.6));backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);padding:38px 36px 34px;display:flex;flex-direction:column;transition:transform .45s cubic-bezier(.16,1,.3,1),box-shadow .45s,border-color .35s}
+.pcard:hover{transform:translateY(-6px)}
+.tier{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:10px}
+.tier i{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.pline{margin-top:18px;display:flex;align-items:baseline;gap:8px}
+.amt{font-family:'Marcellus',serif;font-size:clamp(52px,5vw,66px);line-height:1;color:var(--fg)}
+.unit{font-size:14px;color:var(--dim)}
+.ptag{margin-top:12px;font-size:14px;line-height:1.65;color:var(--muted)}
+.feats{list-style:none;margin-top:26px;padding-top:24px;border-top:1px dashed rgba(255,255,255,.09);display:flex;flex-direction:column;gap:13px;flex:1}
+.feats li{display:flex;gap:11px;font-size:14px;line-height:1.55;color:rgba(243,239,230,.85)}
+.feats b{color:var(--fg);font-weight:600}
+.feats svg{flex:0 0 auto;width:17px;height:17px;margin-top:2px;stroke:var(--stone);stroke-width:2.2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.cta{margin-top:30px;display:block;text-align:center;border-radius:999px;padding:15px 20px;font-size:14px;font-weight:600;letter-spacing:.04em;border:1px solid rgba(255,255,255,.18);transition:.3s cubic-bezier(.16,1,.3,1)}
+.cta:hover{border-color:rgba(233,228,218,.5);background:rgba(233,228,218,.05)}
+/* Featured — elegant, not loud */
+.pcard.featured{border-color:rgba(233,228,218,.3);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 70px rgba(233,228,218,.05);background:linear-gradient(180deg,#17171b,#101013)}
+.pcard.featured::before{content:'';position:absolute;top:0;left:24px;right:24px;height:1px;background:linear-gradient(90deg,transparent,var(--pearl),transparent);opacity:.6}
+.rec{position:absolute;top:-13px;left:36px;display:inline-flex;align-items:center;gap:8px;font-size:10px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--ivory);background:#0a0a0b;border:1px solid rgba(233,228,218,.35);border-radius:999px;padding:6px 14px}
+.rec i{width:6px;height:6px;border-radius:50%;background:var(--pearl);box-shadow:0 0 10px var(--pearl)}
+.pcard.featured .amt{color:var(--ivory)}
+.pcard.featured .feats svg{stroke:var(--pearl)}
+.cta-solid{background:var(--pearl);color:#0a0a0b;border:none;box-shadow:0 8px 30px rgba(233,228,218,.22)}
+.cta-solid:hover{transform:translateY(-2px);box-shadow:0 14px 44px rgba(233,228,218,.3)}
+/* Estimator */
+.est{margin-top:22px;padding:18px;border-radius:14px;border:1px solid rgba(233,228,218,.16);background:rgba(233,228,218,.04)}
+.est-h{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+input[type=range]{width:100%;margin-top:14px;accent-color:var(--pearl);height:4px;cursor:pointer}
+.est-row{display:flex;align-items:baseline;justify-content:space-between;margin-top:12px;gap:10px;flex-wrap:wrap}
+.est-min{font-size:13px;color:var(--muted)}
+.est-min b{color:var(--fg);font-weight:600}
+.est-cost{font-family:'Marcellus',serif;font-size:34px;line-height:1;color:var(--ivory)}
+.est-cost small{font-family:'DM Sans';font-size:12px;color:var(--dim);letter-spacing:.04em}
+.note{margin-top:44px;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;font-size:12.5px;color:var(--dim);letter-spacing:.04em}
+.note span{display:inline-flex;align-items:center;gap:7px}
+.note svg{width:13px;height:13px;stroke:var(--pearl);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.mini-cta{margin:90px auto 0;max-width:620px;text-align:center;padding-bottom:20px}
+.mini-cta h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(28px,4vw,42px)}
+.mini-cta p{margin-top:12px;color:var(--muted);font-size:15px;line-height:1.7}
+.btns{display:flex;gap:12px;justify-content:center;margin-top:26px;flex-wrap:wrap}
+.btn-p{background:var(--pearl);color:#0a0a0b;border-radius:999px;padding:14px 32px;font-size:14px;font-weight:600;transition:transform .2s,box-shadow .3s}
+.btn-p:hover{transform:translateY(-2px);box-shadow:0 12px 36px rgba(233,228,218,.28)}
+.btn-g{border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:14px 32px;font-size:14px;color:var(--muted);transition:border-color .25s,color .25s}
+.btn-g:hover{border-color:rgba(233,228,218,.45);color:var(--fg)}
+footer{border-top:1px solid var(--border);padding:34px 24px;position:relative;z-index:1}
+.f-in{max-width:1120px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--dim)}
+.f-links{display:flex;gap:22px;flex-wrap:wrap}
+.f-links a{color:var(--muted);transition:color .2s}
+.f-links a:hover{color:var(--fg)}
+.reveal{opacity:0;transform:translateY(28px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1)}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1!important;transform:none!important}}
+</style>
+</head>
+<body>
+
+<nav id="mainNav">
+  <div class="nav-inner">
+    <div class="nav-left">
+      <a href="index.html" class="logo" style="display:flex;align-items:center;gap:12px;text-decoration:none"><svg class="logo-mark" width="38" height="22" viewBox="0 0 46 26" fill="none" aria-hidden="true"><circle class="lm-src" cx="6" cy="13" r="2.2"/><path class="lm-a l1" d="M10.02 7.27 A7 7 0 0 1 10.02 18.73"/><path class="lm-a l2" d="M12.88 3.17 A12 12 0 0 1 12.88 22.83"/><circle class="lm-echo" cx="40" cy="13" r="2.2"/><path class="lm-b r1" d="M35.98 7.27 A7 7 0 0 0 35.98 18.73"/><path class="lm-b r2" d="M33.12 3.17 A12 12 0 0 0 33.12 22.83"/></svg><span class="logo-text">Echo Sarathi</span></a>
+      <a href="index.html#product" class="nav-link">Product</a>
+      <a href="index.html#usecases" class="nav-link">Use Cases</a>
+      <a href="index.html#demo" class="nav-link">Demo</a>
+    </div>
+    <div class="nav-right">
+      <a href="playground.html" class="nav-link">Playground</a>
+      <a href="roadmap.html" class="nav-link">Roadmap</a>
+      <a href="login.html" class="nav-cta">Start free</a>
+      <div class="hamburger" id="ham"><span></span><span></span><span></span></div>
+    </div>
+  </div>
+</nav>
+<div class="mobile-drawer" id="drawer">
+  <a href="index.html#product">Product</a>
+  <a href="index.html#usecases">Use Cases</a>
+  <a href="index.html#demo">Demo</a>
+  <a href="playground.html">Playground</a>
+  <a href="roadmap.html">Roadmap</a>
+  <a href="login.html" class="drawer-cta">Start free</a>
+</div>
+
+<main class="page">
+  <span class="kick reveal">Pricing</span>
+  <h1 class="reveal">Two ways to start.<br>Both simple.</h1>
+  <p class="sub reveal">Explore on us. Scale by the second. No seats, no platform fee, no surprise line items — your live spend always sits on your dashboard.</p>
+
+  <div class="grid">
+    <!-- FREE -->
+    <div class="pcard reveal">
+      <div class="tier"><i></i>Free</div>
+      <div class="pline"><span class="amt">$0</span><span class="unit">forever</span></div>
+      <p class="ptag">One agent, real conversations, real structured data. Everything you need to hear the difference before spending anything.</p>
+      <ul class="feats">
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>1 voice agent</b> with full builder access</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>30 call minutes</b> every month</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Complete Playground testing</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Transcripts with confidence scores</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Community support</span></li>
+      </ul>
+      <a href="login.html" class="cta">Start free</a>
+    </div>
+
+    <!-- PAY AS YOU GO -->
+    <div class="pcard featured reveal" style="transition-delay:.12s">
+      <span class="rec"><i></i>Recommended</span>
+      <div class="tier"><i style="background:var(--pearl)"></i>Pay as you go</div>
+      <div class="pline"><span class="amt">$0.10</span><span class="unit">per minute · billed by the second</span></div>
+      <p class="ptag">Unlimited agents and campaigns. Metered to the second — watch spend tick live while your campaigns run.</p>
+      <div class="est">
+        <span class="est-h">Estimate your month</span>
+        <input type="range" id="estSlider" min="100" max="5000" step="50" value="600">
+        <div class="est-row">
+          <span class="est-min"><b id="estMin">600</b> minutes / mo</span>
+          <span class="est-cost"><span id="estCost">$60.00</span> <small>/ month est.</small></span>
+        </div>
+      </div>
+      <ul class="feats">
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Unlimited agents</b> &amp; immutable versions</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Parallel campaign calling</b> to thousands of contacts</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Natural turn-taking &amp; instant barge-in</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Live spend, latency &amp; outcome dashboards</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>CSV / Excel export of every captured field</span></li>
+        <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span>Priority support</span></li>
+      </ul>
+      <a href="login.html" class="cta cta-solid">Create your agent</a>
+    </div>
+  </div>
+
+  <div class="note reveal">
+    <span><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>No credit card for the free tier</span>
+    <span><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Only connected calls are billed</span>
+    <span><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Playground time is always free</span>
+  </div>
+
+  <div class="mini-cta reveal">
+    <h2>Start free. Scale when it works.</h2>
+    <p>Create an agent, run your first calls on us, and only pay when you take it live — $0.10 per minute, metered to the second, in dollars.</p>
+    <div class="btns">
+      <a class="btn-p" href="login.html">Start free</a>
+      <a class="btn-g" href="index.html#demo">See the demo</a>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="f-in">
+    <span>&copy; <span id="yr">2026</span> Echo Sarathi Labs</span>
+    <div class="f-links">
+      <a href="index.html">Home</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="playground.html">Playground</a>
+      <a href="login.html">Sign in</a>
+      <a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+addEventListener('scroll',()=>{document.getElementById('mainNav').classList.toggle('scrolled',scrollY>40)},{passive:true});
+const ham=document.getElementById('ham'),dr=document.getElementById('drawer');
+ham.addEventListener('click',()=>{ham.classList.toggle('open');dr.classList.toggle('open');document.body.style.overflow=dr.classList.contains('open')?'hidden':''});
+dr.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>{ham.classList.remove('open');dr.classList.remove('open');document.body.style.overflow=''}));
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in')}),{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+const sl=document.getElementById('estSlider');
+function updEst(){const m=+sl.value;document.getElementById('estMin').textContent=m.toLocaleString();document.getElementById('estCost').textContent='$'+(m*.1).toFixed(2)}
+sl.addEventListener('input',updEst);updEst();
+document.getElementById('yr').textContent=new Date().getFullYear();
+</script>
+</body>
+</html>

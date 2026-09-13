@@ -20,11 +20,28 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "info"
 
-    # --- telephony (Twilio) ----------------------------------------------
+    # --- telephony (provider selection) -----------------------------------
+    # "", "twilio", "plivo" or "vobiz". Empty = auto-select (Plivo wins when
+    # both credential sets are present; Plivo is the cheaper India leg).
+    # Set explicitly to "vobiz" to place calls over Vobiz.
+    telephony_provider: str = ""
+
+    # Twilio
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
     twilio_validate_signature: bool = False
+
+    # Vobiz (India CPaaS: REST calls + XML <Stream> bidirectional websockets)
+    vobiz_auth_id: str = ""
+    vobiz_auth_token: str = ""
+    vobiz_phone_number: str = ""
+
+    # Plivo
+    plivo_auth_id: str = ""
+    plivo_auth_token: str = ""
+    plivo_phone_number: str = ""
+    plivo_validate_signature: bool = False
 
     # Public https base URL of this backend (e.g. https://x.ngrok-free.app).
     # TwiML webhooks and the Twilio Media Streams WS URL are derived from it.
@@ -81,7 +98,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     # Groq chat model for playground TEXT mode (must match GROQ_MODEL used by
     # the voice worker so both modes exercise the same brain).
-    groq_model: str = "qwen/qwen3.6-27b"
+    groq_model: str = "openai/gpt-oss-20b"
 
     @property
     def test_phone_number_list(self) -> list[str]:
@@ -102,6 +119,8 @@ class Settings(BaseSettings):
             "groq": bool(self.groq_api_key),
             "openai": bool(self.openai_api_key),
             "twilio": bool(self.twilio_account_sid and self.twilio_auth_token),
+            "plivo": bool(self.plivo_auth_id and self.plivo_auth_token),
+            "vobiz": bool(self.vobiz_auth_id and self.vobiz_auth_token),
             "livekit": bool(self.livekit_api_key and self.livekit_api_secret),
         }
 

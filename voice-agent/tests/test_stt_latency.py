@@ -47,14 +47,16 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(**defaults)
 
 
-def test_deepgram_stt_gets_200ms_endpointing(monkeypatch) -> None:
+def test_deepgram_stt_gets_300ms_endpointing(monkeypatch) -> None:
     monkeypatch.setattr(pipeline_module.deepgram, "STT", _RecorderSTT)
     monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
 
     bundle = build_providers(_settings())
 
     assert bundle.complete
-    assert _RecorderSTT.last_kwargs["endpointing_ms"] == 200
+    # 300ms (raised from 200) so the agent's own looped-back TTS does not
+    # hair-trigger a retrigger (False-interruption echo hardening).
+    assert _RecorderSTT.last_kwargs["endpointing_ms"] == 300
     assert _RecorderSTT.last_kwargs["model"] == "nova-3"
 
 

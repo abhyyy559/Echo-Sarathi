@@ -16,6 +16,7 @@ from typing import Any, Callable
 import pytest
 
 from _qa_voice_contract import locate_symbols, load_agent_config, normalize
+from app.prompting import apply_token_substitution
 
 _RENDERER_CANDIDATE_MODULES: list[str] = [
     "app.prompting",
@@ -72,7 +73,7 @@ def test_disclosure_is_the_first_block(render: Callable[..., str]) -> None:
     prompt = render(config)
     assert isinstance(prompt, str) and prompt.strip(), "renderer returned an empty prompt"
 
-    disclosure = normalize(config["disclosure_script"])
+    disclosure = normalize(apply_token_substitution(config["disclosure_script"]))
     probe = " ".join(disclosure.split()[:8])
     norm_prompt = normalize(prompt)
     disc_idx = norm_prompt.find(probe)
@@ -106,7 +107,9 @@ def test_questions_are_numbered_in_order(render: Callable[..., str]) -> None:
             f"question step {step} has no '{step}.' number marker in:\n{goals[:600]!r}"
         )
         positions.append(marker.start())
-        question_text = normalize(entry["question"])
+        question_text = normalize(
+            apply_token_substitution(entry["question"])
+        )
         window = norm_goals[marker.start() : marker.start() + 500]
         key_words = " ".join(question_text.split()[:5])
         assert key_words in window, (
