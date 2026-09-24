@@ -168,7 +168,14 @@ class VobizClient:
                     "answer_method": "POST",
                 },
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except Exception:
+                logger.warning(
+                    "vobiz call-create failed status=%s body=%s",
+                    resp.status_code, resp.text[:500],
+                )
+                raise
             try:
                 body = resp.json()
             except Exception:  # noqa: BLE001 — non-JSON success is still success
