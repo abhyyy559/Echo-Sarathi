@@ -52,9 +52,8 @@ def test_list_presets_returns_valid_payloads(client):
     assert resp.status_code == 200, resp.text
     presets = resp.json()
     ids = {p["preset_id"] for p in presets}
-    # The four shipped role presets are present.
-    assert {"lead-verification", "appointment-confirmation", "feedback-survey",
-            "absent-student-followup", "real-estate-lead-qualification"} <= ids
+    # Only the attendance preset ships after single-agent cleanup.
+    assert ids == {"absent-student-followup"}
     for preset in presets:
         assert preset["name"]
         payload = preset["version_payload"]
@@ -66,18 +65,16 @@ def test_list_presets_returns_valid_payloads(client):
         assert payload["escalation_rules"]
 
 
-def test_real_estate_preset_has_qualification_schema(client):
+def test_absent_student_preset_has_attendance_schema(client):
     token, _user = register(client)
     presets = client.get("/api/agents/presets", headers=auth_headers(token)).json()
-    payload = next(p for p in presets if p["preset_id"] == "real-estate-lead-qualification")["version_payload"]
+    payload = next(p for p in presets if p["preset_id"] == "absent-student-followup")["version_payload"]
     assert set(payload["extraction_schema"]) >= {
-        "enquiry_confirmed", "still_interested", "property_type", "budget_band",
-        "locality_preference", "possession_timeline", "quotation_callback_slot",
-        "visit_date_preference", "call_outcome", "escalation_needed",
+        "reason_for_absence", "expected_return_date", "is_sick_leave",
     }
-    assert len(payload["question_flow"]) == 6
+    assert len(payload["question_flow"]) == 4
     prompt = payload["system_prompt"].lower()
-    assert "repeat" in prompt and "confirmation" in prompt and "quotation" in prompt
+    assert "absence" in prompt
 
 
 def test_preset_payload_saves_as_agent_version(client):
@@ -86,18 +83,18 @@ def test_preset_payload_saves_as_agent_version(client):
     presets = client.get(
         "/api/agents/presets", headers=auth_headers(token)
     ).json()
-    lead = next(p for p in presets if p["preset_id"] == "lead-verification")
+    attendance = next(p for p in presets if p["preset_id"] == "absent-student-followup")
 
-    agent = _create_agent(client, token, name="My Lead Verifier")
+    agent = _create_agent(client, token, name="My Attendance Caller")
     resp = client.post(
         f"/api/agents/{agent['id']}/versions",
-        json=lead["version_payload"],
+        json=attendance["version_payload"],
         headers=auth_headers(token),
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["version"] == 1
-    assert "lead verification agent" in body["system_prompt"]
+    assert "absence" in body["system_prompt"].lower()
 
 
 def test_list_presets_requires_auth(client):
