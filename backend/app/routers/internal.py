@@ -21,14 +21,26 @@ Invalid payloads get a 400/422; these endpoints never 500 for bad input.
 from __future__ import annotations
 
 import logging
+import math
 import secrets
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Agent, AgentVersion, Call, Campaign, Contact, DomainConfig, Organization
+from app.models import (
+    Agent,
+    AgentVersion,
+    Call,
+    CallEvent,
+    Campaign,
+    Contact,
+    DomainConfig,
+    Organization,
+)
+from app.schemas import CallActivityIn, CallActivityOut, CallActivityResponse
 from app.services.calls_service import (
     apply_report,
     log_call_event,
@@ -76,12 +88,23 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     if org_id is None and campaign is not None:
         org_id = campaign.org_id
     institution_name = ""
-    if org_id is not None:
+    if call.agent_version_id is not None:
+        version = db.get(AgentVersion, call.agent_version_id)
+        company_context = version.company_context if version is not None else {}
+        if isinstance(company_context, dict):
+            for key in ("institution", "institution_name"):
+                value = company_context.get(key)
+                if isinstance(value, str) and value.strip():
+                    institution_name = value.strip()
+                    break
+    if not institution_name and org_id is not None:
         org = db.get(Organization, org_id)
-        if org is not None and org.name:
-            institution_name = org.name
+        if org is not None and isinstance(org.name, str):
+            institution_name = org.name.strip()
     if not institution_name and campaign is not None:
-        institution_name = campaign.name or ""
+        campaign_name = campaign.name
+        if isinstance(campaign_name, str):
+            institution_name = campaign_name.strip()
     return {
         "call": {
             "id": call.id,
@@ -131,6 +154,98 @@ def _get_call_or_404(db: Session, call_id: int) -> Call:
     if call is None:
         raise HTTPException(status_code=404, detail="call not found")
     return call
+
+
+def _get_call_for_update_or_404(db: Session, call_id: int) -> Call:
+    call = db.scalar(select(Call).where(Call.id == call_id).with_for_update())
+    if call is None:
+        raise HTTPException(status_code=404, detail="call not found")
+    return call
+
+
+def _activity_out(event: CallEvent) -> CallActivityOut:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    state = payload.get("state") or payload.get("event_type")
+    event_type = payload.get("event_type")
+    return CallActivityOut(
+        state=state,
+        event_type=event_type,
+        sequence=payload["sequence"],
+        occurred_at=payload["occurred_at"],
+        source=payload["source"],
+        from_state=payload.get("from_state"),
+        to_state=payload.get("to_state"),
+        created_at=event.created_at,
+        updated_at=event.created_at,
+    )
+
+
+def _activity_events(db: Session, call_id: int) -> list[CallEvent]:
+    return list(
+        db.scalars(
+            select(CallEvent)
+            .where(CallEvent.call_id == call_id, CallEvent.event_type == "voice_activity")
+            .order_by(CallEvent.id)
+        ).all()
+    )
+
+
+def _activity_payloads_equal(existing: Any, incoming: dict[str, Any]) -> bool:
+    if not isinstance(existing, dict):
+        return False
+    keys = set(existing) | set(incoming)
+    return all(existing.get(key) == incoming.get(key) for key in keys)
+
+
+@router.post("/calls/{call_id}/activity", response_model=CallActivityResponse)
+def post_activity(
+    call_id: int,
+    payload: CallActivityIn,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    call = _get_call_for_update_or_404(db, call_id)
+    activity_payload = payload.model_dump(mode="json", exclude_unset=True)
+    existing_events = _activity_events(db, call.id)
+    max_sequence: int | float | None = None
+    for event in existing_events:
+        existing_payload = event.payload
+        if not isinstance(existing_payload, dict):
+            continue
+        existing_sequence = existing_payload.get("sequence")
+        if (
+            isinstance(existing_sequence, bool)
+            or not isinstance(existing_sequence, (int, float))
+            or (
+                isinstance(existing_sequence, float)
+                and not math.isfinite(existing_sequence)
+            )
+        ):
+            continue
+        if existing_sequence == payload.sequence:
+            if _activity_payloads_equal(existing_payload, activity_payload):
+                return {
+                    "ok": True,
+                    "call_id": call.id,
+                    "activity": _activity_out(event).model_dump(mode="json"),
+                }
+            raise HTTPException(
+                status_code=409, detail="activity sequence conflicts with an existing event"
+            )
+        if max_sequence is None or existing_sequence > max_sequence:
+            max_sequence = existing_sequence
+
+    if max_sequence is not None and payload.sequence <= max_sequence:
+        raise HTTPException(status_code=409, detail="activity sequence must increase")
+
+    event = log_call_event(db, call.id, "voice_activity", activity_payload)
+    db.flush()
+    db.refresh(event)
+    db.commit()
+    return {
+        "ok": True,
+        "call_id": call.id,
+        "activity": _activity_out(event).model_dump(mode="json"),
+    }
 
 
 def _validated_turn(item: Any) -> dict[str, Any]:

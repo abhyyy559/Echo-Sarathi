@@ -130,6 +130,11 @@ def build_token_map(
     ctx_contact = ctx.get("contact") if isinstance(ctx.get("contact"), Mapping) else {}
     institution = str(ctx.get("institution_name") or "").strip()
     name = _first_name(contact, ctx_contact)
+    parent = _known_field(
+        contact,
+        ctx_contact,
+        keys=("parent_name", "parent", "guardian", "contact_person"),
+    )
     who = str(agent_name or "").strip() or "an AI assistant"
     return {
         "[Institution Name]": institution,
@@ -137,7 +142,7 @@ def build_token_map(
         "[Student Name]": name,
         "[Lead Name]": name,
         "[Patient Name]": name,
-        "[Parent/Guardian Name]": name,
+        "[Parent/Guardian Name]": parent,
         "[Agent Name]": who,
         "[Doctor Name]": _known_field(contact, ctx_contact,
                                       keys=("doctor_name", "doctor")),

@@ -31,6 +31,7 @@ class FakeBackendClient:
         self.config_fetches: list[str] = []
         self.turn_posts: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.field_posts: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.activity_posts: list[dict[str, Any]] = []
         self.completions: list[tuple[str, Mapping[str, Any]]] = []
         self.raise_on_config: bool = False
 
@@ -51,6 +52,31 @@ class FakeBackendClient:
         self, call_id: str, fields: list[Mapping[str, Any]]
     ) -> bool:
         self.field_posts.append((call_id, fields))
+        return True
+
+    async def post_activity(
+        self,
+        call_id: str,
+        state: str,
+        sequence: int,
+        event_type: str,
+        occurred_at: float,
+        source: str = "livekit-1.8.3",
+        from_state: Optional[str] = None,
+        to_state: Optional[str] = None,
+    ) -> bool:
+        self.activity_posts.append(
+            {
+                "call_id": call_id,
+                "state": state,
+                "sequence": sequence,
+                "event_type": event_type,
+                "occurred_at": occurred_at,
+                "source": source,
+                "from_state": from_state,
+                "to_state": to_state,
+            }
+        )
         return True
 
     async def post_complete(

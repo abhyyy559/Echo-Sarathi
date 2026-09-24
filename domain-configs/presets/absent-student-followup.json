@@ -19,7 +19,7 @@
       "call_outcome": {"type": "string", "description": "Outcome of the call (e.g., resolved, escalated).", "validation": "required", "confidence_threshold": 0.8},
       "escalation_needed": {"type": "boolean", "description": "Whether human intervention is required.", "validation": "optional", "confidence_threshold": 0.7}
     },
-    "disclosure_script": "Hello, I am calling from [Institution Name]. I am an AI voice assistant. This call is recorded for quality and verification purposes.",
+    "disclosure_script": "Hello, this is an AI assistant from [Institution Name]. This call is recorded.",
     "escalation_rules": [
       {"trigger": "Caller expresses anger or frustration.", "action": "transfer"},
       {"trigger": "Mention of grievance or complaint.", "action": "flag"},

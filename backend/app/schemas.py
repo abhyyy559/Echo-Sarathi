@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # --- domain configs ---------------------------------------------------------
 
@@ -165,11 +165,88 @@ class ExtractedFieldOut(BaseModel):
     confidence: Optional[float]
 
 
+CallActivityState = Literal[
+    "agent_connecting", "listening", "understanding", "agent_speaking"
+]
+
+
+class CallActivityIn(BaseModel):
+    sequence: int = Field(gt=0, allow_inf_nan=False)
+    state: CallActivityState
+    event_type: str = Field(min_length=1)
+    occurred_at: float = Field(allow_inf_nan=False)
+    source: str = Field(min_length=1)
+    from_state: Optional[str] = None
+    to_state: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_state_from_legacy_event_type(cls, value: Any) -> Any:
+        if isinstance(value, dict) and not value.get("state"):
+            event_type = value.get("event_type")
+            if event_type in {
+                "agent_connecting",
+                "listening",
+                "understanding",
+                "agent_speaking",
+            }:
+                value = dict(value)
+                value["state"] = event_type
+        return value
+
+    @field_validator("sequence", "occurred_at", mode="before")
+    @classmethod
+    def reject_non_numeric_activity_values(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("activity numbers must not be booleans")
+        return value
+
+    @field_validator("event_type", "source")
+    @classmethod
+    def strip_activity_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("activity text fields must not be blank")
+        return value
+
+    @field_validator("from_state", "to_state")
+    @classmethod
+    def strip_optional_activity_state(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("activity state fields must not be blank")
+        return value
+
+
+class CallActivityOut(BaseModel):
+    state: CallActivityState
+    event_type: str
+    sequence: int
+    occurred_at: float
+    source: str
+    from_state: Optional[str] = None
+    to_state: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class CallActivityResponse(BaseModel):
+    ok: bool = True
+    call_id: int
+    activity: CallActivityOut
+
+
 class CallDetailOut(CallOut):
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     transcript: list[TranscriptTurnOut]
     extracted_fields: list[ExtractedFieldOut]
+    activity: Optional[CallActivityOut] = None
+    activity_history: list[CallActivityOut] = Field(default_factory=list)
+    pickup_to_first_audio_seconds: Optional[float] = None
+    opening_duration_seconds: Optional[float] = None
 
 
 class RecentCallOut(BaseModel):

@@ -6,6 +6,7 @@ Endpoints consumed (frozen contract, see
 - ``GET  /internal/agent-config?version_id=``   (30s in-memory cache)
 - ``POST /internal/calls/{call_id}/transcript-turns``  body: JSON array
 - ``POST /internal/calls/{call_id}/extracted-fields``  body: JSON array
+- ``POST /internal/calls/{call_id}/activity``            body: JSON object
 - ``POST /internal/calls/{call_id}/complete``          body: JSON object
 
 All requests carry the ``X-Internal-Token`` header. Post-style calls are
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any, Mapping, Optional
 
@@ -118,6 +120,53 @@ class BackendClient:
         return await self._post_json_object(
             f"/internal/calls/{call_id}/extracted-fields", {"fields": fields}
         )
+
+    async def post_activity(
+        self,
+        call_id: str,
+        state: str,
+        sequence: int,
+        event_type: str,
+        occurred_at: float,
+        source: str = "livekit-1.8.3",
+        from_state: Optional[str] = None,
+        to_state: Optional[str] = None,
+    ) -> bool:
+        """Publish one LiveKit activity transition. Returns success."""
+        try:
+            occurred_at_value = float(occurred_at)
+        except (TypeError, ValueError, OverflowError):
+            logger.error(
+                "post_activity failed for call %s: invalid occurred_at %r",
+                call_id,
+                occurred_at,
+            )
+            return False
+        if not math.isfinite(occurred_at_value):
+            logger.error(
+                "post_activity failed for call %s: occurred_at is not finite",
+                call_id,
+            )
+            return False
+        payload = {
+            "state": state,
+            "sequence": sequence,
+            "event_type": event_type,
+            "occurred_at": occurred_at_value,
+            "source": source,
+            "from_state": from_state,
+            "to_state": to_state,
+        }
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/internal/calls/{call_id}/activity",
+                json=payload,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            logger.error("post_activity failed for call %s: %s", call_id, exc)
+            return False
+        return True
 
     async def post_complete(
         self,

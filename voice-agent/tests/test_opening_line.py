@@ -76,7 +76,7 @@ def test_speak_opening_protected_and_first() -> None:
     assert spoken is True
     assert len(session.said) == 1
     text, allow_interruptions = session.said[0]
-    assert allow_interruptions is False
+    assert allow_interruptions is True
     assert text.startswith("Hi, this is an AI assistant calling from Demo School.")
     assert "Suresh Kumar" in text and "Aarav Kumar" in text
     assert "[" not in text and "]" not in text
@@ -87,3 +87,42 @@ def test_speak_opening_skips_without_disclosure() -> None:
     spoken = asyncio.run(pipeline_module._speak_opening(session, {"question_flow": []}, {}, {}))
     assert spoken is False
     assert session.said == []
+
+
+def test_degrade_apology_remains_protected(monkeypatch, fake_backend) -> None:
+    sessions: list[object] = []
+
+    class _ApologySession:
+        def __init__(self, **_kwargs) -> None:
+            self.said: list[tuple[str, bool]] = []
+            sessions.append(self)
+
+        async def start(self, **_kwargs) -> None:
+            return None
+
+        async def say(self, text: str, allow_interruptions: bool = True) -> None:
+            self.said.append((text, allow_interruptions))
+
+    async def _connected(_ctx) -> bool:
+        return True
+
+    monkeypatch.setattr(pipeline_module, "AgentSession", _ApologySession)
+    monkeypatch.setattr(pipeline_module, "Agent", lambda **_kwargs: object())
+    monkeypatch.setattr(pipeline_module, "_is_connected", _connected)
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_providers",
+        lambda _settings: pipeline_module.ProviderBundle(
+            stt=object(), llm=object(), tts=object()
+        ),
+    )
+
+    ctx = type("Context", (), {"room": object()})()
+    asyncio.run(
+        pipeline_module._degrade(
+            ctx, fake_backend, "call-degrade", object(), "provider failure"
+        )
+    )
+
+    assert len(sessions) == 1
+    assert sessions[0].said == [(pipeline_module.APOLOGY_TEXT, False)]

@@ -6,6 +6,8 @@ per-call detail payload used by the transcript view.
 """
 from __future__ import annotations
 
+import math
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -14,8 +16,18 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Agent, AgentVersion, Call, Campaign, Contact, ExtractedField, Transcript, User
-from app.schemas import CampaignCallOut, CallDetailOut, CallListItemOut
+from app.models import (
+    Agent,
+    AgentVersion,
+    Call,
+    CallEvent,
+    Campaign,
+    Contact,
+    ExtractedField,
+    Transcript,
+    User,
+)
+from app.schemas import CallActivityOut, CampaignCallOut, CallDetailOut, CallListItemOut
 from app.services.export_service import (
     CSV_MEDIA_TYPE,
     XLSX_MEDIA_TYPE,
@@ -37,6 +49,144 @@ def _call_org_id(db: Session, call: Call) -> Any:
 def _org_call_filter(org_id: int):
     """SQL predicate matching calls whose effective org is ``org_id``."""
     return or_(Call.org_id == org_id, Campaign.org_id == org_id)
+
+
+_ACTIVITY_STATES = {"agent_connecting", "listening", "understanding", "agent_speaking"}
+
+
+def _activity_payload(event: CallEvent) -> dict[str, Any]:
+    return event.payload if isinstance(event.payload, dict) else {}
+
+
+def _activity_sequence(event: CallEvent) -> float | None:
+    value = _activity_payload(event).get("sequence")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    sequence = float(value)
+    if not math.isfinite(sequence) or sequence <= 0 or not sequence.is_integer():
+        return None
+    return int(sequence)
+
+
+def _activity_occurred_at(event: CallEvent) -> datetime | None:
+    value = _activity_payload(event).get("occurred_at")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value):
+        return None
+    try:
+        return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _activity_state(event: CallEvent) -> str | None:
+    payload = _activity_payload(event)
+    value = payload.get("state")
+    if value in _ACTIVITY_STATES:
+        return value
+    legacy_value = payload.get("event_type")
+    return legacy_value if legacy_value in _ACTIVITY_STATES else None
+
+
+def _activity_out(event: CallEvent) -> CallActivityOut | None:
+    payload = _activity_payload(event)
+    sequence = _activity_sequence(event)
+    state = _activity_state(event)
+    occurred_at = payload.get("occurred_at")
+    source = payload.get("source")
+    event_type = payload.get("event_type")
+    if (
+        sequence is None
+        or state is None
+        or isinstance(occurred_at, bool)
+        or not isinstance(occurred_at, (int, float))
+        or not math.isfinite(float(occurred_at))
+        or not isinstance(source, str)
+        or not source.strip()
+        or not isinstance(event_type, str)
+        or not event_type.strip()
+    ):
+        return None
+    from_state = payload.get("from_state")
+    to_state = payload.get("to_state")
+    if from_state is not None and not isinstance(from_state, str):
+        return None
+    if to_state is not None and not isinstance(to_state, str):
+        return None
+    return CallActivityOut(
+        state=state,
+        event_type=event_type,
+        sequence=sequence,
+        occurred_at=float(occurred_at),
+        source=source,
+        from_state=from_state,
+        to_state=to_state,
+        created_at=event.created_at,
+        updated_at=event.created_at,
+    )
+
+
+def _ordered_activity_events(db: Session, call_id: int) -> list[CallEvent]:
+    events = db.scalars(
+        select(CallEvent)
+        .where(CallEvent.call_id == call_id, CallEvent.event_type == "voice_activity")
+        .order_by(CallEvent.id)
+    ).all()
+    valid_events = [event for event in events if _activity_out(event) is not None]
+    return sorted(valid_events, key=lambda event: (_activity_sequence(event), event.id))
+
+
+def _is_agent_state_transition(event: CallEvent) -> bool:
+    payload = _activity_payload(event)
+    from_state = payload.get("from_state")
+    to_state = payload.get("to_state")
+    if from_state != "speaking" or not isinstance(to_state, str) or not to_state:
+        return False
+    if to_state == "speaking":
+        return False
+    source = str(payload.get("source") or "").lower()
+    event_type = str(payload.get("event_type") or "").lower()
+    if "user" in source or "transcript" in source:
+        return False
+    return event_type == "agent_state_changed"
+
+
+def _activity_timing(
+    call: Call, events: list[CallEvent]
+) -> tuple[float | None, float | None]:
+    first_speaking_index = next(
+        (
+            index
+            for index, event in enumerate(events)
+            if _activity_state(event) == "agent_speaking"
+        ),
+        None,
+    )
+    if first_speaking_index is None:
+        return None, None
+
+    first_speaking = events[first_speaking_index]
+    first_speaking_at = _activity_occurred_at(first_speaking)
+    pickup_seconds = None
+    answered_at = call.answered_at
+    if answered_at is not None and answered_at.tzinfo is not None:
+        answered_at = answered_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if answered_at is not None and first_speaking_at is not None:
+        pickup_seconds = (first_speaking_at - answered_at).total_seconds()
+
+    opening_seconds = None
+    if first_speaking_at is not None:
+        for event in events[first_speaking_index + 1 :]:
+            if not _is_agent_state_transition(event):
+                continue
+            transition_at = _activity_occurred_at(event)
+            if transition_at is None:
+                continue
+            opening_seconds = (transition_at - first_speaking_at).total_seconds()
+            break
+    return pickup_seconds, opening_seconds
 
 
 # Avg end-to-end latency per call (single grouped scan, joined in below).
@@ -150,6 +300,14 @@ def get_call(
     fields = db.scalars(
         select(ExtractedField).where(ExtractedField.call_id == call.id).order_by(ExtractedField.id)
     ).all()
+    activity_events = _ordered_activity_events(db, call.id)
+    activity = [_activity_out(event) for event in activity_events]
+    activity = [item for item in activity if item is not None]
+    activity_history = [item.model_dump(mode="json") for item in activity[-200:]]
+    latest_activity = activity_history[-1] if activity_history else None
+    pickup_to_first_audio_seconds, opening_duration_seconds = _activity_timing(
+        call, activity_events
+    )
     return {
         "id": call.id,
         "campaign_id": call.campaign_id,
@@ -187,6 +345,10 @@ def get_call(
             }
             for f in fields
         ],
+        "activity": latest_activity,
+        "activity_history": activity_history,
+        "pickup_to_first_audio_seconds": pickup_to_first_audio_seconds,
+        "opening_duration_seconds": opening_duration_seconds,
     }
 
 

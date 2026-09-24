@@ -38,8 +38,12 @@ TWILIO_STATUS_MAP = {
 PLIVO_STATUS_MAP = {**TWILIO_STATUS_MAP}
 
 
-def log_call_event(db: Session, call_id: int, event_type: str, payload: Optional[dict]) -> None:
-    db.add(CallEvent(call_id=call_id, event_type=event_type, payload=payload))
+def log_call_event(
+    db: Session, call_id: int, event_type: str, payload: Optional[dict]
+) -> CallEvent:
+    event = CallEvent(call_id=call_id, event_type=event_type, payload=payload)
+    db.add(event)
+    return event
 
 
 def in_flight_call_count(db: Session) -> int:

@@ -58,7 +58,7 @@ def test_build_token_map_resolves_names() -> None:
     m = build_token_map(contact=contact, context=context)
     assert m["[Institution Name]"] == "Demo University"
     assert m["[Student Name]"] == "Alex Johnson"
-    assert m["[Parent/Guardian Name]"] == "Alex Johnson"
+    assert m["[Parent/Guardian Name]"] == ""
     assert m["[Expected Return Date]"] == ""
 
 
@@ -66,7 +66,22 @@ def test_build_token_map_empty_institution() -> None:
     m = build_token_map(contact={"name": "Alex Johnson"}, context={})
     assert m["[Institution Name]"] == ""
     assert m["[Student Name]"] == "Alex Johnson"
-    assert m["[Parent/Guardian Name]"] == "Alex Johnson"
+    assert m["[Parent/Guardian Name]"] == ""
+
+
+def test_build_token_map_resolves_parent_token_without_student_fallback() -> None:
+    m = build_token_map(
+        contact={"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"},
+        context={"institution_name": "Demo School"},
+    )
+    assert m["[Student Name]"] == "Aarav Kumar"
+    assert m["[Parent/Guardian Name]"] == "Suresh Kumar"
+
+
+def test_build_token_map_resolves_parent_aliases() -> None:
+    for key in ("parent", "guardian", "contact_person"):
+        m = build_token_map(contact={"student_name": "Aarav", key: "Guardian Name"})
+        assert m["[Parent/Guardian Name]"] == "Guardian Name"
 
 
 def test_build_token_map_falls_back_to_parsed_contact() -> None:

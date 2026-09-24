@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { API_BASE, callExportUrl } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
+import { resolveCallActivity } from '../utils/callActivity.js';
 import { cleanTranscriptText } from '../utils/transcript.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'no_answer', 'busy', 'canceled', 'cancelled', 'invalid']);
@@ -31,6 +32,11 @@ function fmtDuration(seconds) {
   const s = Math.max(0, Math.round(Number(seconds)));
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function fmtSeconds(value) {
+  if (value == null || value === '' || Number.isNaN(Number(value))) return '—';
+  return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} s`;
 }
 
 function fmtClock(value) {
@@ -108,6 +114,9 @@ export default function CallDetailPage() {
   if (!call) return null;
 
   const live = call.status && !TERMINAL_STATUSES.has(call.status);
+  const callActivity = resolveCallActivity(call);
+  const pickupToFirstAudio = call.pickup_to_first_audio_seconds;
+  const openingDuration = call.opening_duration_seconds;
   const transcript = call.transcript || [];
   const extracted = call.extracted_fields || [];
   const recordingUrl = resolveUrl(call.recording_url);
@@ -152,6 +161,46 @@ export default function CallDetailPage() {
       {call.flagged_for_human && (
         <div className="banner gold">⚑ Escalated — needs human follow-up.</div>
       )}
+
+      <section className="card pad" aria-labelledby="call-activity-title">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        >
+          <h3 id="call-activity-title" style={{ fontFamily: 'var(--font-d)', fontSize: 15 }}>
+            Call activity
+          </h3>
+          <span className="badge badge-blue" style={{ fontSize: 14, padding: '7px 14px' }}>
+            {callActivity.label}
+          </span>
+          <span style={{ color: 'var(--muted)', fontSize: 13 }}>{callActivity.detail}</span>
+        </div>
+        {(pickupToFirstAudio != null || openingDuration != null) && (
+          <dl
+            aria-label="Call timing"
+            style={{ display: 'flex', gap: 24, flexWrap: 'wrap', margin: '16px 0 0' }}
+          >
+            {pickupToFirstAudio != null && (
+              <div>
+                <dt style={{ color: 'var(--muted)', fontSize: 12 }}>Pickup to first audio</dt>
+                <dd className="mono" style={{ margin: '3px 0 0', color: 'var(--fg)' }}>
+                  {fmtSeconds(pickupToFirstAudio)}
+                </dd>
+              </div>
+            )}
+            {openingDuration != null && (
+              <div>
+                <dt style={{ color: 'var(--muted)', fontSize: 12 }}>Opening duration</dt>
+                <dd className="mono" style={{ margin: '3px 0 0', color: 'var(--fg)' }}>
+                  {fmtSeconds(openingDuration)}
+                </dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </section>
 
       <div className="detail">
         {/* Left column */}

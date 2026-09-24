@@ -21,6 +21,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -55,6 +56,7 @@ APOLOGY_TEXT = (
     "Hello, this is an automated assistant. We're sorry, but we're unable to "
     "continue this call right now due to a technical problem. Goodbye."
 )
+ACTIVITY_SOURCE = "livekit-1.8.3"
 
 
 # --------------------------------------------------------------------------
@@ -279,7 +281,7 @@ def build_providers(
         stt_lang = str(
             (voice_settings or {}).get("stt_language", "en")
         ).strip().lower() or "en"
-        # P0-1 endpointing tuning: the livekit-plugins-deepgram 1.7.0 kwarg is
+        # P0-1 endpointing tuning: the livekit-plugins-deepgram 1.8.3 kwarg is
         # ``endpointing_ms`` (introspected signature has NO ``endpointing``);
         # plugin default is a hair-trigger 25 ms which fragments speech.
         # 300ms (echo hardening): the agent's own looped-back TTS audio must
@@ -316,7 +318,7 @@ def build_providers(
 
     groq_model = model_override or settings.groq_model
     if settings.groq_api_key:
-        # livekit-agents 1.7.0 has no LLM.with_groq classmethod — Groq is an
+        # livekit-agents 1.8.3 has no LLM.with_groq classmethod — Groq is an
         # OpenAI-compatible endpoint, so construct it explicitly.
         kwargs: dict[str, Any] = {}
         if "qwen" in groq_model.lower():
@@ -404,12 +406,12 @@ class TurnTelemetry:
     - ``e2e_ms``: approximated speech-to-speech =
       stt_final + llm_ttfb + tts_ttfb.
 
-    Event wiring for livekit-agents 1.7.0: there is NO ``session.metrics``
+    Event wiring for livekit-agents 1.8.3: there is NO ``session.metrics``
     collector object on AgentSession — the session EMITS a single
     ``"metrics_collected"`` event whose payload wraps one AgentMetrics object
     per measurement (``MetricsCollectedEvent.metrics``), typed via its
     ``type`` discriminator ("eou_metrics" | "llm_metrics" | "tts_metrics").
-    Field names verified against livekit.agents.metrics 1.7.0:
+    Field names verified against livekit.agents.metrics 1.8.3:
     EOUMetrics.end_of_utterance_delay/.transcription_delay,
     LLMMetrics.ttft (-1 when no token), TTSMetrics.ttfb.
     If the event shape ever changes again, wall-clock fallbacks below keep the
@@ -431,6 +433,10 @@ class TurnTelemetry:
         self._on_final_user = on_final_user
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
+        self._activity_sequence = 1
+        self._activity_post_lock = asyncio.Lock()
+        self._activity_seen_events: set[tuple[str, str, str, float]] = set()
+        self._agent_connecting_posted = False
         self._reset()
 
     def _publish_caption(self, speaker: str, text: str, final: bool = True) -> None:
@@ -461,23 +467,208 @@ class TurnTelemetry:
         self._tts_characters: Optional[int] = None
 
     def attach(self) -> None:
-        """Wire session event + metrics callbacks (livekit-agents >= 1.5)."""
-        self._session.on("user_stopped_speaking")(self._on_user_stopped_speaking)
+        """Wire LiveKit Agents 1.8.3 session events."""
+        self._session.on("user_state_changed")(self._on_user_state_changed)
+        self._session.on("agent_state_changed")(self._on_agent_state_changed)
         self._session.on("user_input_transcribed")(self._on_user_input_transcribed)
         self._session.on("conversation_item_added")(self._on_conversation_item_added)
-        self._session.on("agent_started_speaking")(self._on_agent_started_speaking)
-        self._session.on("agent_stopped_speaking")(self._on_agent_stopped_speaking)
-        # 1.7.0 exposes metrics ONLY through this emitted event — there is no
-        # session.metrics collector to subscribe to.
         self._session.on("metrics_collected")(self._on_metrics_collected)
 
-    # -- event handlers ----------------------------------------------------
+    @staticmethod
+    def _event_value(event: Any, name: str, default: Any = None) -> Any:
+        if isinstance(event, Mapping):
+            value = event.get(name, default)
+        else:
+            value = getattr(event, name, default)
+        return getattr(value, "value", value)
 
-    def _on_user_stopped_speaking(self, *_args: Any) -> None:
-        now = time.monotonic()
-        self._end_of_speech_at = now
-        if self._reply_start_at is None:
-            self._reply_start_at = now
+    @classmethod
+    def _event_state(cls, event: Any, name: str) -> Optional[str]:
+        value = cls._event_value(event, name)
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _finite_time(value: Any) -> float:
+        try:
+            occurred_at = float(value)
+        except (TypeError, ValueError, OverflowError):
+            occurred_at = time.time()
+        if math.isfinite(occurred_at):
+            return occurred_at
+        fallback = time.time()
+        return fallback if math.isfinite(fallback) else 0.0
+
+    @classmethod
+    def _event_time(cls, event: Any) -> float:
+        return cls._finite_time(cls._event_value(event, "created_at"))
+
+    def _reserve_activity_sequence(self) -> int:
+        sequence = self._activity_sequence
+        self._activity_sequence += 1
+        return sequence
+
+    async def _post_reserved_activity(
+        self,
+        *,
+        state: str,
+        sequence: int,
+        event_type: str,
+        occurred_at: float,
+        from_state: Optional[str],
+        to_state: Optional[str],
+    ) -> bool:
+        async with self._activity_post_lock:
+            try:
+                return await self._backend.post_activity(
+                    self._call_id,
+                    state,
+                    sequence,
+                    event_type,
+                    occurred_at,
+                    ACTIVITY_SOURCE,
+                    from_state,
+                    to_state,
+                )
+            except Exception:
+                logger.exception(
+                    "activity post failed for call %s state=%s sequence=%s",
+                    self._call_id,
+                    state,
+                    sequence,
+                )
+                return False
+
+    async def post_activity(
+        self,
+        state: str,
+        event_type: str,
+        occurred_at: float,
+        from_state: Optional[str] = None,
+        to_state: Optional[str] = None,
+    ) -> bool:
+        """Publish one activity state with a reserved sequence number."""
+        sequence = self._reserve_activity_sequence()
+        return await self._post_reserved_activity(
+            state=state,
+            sequence=sequence,
+            event_type=event_type,
+            occurred_at=self._finite_time(occurred_at),
+            from_state=from_state,
+            to_state=to_state,
+        )
+
+    def queue_agent_connecting(self) -> None:
+        """Reserve and schedule the pre-start state without awaiting HTTP."""
+        if self._agent_connecting_posted:
+            return
+        self._agent_connecting_posted = True
+        self._queue_activity(
+            state="agent_connecting",
+            event_type="session_pre_start",
+            occurred_at=self._finite_time(time.time()),
+            from_state="initializing",
+            to_state="agent_connecting",
+        )
+
+    async def post_agent_connecting(self) -> bool:
+        self.queue_agent_connecting()
+        return True
+
+    def _queue_activity(
+        self,
+        *,
+        state: str,
+        event_type: str,
+        occurred_at: float,
+        from_state: Optional[str],
+        to_state: Optional[str],
+    ) -> None:
+        event_key = (event_type, from_state or "", to_state or "", occurred_at)
+        if event_key in self._activity_seen_events:
+            return
+        self._activity_seen_events.add(event_key)
+        sequence = self._reserve_activity_sequence()
+        try:
+            _spawn_task(
+                self._post_reserved_activity(
+                    state=state,
+                    sequence=sequence,
+                    event_type=event_type,
+                    occurred_at=occurred_at,
+                    from_state=from_state,
+                    to_state=to_state,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "activity scheduling failed for call %s state=%s sequence=%s",
+                self._call_id,
+                state,
+                sequence,
+            )
+
+    def _on_user_state_changed(self, ev: Any) -> None:
+        old_state = self._event_state(ev, "old_state")
+        new_state = self._event_state(ev, "new_state")
+        if new_state == "speaking" and old_state != "speaking":
+            self._queue_activity(
+                state="listening",
+                event_type="user_state_changed",
+                occurred_at=self._event_time(ev),
+                from_state=old_state,
+                to_state=new_state,
+            )
+        if old_state == "speaking" and new_state is not None and new_state != "speaking":
+            now = time.monotonic()
+            self._end_of_speech_at = now
+            if self._reply_start_at is None:
+                self._reply_start_at = now
+            self._queue_activity(
+                state="understanding",
+                event_type="user_state_changed",
+                occurred_at=self._event_time(ev),
+                from_state=old_state,
+                to_state=new_state,
+            )
+
+    def _on_agent_state_changed(self, ev: Any) -> None:
+        old_state = self._event_state(ev, "old_state")
+        new_state = self._event_state(ev, "new_state")
+        if old_state == "speaking" and new_state is not None and new_state != "speaking":
+            _spawn_task(self._safe_flush())
+        if new_state == "thinking":
+            if self._reply_start_at is None:
+                self._reply_start_at = time.monotonic()
+            self._queue_activity(
+                state="understanding",
+                event_type="agent_state_changed",
+                occurred_at=self._event_time(ev),
+                from_state=old_state,
+                to_state=new_state,
+            )
+        elif new_state == "speaking":
+            if self._tts_first_audio_ms is None and self._reply_start_at is not None:
+                self._tts_first_audio_ms = (
+                    time.monotonic() - self._reply_start_at
+                ) * 1000.0
+            self._queue_activity(
+                state="agent_speaking",
+                event_type="agent_state_changed",
+                occurred_at=self._event_time(ev),
+                from_state=old_state,
+                to_state=new_state,
+            )
+        elif old_state == "speaking" and new_state == "listening":
+            self._queue_activity(
+                state="listening",
+                event_type="agent_state_changed",
+                occurred_at=self._event_time(ev),
+                from_state=old_state,
+                to_state=new_state,
+            )
 
     def _on_user_input_transcribed(self, ev: Any) -> None:
         transcript = str(getattr(ev, "transcript", "") or "").strip()
@@ -536,17 +727,9 @@ class TurnTelemetry:
             self._publish_caption("agent", text)
             self._schedule_flush()
 
-    def _on_agent_started_speaking(self, *_args: Any) -> None:
-        if self._tts_first_audio_ms is None and self._reply_start_at is not None:
-            # APPROXIMATION fallback: covers stt+llm+tts up to first audio;
-            # used only if tts_metrics never arrived.
-            self._tts_first_audio_ms = (
-                time.monotonic() - self._reply_start_at
-            ) * 1000.0
-
     def _schedule_flush(self, delay_s: float = 2.5) -> None:
-        """Debounced safety flush so turns persist even if the caller hangs
-        up before the agent_stopped_speaking event fires."""
+        """Debounced safety flush so turns persist if the caller hangs up
+        before the agent leaves speaking."""
         try:
             running = asyncio.get_running_loop()
             running.call_later(
@@ -562,13 +745,10 @@ class TurnTelemetry:
         except Exception:
             logger.exception("Scheduled flush failed")
 
-    def _on_agent_stopped_speaking(self, *_args: Any) -> None:
-        _spawn_task(self._safe_flush())
-
     # -- metrics handlers ---------------------------------------------------
 
     def _on_metrics_collected(self, ev: Any) -> None:
-        """Single dispatcher for the wrapped AgentMetrics objects (1.7.0)."""
+        """Single dispatcher for the wrapped AgentMetrics objects (1.8.3)."""
         metrics = getattr(ev, "metrics", ev)  # unwrap MetricsCollectedEvent
         metric_type = str(getattr(metrics, "type", "") or "")
         if metric_type == "eou_metrics":
@@ -602,7 +782,7 @@ class TurnTelemetry:
             ttfb_seconds = float(getattr(metrics, "ttfb", 0.0) or 0.0)
             if ttfb_seconds > 0:
                 self._tts_first_audio_ms = ttfb_seconds * 1000.0
-            # livekit-agents 1.7.0 TTSMetrics carries characters_count; older
+            # livekit-agents 1.8.3 TTSMetrics carries characters_count; older
             # builds named it characters. Accept either.
             characters = getattr(metrics, "characters_count", None)
             if characters is None:
@@ -815,13 +995,38 @@ def _required_fields_from_schema(config: Mapping[str, Any]) -> frozenset[str]:
     return frozenset(required)
 
 
+def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
+    return AgentSession(
+        stt=bundle.stt,
+        llm=bundle.llm,
+        tts=bundle.tts,
+        # Stricter VAD: ignore faint background voices/noise so the agent
+        # stops being interrupted by anyone besides the actual caller.
+        vad=silero.VAD.load(),
+        aec_warmup_duration=0.0,
+        # Local VAD turn detection: skips the LiveKit cloud detector whose
+        # 401 retries stalled every session start by ~4s.
+        turn_detection="vad",
+        # Snappier endpointing than defaults (NFR-1: median <=900ms).
+        min_endpointing_delay=0.35,
+        max_endpointing_delay=1.5,
+        # Echo hardening: the agent's own TTS can loop back into its STT.
+        # These knobs prevent a false interruption from replaying the whole
+        # reply and stop hair-trigger retriggering on looped-back audio.
+        min_interruption_duration=0.5,
+        false_interruption_timeout=2.0,
+        resume_false_interruption=False,
+        discard_audio_if_uninterruptible=True,
+    )
+
+
 async def _speak_opening(
     session: Any,
     config: Mapping[str, Any],
     tokens: Mapping[str, str],
     contact: Optional[Mapping[str, Any]],
 ) -> bool:
-    """Speak the composed opening with interruptions disabled.
+    """Speak the composed opening with caller interruptions enabled.
 
     Returns True when spoken; False (fall back to the prompt-driven
     auto-turn) when there is no disclosure script to anchor it.
@@ -829,8 +1034,18 @@ async def _speak_opening(
     opening = build_opening_line(config, tokens, contact)
     if not opening:
         return False
-    await session.say(opening, allow_interruptions=False)
+    await session.say(opening, allow_interruptions=True)
     return True
+
+
+async def _start_agent_session(
+    session: Any,
+    telemetry: TurnTelemetry,
+    room: Any,
+    agent: Any,
+) -> None:
+    telemetry.queue_agent_connecting()
+    await session.start(room=room, agent=agent)
 
 
 async def run_session(ctx: JobContext, settings: Settings) -> None:
@@ -915,27 +1130,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             schema=schema,
         )
 
-        session = AgentSession(
-            stt=bundle.stt,
-            llm=bundle.llm,
-            tts=bundle.tts,
-            # Stricter VAD: ignore faint background voices/noise so the agent
-            # stops being interrupted by anyone besides the actual caller.
-            vad=silero.VAD.load(),
-            # Local VAD turn detection: skips the LiveKit cloud detector whose
-            # 401 retries stalled every session start by ~4s.
-            turn_detection="vad",
-            # Snappier endpointing than defaults (NFR-1: median <=900ms).
-            min_endpointing_delay=0.35,
-            max_endpointing_delay=1.5,
-            # Echo hardening: the agent's own TTS can loop back into its STT.
-            # These knobs prevent a false interruption from replaying the whole
-            # reply and stop hair-trigger retriggering on looped-back audio.
-            min_interruption_duration=0.5,
-            false_interruption_timeout=2.0,
-            resume_false_interruption=False,
-            discard_audio_if_uninterruptible=True,
-        )
+        session = _build_agent_session(bundle)
         telemetry = TurnTelemetry(
             session=session,
             backend=backend,
@@ -949,9 +1144,9 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             await ctx.connect()
 
         agent = DomainCallAgent(instructions=instructions, tools_impl=tools_impl)
-        await session.start(room=ctx.room, agent=agent)
-        # Agent speaks first: the composed opening cannot be barged by
-        # background noise, and names are real (token-substituted).
+        await _start_agent_session(session, telemetry, ctx.room, agent)
+        # Agent speaks first: the composed opening remains token-substituted,
+        # and the caller can barge in while it is being delivered.
         await _speak_opening(session, config, tokens, parsed.contact)
     except Exception:
         logger.exception("Unhandled error in voice session (room=%s)", room_name)
