@@ -47,6 +47,9 @@ def sync_domain_configs(db: Session, configs_dir: str | Path) -> list[str]:
     """Upsert every *.json in the directory. Returns synced config names.
 
     A missing directory is not an error (logs a warning, returns []).
+    Manual orphan cleanup (no API): DELETE FROM domain_configs WHERE name IN
+    ('hospital-appointment','schema'); Agents: DELETE /api/agents/{id} archives
+    (needs bearer).
     """
     directory = Path(configs_dir)
     if not directory.is_absolute():
@@ -58,7 +61,7 @@ def sync_domain_configs(db: Session, configs_dir: str | Path) -> list[str]:
         return []
 
     synced: list[str] = []
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(p for p in directory.glob("*.json") if p.name != "schema.json"):
         try:
             name, display_name, config = _parse_config_file(path)
         except (ValueError, json.JSONDecodeError) as exc:
