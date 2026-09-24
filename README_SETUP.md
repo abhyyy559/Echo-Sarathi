@@ -138,6 +138,17 @@ instead of crashing.
 | `EXOTEL_SID` / `EXOTEL_TOKEN` / `EXOTEL_NUMBER` | India production fallback, later phase |
 | `TEST_PHONE_NUMBER`, `DLT_*`, calling-hours/limits tuning | compliance work lands before any real dialing |
 
+> **Single-agent state (post-cleanup):** only `domain-configs/presets/absent-student-followup.json` ships (Agents page lists the one seeded agent). Verify with `(Get-ChildItem domain-configs/presets/*.json).Count` → `1` and `python scripts/validate_presets.py` → PASS. Presets (`GET /api/agents/presets`) need a bearer token; `/api/domain-configs` list is public. Orphan rows from deleted configs are removed manually (no auto-delete in sync): `DELETE FROM domain_configs WHERE name IN ('hospital-appointment','schema');` then reseed + restart the stack.
+>
+> ```powershell
+> # PowerShell-safe auth-aware smoke (no curl, no &&):
+> $Body = @{ email = 'demo@example.com'; password = 'demo1234' } | ConvertTo-Json
+> $T = (Invoke-RestMethod http://localhost:8000/api/auth/login -Method Post -Body $Body -ContentType 'application/json').token
+> $H = @{ Authorization = ('Bearer ' + $T) }
+> Invoke-RestMethod http://localhost:8000/api/domain-configs -Headers $H
+> (Invoke-RestMethod http://localhost:8000/api/agents/presets -Headers $H).preset_id  # -> absent-student-followup only
+> ```
+
 ## 6. Web testing walkthrough (mic playground, zero telephony)
 
 1. **Start + seed**: run `scripts\dev-up.ps1`, then `scripts\seed.ps1`.
