@@ -31,12 +31,16 @@ from typing import Any, Mapping, Optional
 from livekit.agents import (
     Agent,
     AgentSession,
+    EndpointingOptions,
+    InterruptionOptions,
     JobContext,
+    TurnHandlingOptions,
     function_tool,
     llm,
     stt as stt_module,
     tts as tts_module,
 )
+from livekit.agents.llm.llm import APIConnectOptions
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from app.backend_client import BackendClient, BackendError
@@ -205,10 +209,6 @@ class FallbackLLM(llm.LLM):
         # Fail FAST on the primary: its own 3×2s retry loop burns TPM and
         # minutes while the caller waits in silence. One attempt; on 429/5xx
         # the proxy marks it down and the session retry goes to secondary.
-        # (APIConnectOptions lives in livekit.agents.llm.llm, not re-exported
-        # at the llm package root.)
-        from livekit.agents.llm.llm import APIConnectOptions
-
         fast_options = APIConnectOptions(
             max_retry=1, retry_interval=0.5, timeout=15.0
         )
@@ -231,7 +231,7 @@ class _FallbackStream(llm.LLMStream):
             owner,
             chat_ctx=primary_stream.chat_ctx,
             tools=list(primary_stream.tools),
-            conn_options=llm.APIConnectOptions(),
+            conn_options=APIConnectOptions(),
         )
         self._owner = owner
         self._active = primary_stream
@@ -1000,23 +1000,24 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
         stt=bundle.stt,
         llm=bundle.llm,
         tts=bundle.tts,
-        # Stricter VAD: ignore faint background voices/noise so the agent
-        # stops being interrupted by anyone besides the actual caller.
         vad=silero.VAD.load(),
         aec_warmup_duration=0.0,
-        # Local VAD turn detection: skips the LiveKit cloud detector whose
-        # 401 retries stalled every session start by ~4s.
-        turn_detection="vad",
-        # Snappier endpointing than defaults (NFR-1: median <=900ms).
-        min_endpointing_delay=0.35,
-        max_endpointing_delay=1.5,
-        # Echo hardening: the agent's own TTS can loop back into its STT.
-        # These knobs prevent a false interruption from replaying the whole
-        # reply and stop hair-trigger retriggering on looped-back audio.
-        min_interruption_duration=0.5,
-        false_interruption_timeout=2.0,
-        resume_false_interruption=False,
-        discard_audio_if_uninterruptible=True,
+        turn_handling=TurnHandlingOptions(
+            turn_detection="vad",
+            endpointing=EndpointingOptions(
+                mode="fixed",
+                min_delay=0.35,
+                max_delay=1.5,
+            ),
+            interruption=InterruptionOptions(
+                enabled=True,
+                mode="vad",
+                discard_audio_if_uninterruptible=True,
+                min_duration=0.5,
+                false_interruption_timeout=2.0,
+                resume_false_interruption=False,
+            ),
+        ),
     )
 
 

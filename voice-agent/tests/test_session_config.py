@@ -56,7 +56,7 @@ class _BlockingBackend:
         return True
 
 
-def test_normal_session_disables_aec_warmup(monkeypatch) -> None:
+def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
     class _CapturingSession:
@@ -75,6 +75,33 @@ def test_normal_session_disables_aec_warmup(monkeypatch) -> None:
     pipeline_module._build_agent_session(bundle)
 
     assert captured["aec_warmup_duration"] == 0.0
+    assert captured["turn_handling"] == {
+        "turn_detection": "vad",
+        "endpointing": {
+            "mode": "fixed",
+            "min_delay": 0.35,
+            "max_delay": 1.5,
+        },
+        "interruption": {
+            "enabled": True,
+            "mode": "vad",
+            "discard_audio_if_uninterruptible": True,
+            "min_duration": 0.5,
+            "false_interruption_timeout": 2.0,
+            "resume_false_interruption": False,
+        },
+    }
+    deprecated_kwargs = {
+        "turn_detection",
+        "min_endpointing_delay",
+        "max_endpointing_delay",
+        "min_interruption_duration",
+        "false_interruption_timeout",
+        "resume_false_interruption",
+        "discard_audio_if_uninterruptible",
+        "allow_interruptions",
+    }
+    assert deprecated_kwargs.isdisjoint(captured)
 
 
 def test_agent_connecting_does_not_delay_session_start() -> None:
