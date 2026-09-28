@@ -52,8 +52,7 @@ services:
     restart: unless-stopped
 
   # --- Backend (FastAPI) ------------------------------------------------------
-  # Entrypoint is the app-package module path app.main:app (backend/main.py is
-  # a legacy shim kept importable).
+  # Entrypoint is the app-package module path app.main:app.
   backend:
     build:
       context: ../backend
