@@ -70,3 +70,42 @@ async def drain_track(track: Any, queue: Any) -> None:
     finally:
         await audio_stream.aclose()
         put_sentinel(queue)
+
+
+#: Bytes per PSTN frame: 20ms of 8kHz mu-law. Telephony endpoints expect
+#: constant-size frames; LiveKit delivers variable-size chunks, and forwarding
+#: them raw is heard as crackle/robotic noise (classic on car speakers).
+TELEPHONY_FRAME_BYTES = 160
+
+#: mu-law silence byte, used to pad a trailing partial frame.
+MULAW_SILENCE_BYTE = 0xFF
+
+
+class MulawFramer:
+    """Accumulate variable-size mu-law chunks into fixed 20ms PSTN frames.
+
+    One instance per call leg. :meth:`push` returns zero or more full frames;
+    :meth:`flush` returns the padded tail (or ``b""`` when nothing buffered).
+    """
+
+    def __init__(self, frame_bytes: int = TELEPHONY_FRAME_BYTES) -> None:
+        self._size = int(frame_bytes)
+        self._buf = bytearray()
+
+    def push(self, data: bytes) -> list[bytes]:
+        """Buffer a chunk; return every full frame now available."""
+        if data:
+            self._buf.extend(data)
+        frames: list[bytes] = []
+        while len(self._buf) >= self._size:
+            frames.append(bytes(self._buf[: self._size]))
+            del self._buf[: self._size]
+        return frames
+
+    def flush(self) -> bytes:
+        """Return the leftover tail padded with silence to one full frame."""
+        if not self._buf:
+            return b""
+        tail = bytes(self._buf)
+        self._buf.clear()
+        return tail + bytes([MULAW_SILENCE_BYTE]) * (self._size - len(tail))

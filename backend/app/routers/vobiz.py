@@ -172,14 +172,23 @@ async def _pump_room_to_vobiz(
 ) -> None:
     """Send queued agent mu-law frames to Vobiz as playAudio messages.
 
-    Paced at one chunk per 20ms of audio: dumping the queue as fast as it
-    fills bursts frames into Vobiz's jitter buffer, which callers hear as
-    choppy/broken speech. Exits cleanly when any drain puts the b"" sentinel.
+    Repacketized into fixed 160-byte (20ms) frames paced at real time:
+    LiveKit delivers variable-size chunks, and forwarding them raw bursts
+    uneven audio into Vobiz's jitter buffer, which callers hear as noisy,
+    crackling speech. Exits cleanly when any drain puts the b"" sentinel
+    (padding the tail with silence first).
     """
     import asyncio
     import base64
     import time
 
+    from app.services.media_bridge import MulawFramer
+
+    async def _send(frame: bytes) -> None:
+        payload = base64.b64encode(frame).decode()
+        await ws.send_text(build_play_audio(stream_id_box.get("sid", ""), payload))
+
+    framer = MulawFramer()
     getter = asyncio.ensure_future(queue.get())
     next_deadline = time.monotonic()
     try:
@@ -188,15 +197,18 @@ async def _pump_room_to_vobiz(
             ulaw = getter.result()
             getter = asyncio.ensure_future(queue.get())
             if ulaw == b"":
+                tail = framer.flush()
+                if tail:
+                    await _send(tail)
                 break
-            payload = base64.b64encode(ulaw).decode()
-            await ws.send_text(build_play_audio(stream_id_box.get("sid", ""), payload))
-            # One LiveKit audio chunk ≈ 20ms of 8kHz speech; hold the cadence
-            # so playout is continuous instead of bursty.
-            next_deadline = max(time.monotonic(), next_deadline) + 0.02
-            delay = next_deadline - time.monotonic()
-            if delay > 0:
-                await asyncio.sleep(delay)
+            for frame in framer.push(ulaw):
+                await _send(frame)
+                # One frame IS 20ms of 8kHz speech: hold the cadence so
+                # playout is continuous instead of bursty.
+                next_deadline = max(time.monotonic(), next_deadline) + 0.02
+                delay = next_deadline - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
     finally:
         getter.cancel()
 

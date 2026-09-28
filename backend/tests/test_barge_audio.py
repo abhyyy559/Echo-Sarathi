@@ -98,3 +98,27 @@ def test_handle_room_data_accepts_livekit_packet_shape() -> None:
     packet: Any = _Packet(json.dumps({"type": "barge_in"}).encode())
     assert _handle_room_data(packet, queue) is True
     assert queue.empty()
+
+
+def test_framer_emits_fixed_160_byte_frames() -> None:
+    from app.services.media_bridge import MulawFramer
+
+    framer = MulawFramer()
+    # Odd-sized LiveKit chunks: 100 + 100 + 300 = 500 bytes -> 3 full frames.
+    assert framer.push(bytes(100)) == []
+    assert framer.push(bytes(100)) == [bytes(160)]
+    out = framer.push(bytes(300))
+    assert out == [bytes(160), bytes(160)]
+    assert all(len(f) == 160 for f in out)
+
+
+def test_framer_flush_pads_tail_with_silence() -> None:
+    from app.services.media_bridge import MULAW_SILENCE_BYTE, MulawFramer
+
+    framer = MulawFramer()
+    assert framer.push(bytes(200)) == [bytes(160)]
+    tail = framer.flush()
+    assert len(tail) == 160
+    assert tail[:40] == bytes(40)
+    assert tail[40:] == bytes([MULAW_SILENCE_BYTE]) * 120
+    assert framer.flush() == b""
