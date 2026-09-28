@@ -1050,6 +1050,34 @@ def _required_fields_from_schema(config: Mapping[str, Any]) -> frozenset[str]:
     return frozenset(required)
 
 
+def _opts(cls: Any, **kwargs: Any) -> Any:
+    """Construct a LiveKit options object with only this version's fields.
+
+    The worker runs against whatever livekit-agents is installed (1.7.0 in
+    the local venv, 1.8.3 in the compose image) and unknown kwargs raise
+    TypeError — which would kill the whole session. Unknown fields are
+    dropped with a warning; if construction still fails, fall back to
+    defaults rather than silence.
+    """
+    annotations = getattr(cls, "__annotations__", None) or {}
+    if annotations:
+        dropped = sorted(set(kwargs) - set(annotations))
+        if dropped:
+            logger.warning(
+                "%s unsupported here, dropping: %s",
+                getattr(cls, "__name__", cls), dropped,
+            )
+        kwargs = {k: v for k, v in kwargs.items() if k in annotations}
+    try:
+        return cls(**kwargs)
+    except TypeError:
+        logger.exception(
+            "%s construction failed, falling back to defaults",
+            getattr(cls, "__name__", cls),
+        )
+        return cls()
+
+
 def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
     return AgentSession(
         stt=bundle.stt,
@@ -1057,18 +1085,21 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
         tts=bundle.tts,
         vad=silero.VAD.load(),
         aec_warmup_duration=0.0,
-        turn_handling=TurnHandlingOptions(
+        turn_handling=_opts(
+            TurnHandlingOptions,
             turn_detection="vad",
             # Preemptive generation: start the LLM on partial transcripts so
             # the first sentence is ready the moment the turn ends (TTS
             # already synthesizes sentence-by-sentence as tokens stream in).
             preemptive_generation=True,
-            endpointing=EndpointingOptions(
+            endpointing=_opts(
+                EndpointingOptions,
                 mode="fixed",
                 min_delay=0.35,
                 max_delay=1.5,
             ),
-            interruption=InterruptionOptions(
+            interruption=_opts(
+                InterruptionOptions,
                 enabled=True,
                 mode="vad",
                 discard_audio_if_uninterruptible=True,

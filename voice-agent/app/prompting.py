@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from app.extraction_tools import LOW_CONFIDENCE_THRESHOLD, MAX_ASKS_PER_FIELD
 
@@ -37,6 +39,7 @@ CONTEXT_HEADER = "COMPANY KNOWLEDGE - facts you may use; never invent anything b
 CALLER_CONTEXT_HEADER = "CALLER CONTEXT - who this specific call is about:"
 GREETING_HEADER = "GREETING RULE (hard) - state only what you know:"
 LANGUAGE_HEADER = "LANGUAGE INSTRUCTION:"
+TODAY_HEADER = "TODAY'S DATE (Asia/Kolkata) - resolve every relative date against this:"
 QUESTIONS_HEADER = "YOUR GOALS - information to collect during the call:"
 EXTRACTION_HEADER = "RECORDING ANSWERS - extraction discipline:"
 ESCALATION_HEADER = "WHEN TO WRAP UP:"
@@ -111,6 +114,21 @@ def _known_field(*candidates: Optional[Mapping[str, Any]], keys: tuple[str, ...]
             if value:
                 return value
     return ""
+
+
+def today_line(timezone_name: str = "Asia/Kolkata", now: Optional[datetime] = None) -> str:
+    """Render today's date for the prompt so relative dates resolve.
+
+    ``now`` is injectable (tests); otherwise the current time in
+    ``timezone_name`` (falls back to UTC on unknown zones). Format is
+    weekday-explicit so 'Monday'/'this Friday' map unambiguously.
+    """
+    try:
+        zone = ZoneInfo(str(timezone_name or "Asia/Kolkata"))
+    except Exception:  # noqa: BLE001 — bad zone name must never break prompts
+        zone = timezone.utc
+    current = now.astimezone(zone) if now is not None else datetime.now(zone)
+    return current.strftime("%A, %d %B %Y")
 
 
 def build_token_map(
@@ -419,6 +437,7 @@ def render_system_prompt(
     config: Mapping[str, Any],
     contact: Optional[Mapping[str, Any]] = None,
     tokens: Optional[Mapping[str, str]] = None,
+    today: Optional[str] = None,
 ) -> str:
     """Render the full agent instructions from an agent-version config.
 
@@ -430,6 +449,9 @@ def render_system_prompt(
     value) applied to the disclosure, system_prompt, and question_flow text so
     literal ``[Institution Name]`` placeholders never ship. Empty values are
     removed.
+
+    ``today`` (optional) overrides the rendered Asia/Kolkata date (tests);
+    when None the current date is used.
     """
     sections: list[str] = []
 
@@ -515,6 +537,10 @@ def render_system_prompt(
             f"{LANGUAGE_HEADER}\n- English first; follow the caller's lead otherwise."
         )
 
+    # 3d. Today's date — without it the model can never resolve 'tomorrow',
+    # 'after 2 days', 'Monday' into a real date and re-asks forever.
+    sections.append(f"{TODAY_HEADER}\n- Today is {today or today_line()}.")
+
     # 4. Speaking style — this is what makes it sound human instead of IVR-like.
     # NOTE: every line below costs input tokens on EVERY turn (~2800 total
     # burns Groq's 8000 TPM in ~3 turns). Keep terse; cut examples first.
@@ -524,6 +550,10 @@ def render_system_prompt(
         "no markdown, lists, symbols, emoji, or newlines — this becomes speech.\n"
         "- Respond to what the caller ACTUALLY said first (brief warm reflection), "
         "ask ONE thing per turn, never repeat answered questions, never read like a script.\n"
+        "- NEVER ask the same question twice with the same words. Second attempt "
+        "REPHRASES and helps ('Thanks — so around Thursday the 2nd, is that right?').\n"
+        "- Presence checks first: 'hlo / hello? / are you there' means answer "
+        "'Yes, I'm here!' BEFORE anything else, then restate in one short line.\n"
         "- Volunteered info counts: skip that goal later. After silence, just 'Are you still there?' "
         "Stay polite even if the caller is upset."
     )
@@ -533,6 +563,17 @@ def render_system_prompt(
         "HARD RULES (non-negotiable):\n"
         "- ON TOPIC only (decline the rest, steer back). PRIVACY: discuss only "
         "this call's person. Verify who answers before sensitive details.\n"
+        "- NO CARD, NO ASSUMPTIONS: when this prompt names nobody for the call "
+        "(no CALLER CONTEXT above), ask the answerer's name AND relation to the "
+        "person this call is about first. Never call a stranger 'parent', never say "
+        "'your child' until they confirm who they are.\n"
+        "- DATES ARE MATH: convert relative answers to a real date using TODAY "
+        "above ('after 2 days' = today + 2, 'this Monday' = the coming Monday), "
+        "record the resolved date immediately, confirm it once in passing — "
+        "never bank the raw phrase and never re-ask a resolved date.\n"
+        "- RECORDED IS DONE: a tool result saying \"Recorded X='...'\" means that "
+        "goal is finished. Asking it again is the #1 way callers know you're a "
+        "bot — check your history before every question.\n"
         "- VERIFY-THEN-CONTINUE: identity confirmation STARTS the call — acknowledge "
         "BY NAME and move to the first unfilled goal in the same breath. Never a bare "
         "'thank you', never `end_call` right after verification.\n"
