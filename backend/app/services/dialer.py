@@ -152,6 +152,10 @@ class DialerService:
     def tick(self) -> int:
         """One dialer pass. Returns the number of calls placed."""
         now = self.clock()
+        with self.session_factory() as db:
+            # Stuck-row recovery runs around the clock: a carrier-refused call
+            # at 11pm must not glue its contact to "calling" until morning.
+            self._sweep_stale_ringing(db, now)
         if not self.within_calling_hours(now):
             return 0
         placed = 0
