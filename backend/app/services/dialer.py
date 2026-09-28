@@ -181,9 +181,11 @@ class DialerService:
 
         Vobiz pushes no status webhooks, so a call whose PSTN leg never
         connects (carrier refuse, dead tunnel at answer time) would sit in
-        ``ringing`` forever with its contact glued to ``calling`` — freezing
-        the campaign. Anything still ringing after 10 minutes gets one
-        provider reconciliation per tick (bounded, best-effort).
+        ``ringing``/``in_progress`` forever with its contact glued to
+        ``calling`` — freezing the campaign. Anything still live after 10
+        minutes gets one provider reconciliation per tick (bounded,
+        best-effort). Genuinely connected calls reconcile as non-terminal
+        and are left untouched.
         """
         from datetime import timedelta
 
@@ -196,7 +198,7 @@ class DialerService:
             select(Call)
             .where(
                 Call.kind == "phone",
-                Call.status == "ringing",
+                Call.status.in_(("ringing", "in_progress")),
                 Call.started_at.is_not(None),
                 Call.started_at <= cutoff,
             )

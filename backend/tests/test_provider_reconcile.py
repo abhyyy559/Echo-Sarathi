@@ -111,7 +111,7 @@ def test_sweeper_recovers_stale_ringing(session_factory, monkeypatch) -> None:
             raise AssertionError("sweeper must not place calls")
 
     with session_factory() as db:
-        call = _seed_call(db, org_name="Recon Org 4", minutes_old=30)
+        call = _seed_call(db, org_name="Recon Org 4", status="in_progress", minutes_old=30)
         call_id = call.id
 
     dialer = DialerService(settings, session_factory, _NeverDial())
