@@ -6,7 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app import pipeline as pipeline_module
-from app.prompting import render_system_prompt, today_line
+from app.prompting import build_opening_line, render_system_prompt, today_line
 
 BASE_CONFIG: dict[str, Any] = {
     "system_prompt": "You call parents about absence.",
@@ -66,3 +66,24 @@ def test_opts_falls_back_to_defaults_on_type_error() -> None:
 
     built = pipeline_module._opts(_Picky, a=1)
     assert built.kwargs == {}
+
+
+def test_verify_opener_skips_redundant_greeting() -> None:
+    """Parent-named Q1 (v3 flow): opening is disclosure + question only."""
+    config = dict(BASE_CONFIG)
+    config["question_flow"] = [
+        {
+            "step": 1,
+            "question": "Am I speaking with [Parent/Guardian Name], parent of [Student Name]?",
+        }
+    ]
+    tokens = {
+        "[Institution Name]": "CMR College",
+        "[Parent/Guardian Name]": "Suresh",
+        "[Student Name]": "Aarav",
+    }
+    contact = {"parent_name": "Suresh", "student_name": "Aarav"}
+    opening = build_opening_line(config, tokens, contact)
+    assert opening.count("Suresh") == 1, f"name must not repeat: {opening}"
+    assert "Am I speaking with Suresh" in opening
+    assert len(opening.split()) <= 45, "opening must stay under ~20s of speech"

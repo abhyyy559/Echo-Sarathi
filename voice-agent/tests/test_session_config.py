@@ -80,7 +80,7 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
         "preemptive_generation": True,
         "endpointing": {
             "mode": "fixed",
-            "min_delay": 0.35,
+            "min_delay": 0.6,
             "max_delay": 1.5,
         },
         "interruption": {
@@ -90,7 +90,7 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
             "min_duration": 0.35,
             "min_words": 1,
             "false_interruption_timeout": 2.0,
-            "resume_false_interruption": False,
+            "resume_false_interruption": True,
         },
     }
     deprecated_kwargs = {

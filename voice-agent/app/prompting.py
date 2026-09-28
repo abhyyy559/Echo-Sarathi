@@ -247,6 +247,22 @@ def build_opening_line(
             if text_value:
                 first_question = text_value
                 break
+    # Verify-style openers address the parent BY NAME ("Am I speaking with
+    # Suresh, parent of Aarav...?"): prepending the standard greeting would
+    # repeat the same name twice and push the opening past ~20 seconds of
+    # speech. Disclosure + question is the whole opening then. (Subject-only
+    # questions keep the greeting — the parent hasn't been addressed yet.)
+    if first_question:
+        asked = first_question.lower()
+        if parent and parent.lower() in asked:
+            opening = f"{disclosure} {first_question}"
+            leftovers = _BRACKET_ARTIFACT_RE.findall(opening)
+            if leftovers:
+                logger.warning(
+                    "opening line has unsubstituted tokens (missing contact data): %s",
+                    sorted(set(leftovers)),
+                )
+            return scrub_speech_text(opening)
     opening = f"{disclosure} {greet}"
     if first_question:
         opening += f" {first_question}"

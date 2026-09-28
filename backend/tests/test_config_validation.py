@@ -52,7 +52,7 @@ def test_valid_absent_student_config_passes() -> None:
     schema = _load_validator()
     parsed = schema.validate_domain_config(_valid_config())
     assert parsed.domain_id == "absent-student"
-    assert len(parsed.question_flow) == 3  # v2: tightened for the 2-minute call budget
+    assert len(parsed.question_flow) == 4  # v3: verify-first flow
     assert "reason_for_absence" in parsed.extraction_schema
     assert "needs_human_help" in parsed.extraction_schema
 

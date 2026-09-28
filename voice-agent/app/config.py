@@ -23,6 +23,9 @@ DEFAULT_BACKEND_INTERNAL_URL = "http://localhost:8000"
 # disabled per-request in pipeline.py. Per-agent override: voice_settings.
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+# Any OpenAI-compatible endpoint works here (Groq default; Cerebras
+# https://api.cerebras.ai/v1 is the fastest swap — same keys list applies).
+DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 def _load_env_file() -> None:
@@ -82,6 +85,7 @@ class Settings:
     # Multi-key rotation (GROQ_API_KEY first, then GROQ_API_KEYS). Defaulted
     # last so positional construction in older tests keeps working.
     groq_api_keys: tuple[str, ...] = ()
+    groq_base_url: str = DEFAULT_GROQ_BASE_URL
 
     @staticmethod
     def from_env() -> "Settings":
@@ -105,6 +109,7 @@ class Settings:
                 "BACKEND_INTERNAL_URL", DEFAULT_BACKEND_INTERNAL_URL
             ),
             groq_model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL),
+            groq_base_url=os.getenv("GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL),
             openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
             log_level=os.getenv("LOG_LEVEL", "info").lower(),
         )

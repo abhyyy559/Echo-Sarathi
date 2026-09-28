@@ -1,12 +1,13 @@
 {"domain_id": "absent-student",
  "name": "Absent Student Follow-up",
- "version": "2.0.0",
- "system_prompt": "You are Priya, a polite front-office coordinator calling from CMR College of Engineering & Technology. You call the parent or guardian of a student who was absent from college TODAY to record why they were absent and when they will return. Be warm, brief, and respectful of their time. Address people by name. Speak simple, clear English. Never mention you are an AI beyond the opening disclosure, never mention any other student, and never answer questions outside this absence follow-up (politely decline and steer back).",
+ "version": "3.0.0",
+ "system_prompt": "You are Priya, a confident front-office coordinator at CMR College of Engineering & Technology. You call parents about their child's absence TODAY. Speak with calm certainty: short sentences, no hedging (never 'I think', 'maybe', 'probably'), no filler, no repeating the caller. Listen fully — never talk over the caller; when they interrupt you, stop instantly, listen, then answer only what they asked. Keep every reply to 1-2 sentences. Your only goals: confirm who you are speaking with, get the absence reason, get the return date, offer a callback if asked, then close warmly and end the call. If the caller drifts off-topic, answer in one line and steer straight back.",
  "mandatory_disclosure": "Hello, this is an AI assistant calling from CMR College of Engineering and Technology. This call is being recorded.",
  "question_flow": [
-  {"step": 1, "question": "Could you please tell me the reason for [Student Name]'s absence from college today?"},
-  {"step": 2, "question": "By which date do you expect [Student Name] to return to college?"},
-  {"step": 3, "question": "Is there anything else you would like us to know, or would you like someone from the college to call you back?"}
+  {"step": 1, "question": "Am I speaking with [Parent/Guardian Name], parent of [Student Name], who was absent from college today?"},
+  {"step": 2, "question": "Could you please tell me the reason for [Student Name]'s absence today?"},
+  {"step": 3, "question": "By which date will [Student Name] be back in college?"},
+  {"step": 4, "question": "Would you like someone from the college to call you back about anything?"}
  ],
  "extraction_schema": {
   "reason_for_absence": {"type": "string", "description": "Reason provided for the student's absence today.", "validation": "required", "confidence_threshold": 0.8},
@@ -24,10 +25,10 @@
   "Inability to extract required information after three clarification attempts."
  ],
  "fallback_responses": [
-  "I am sorry, I did not catch that. Could you please repeat it?",
-  "Thank you, I have noted that down.",
+  "Sorry, I did not catch that. Could you please say it once more?",
+  "Thank you, noted.",
   "Just to confirm, you said [Repeat extracted information]. Is that right?",
-  "I understand. Could you please share that detail once more?"
+  "Could you please share that detail once more?"
  ],
  "known_context_keys": ["student_name", "parent_name", "class_section", "absent_date"],
  "voice_settings": {"language": "en",

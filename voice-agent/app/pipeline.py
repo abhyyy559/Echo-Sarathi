@@ -353,17 +353,18 @@ def build_providers(
         bundle.problems.append("CARTESIA_API_KEY missing - text-to-speech disabled")
 
     groq_model = model_override or settings.groq_model
-    # Multi-key rotation: one Groq client per API key (GROQ_API_KEY first,
+    # Multi-key rotation: one client per API key (GROQ_API_KEY first,
     # then GROQ_API_KEYS). A 429/quota failure on one key cools THAT key
     # down for 90s while turns keep flowing on the next key — the call never
     # sits in silence because a single key hit its TPM cap.
     groq_keys = list(getattr(settings, "groq_api_keys", ()) or ())
     if not groq_keys and settings.groq_api_key:
         groq_keys = [settings.groq_api_key]
+    groq_base_url = getattr(settings, "groq_base_url", None) or "https://api.groq.com/openai/v1"
     groq_llms: list[Any] = []
     if groq_keys:
-        # livekit-agents 1.8.3 has no LLM.with_groq classmethod — Groq is an
-        # OpenAI-compatible endpoint, so construct it explicitly.
+        # Groq is an OpenAI-compatible endpoint, so construct it explicitly.
+        # GROQ_BASE_URL can point at any compatible provider (Cerebras).
         kwargs: dict[str, Any] = {}
         if "qwen" in groq_model.lower():
             # Qwen3 is a hybrid reasoning model — thinking tokens add seconds
@@ -383,7 +384,7 @@ def build_providers(
                 openai.LLM(
                     model=groq_model,
                     api_key=key,
-                    base_url="https://api.groq.com/openai/v1",
+                    base_url=groq_base_url,
                     **kwargs,
                 )
             )
@@ -1095,7 +1096,9 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
             endpointing=_opts(
                 EndpointingOptions,
                 mode="fixed",
-                min_delay=0.35,
+                # 600ms patience: hesitant speakers pause mid-thought — jumping
+                # in at 350ms is what callers feel as "the agent interrupts me".
+                min_delay=0.6,
                 max_delay=1.5,
             ),
             interruption=_opts(
@@ -1111,7 +1114,10 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
                 # word ("stop", "wait", "hello?") always does.
                 min_words=1,
                 false_interruption_timeout=2.0,
-                resume_false_interruption=False,
+                # Echo/reverb on phone lines trips false interruptions: pause
+                # briefly, then RESUME the reply instead of going silent
+                # (silence is what prompts "hello? are you there?").
+                resume_false_interruption=True,
             ),
         ),
     )

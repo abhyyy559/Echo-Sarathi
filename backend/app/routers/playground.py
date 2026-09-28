@@ -598,7 +598,8 @@ async def _groq_chat(
         body.pop("tool_choice", None)
     keys = settings.groq_api_key_list or [settings.groq_api_key]
     last_429_text = ""
-    async with httpx.AsyncClient(base_url=_GROQ_BASE_URL, timeout=45.0) as client:
+    base_url = settings.groq_base_url or _GROQ_BASE_URL
+    async with httpx.AsyncClient(base_url=base_url, timeout=45.0) as client:
         for key_index, key in enumerate(keys):
             headers = {"Authorization": f"Bearer {key}"}
             response = None

@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # provides them — no code change needed.
     groq_api_keys: str = ""
     openai_api_key: str = ""
+    # Any OpenAI-compatible base URL (Groq default; Cerebras
+    # https://api.cerebras.ai/v1 is the fastest swap). The voice worker
+    # reads the same GROQ_BASE_URL env var.
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     # Groq chat model for playground TEXT mode (must match GROQ_MODEL used by
     # the voice worker so both modes exercise the same brain).
     groq_model: str = "openai/gpt-oss-20b"
