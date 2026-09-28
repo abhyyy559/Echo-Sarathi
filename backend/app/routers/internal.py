@@ -380,7 +380,14 @@ def post_complete(
     body: Any = Body(default={}),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Finalize a call: status completed + summary/outcome flags."""
+    """Finalize a call: status + summary/outcome flags.
+
+    The worker's status is honored, not overwritten: ``completed`` (or the
+    legacy ``wrapped_up_flagged`` low-confidence wrap-up) closes the call
+    normally, while ``error``/``failed`` marks the call failed so reports
+    never show a crashed session as a success. The failure reason is kept
+    on the call-events trail.
+    """
     call = _get_call_or_404(db, call_id)
     if body is None:
         body = {}
@@ -397,8 +404,17 @@ def post_complete(
     if duration is not None and (not isinstance(duration, (int, float)) or duration < 0):
         raise HTTPException(status_code=400, detail="'duration_seconds' must be >= 0")
 
+    requested = str(body.get("status") or "completed").strip().lower()
+    if requested == "wrapped_up_flagged":
+        # Low-confidence wrap-up: the conversation happened; flag for humans.
+        status, flagged = "completed", True
+    elif requested in ("error", "failed"):
+        status, flagged = "failed", True
+    else:
+        status, flagged = "completed", False
+
     now = utcnow()
-    call.status = "completed"
+    call.status = status
     call.ended_at = now
     if call.started_at is not None:
         call.duration_seconds = duration or (now - call.started_at).total_seconds()
@@ -410,10 +426,16 @@ def post_complete(
         call.outcome = body["outcome"]
     if body.get("flagged_for_human") is not None:
         call.flagged_for_human = body["flagged_for_human"]
+    elif flagged:
+        call.flagged_for_human = True
+
+    reason = body.get("error")
+    if isinstance(reason, str) and reason.strip():
+        log_call_event(db, call.id, f"worker_{requested}", {"error": reason.strip()})
 
     contact = db.get(Contact, call.contact_id) if call.contact_id else None
     if contact is not None and contact.status == "calling":
-        contact.status = "completed"
+        contact.status = "completed" if status == "completed" else "failed"
         contact.next_attempt_at = None
     if call.campaign_id is not None:
         maybe_complete_campaign(db, call.campaign_id)

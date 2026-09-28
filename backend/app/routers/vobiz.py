@@ -398,17 +398,28 @@ async def vobiz_media(websocket: WebSocket) -> None:
             logger.warning("room disconnect failed for %s", room_name, exc_info=True)
         # The media leg ending IS the call ending (Vobiz sends no separate
         # completion callback on this path) — never leave the row stuck in
-        # a live status, or it vanishes from reports.
+        # a live status, or it vanishes from reports. Reconcile against the
+        # provider first so carrier outcomes (busy/no-answer) land truthfully
+        # instead of everything reading "completed".
         try:
+            from app.services.vobiz_reconcile import reconcile_vobiz_call
+
             with websocket.app.state.session_factory() as db:
                 done_call = db.get(Call, call_pk)
                 if done_call is not None and done_call.status not in (
                     "completed", "failed", "canceled", "no_answer", "busy",
                 ):
-                    done_call.status = "completed"
-                    if done_call.ended_at is None:
-                        done_call.ended_at = utcnow()
-                    db.commit()
+                    before = done_call.status
+                    after = reconcile_vobiz_call(
+                        db, websocket.app.state.settings, done_call, utcnow()
+                    )
+                    if after == before:
+                        # Provider unreachable or still in flight: close out
+                        # locally rather than sticking forever.
+                        done_call.status = "completed"
+                        if done_call.ended_at is None:
+                            done_call.ended_at = utcnow()
+                        db.commit()
         except Exception:  # noqa: BLE001 — finalize best-effort only
             logger.warning("finalize-on-close failed for call %s", call_pk, exc_info=True)
 

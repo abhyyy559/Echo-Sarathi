@@ -152,6 +152,7 @@ def place_test_call(
         campaign_id=campaign.id,
         contact_id=contact.id,
         agent_version_id=version.id,
+        kind="phone",
         status="queued",
         started_at=now,
     )

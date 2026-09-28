@@ -169,7 +169,44 @@ class DialerService:
                     placed += 1
                 maybe_complete_campaign(db, campaign.id)
                 db.commit()
+            self._sweep_stale_ringing(db, now)
         return placed
+
+    def _sweep_stale_ringing(self, db: Session, now: datetime, limit: int = 5) -> int:
+        """Reconcile phone calls stuck ringing with no media leg.
+
+        Vobiz pushes no status webhooks, so a call whose PSTN leg never
+        connects (carrier refuse, dead tunnel at answer time) would sit in
+        ``ringing`` forever with its contact glued to ``calling`` — freezing
+        the campaign. Anything still ringing after 10 minutes gets one
+        provider reconciliation per tick (bounded, best-effort).
+        """
+        from datetime import timedelta
+
+        from app.services.vobiz_reconcile import reconcile_vobiz_call
+
+        if not (self.settings.vobiz_auth_id and self.settings.vobiz_auth_token):
+            return 0
+        cutoff = now - timedelta(minutes=10)
+        stale = db.scalars(
+            select(Call)
+            .where(
+                Call.kind == "phone",
+                Call.status == "ringing",
+                Call.started_at.is_not(None),
+                Call.started_at <= cutoff,
+            )
+            .order_by(Call.id)
+            .limit(limit)
+        ).all()
+        synced = 0
+        for call in stale:
+            try:
+                reconcile_vobiz_call(db, self.settings, call, now)
+                synced += 1
+            except Exception:  # noqa: BLE001 — sweeper never breaks the tick
+                logger.exception("stale ringing sweep failed for call %s", call.id)
+        return synced
 
     def _process_next(self, db: Session, campaign: Campaign, now: datetime) -> bool:
         """Pick and dial the next eligible contact. False when nothing to do."""
