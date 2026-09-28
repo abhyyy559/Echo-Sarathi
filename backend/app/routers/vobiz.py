@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from fastapi import (
@@ -53,17 +54,32 @@ VOBIZ_STATUS_MAP = {
     "failed": "failed",
     "canceled": "canceled",
     "cancelled": "canceled",
+    # Plivo-style hangup callback (Event=Hangup) — the call is over either way.
+    "hangup": "completed",
 }
 
 
-def _build_answer_xml(ws_base_url: str, call_id: int) -> str:
-    """Voice XML bridging the call to our media websocket (mu-law 8kHz)."""
+def _build_answer_xml(
+    ws_base_url: str, call_id: int, stream_status_url: str = ""
+) -> str:
+    """Voice XML bridging the call to our media websocket (mu-law 8kHz).
+
+    statusCallbackUrl gives us stream lifecycle events (StartStream/
+    StopStream/failures) — without them a failed WS connect is invisible and
+    the call sits silent. maxRetries=3 survives transient tunnel blips.
+    """
     ws_url = f"{ws_base_url}/vobiz/media?call_id={call_id}"
+    status_attrs = ""
+    if stream_status_url:
+        status_attrs = (
+            f' maxRetries="3" statusCallbackUrl="{stream_status_url}"'
+            ' statusCallbackMethod="POST"'
+        )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<Response>\n"
-        '<Stream bidirectional="true" keepCallAlive="true" '
-        'contentType="audio/x-mulaw;rate=8000">'
+        f'<Stream bidirectional="true" keepCallAlive="true" '
+        f'contentType="audio/x-mulaw;rate=8000"{status_attrs}>'
         f"{ws_url}"
         "</Stream>\n"
         "</Response>"
@@ -349,8 +365,44 @@ async def vobiz_answer(
     db.commit()
 
     settings = request.app.state.settings
-    xml = _build_answer_xml(settings.media_ws_base_url, call_id)
+    stream_status_url = f"{settings.public_base_url.rstrip('/')}/vobiz/stream-status"
+    xml = _build_answer_xml(settings.media_ws_base_url, call_id, stream_status_url)
     return Response(content=xml, media_type=XML_MEDIA_TYPE)
+
+
+@router.post("/stream-status")
+async def vobiz_stream_status(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    """<Stream> lifecycle callbacks: StartStream / StopStream / failures.
+
+    Matched by CallUUID, falling back to the call_id embedded in ServiceURL.
+    Purely diagnostic — never changes call state.
+    """
+    payload = await _payload_dict(request)
+    provider_id = str(
+        payload.get("CallUUID")
+        or payload.get("callUUID")
+        or payload.get("callId")
+        or payload.get("CallSid")
+        or ""
+    )
+    call: Optional[Call] = None
+    if provider_id:
+        call = db.scalar(select(Call).where(Call.provider_call_id == provider_id))
+    if call is None:
+        m = re.search(r"call_id=(\d+)", str(payload.get("ServiceURL") or ""))
+        if m:
+            call = db.get(Call, int(m.group(1)))
+    if call is None:
+        logger.warning("vobiz stream-status for unknown call: %s", payload)
+        return Response(status_code=200)
+    event = str(payload.get("Event") or payload.get("event") or "unknown")
+    log_call_event(db, call.id, f"vobiz_stream:{event}", payload)
+    db.commit()
+    logger.info("vobiz stream %s for call %s", event, call.id)
+    return Response(status_code=200)
 
 
 @router.post("/status")
@@ -366,10 +418,20 @@ async def vobiz_status(
         or payload.get("CallSid")
         or payload.get("callId")
         or payload.get("call_id")
+        or payload.get("CallUUID")
+        or payload.get("callUUID")
         or ""
     )
+    # CallStatus is Vobiz's authoritative final state (e.g. "no-answer");
+    # Event=Hangup merely signals THAT the call ended.
     raw_status = str(
-        payload.get("status") or payload.get("callStatus") or payload.get("event") or ""
+        payload.get("CallStatus")
+        or payload.get("callStatus")
+        or payload.get("status")
+        or payload.get("Status")
+        or payload.get("Event")
+        or payload.get("event")
+        or ""
     ).lower()
 
     call = (

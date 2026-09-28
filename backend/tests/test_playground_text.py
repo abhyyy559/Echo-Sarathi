@@ -139,8 +139,8 @@ def test_turn_happy_path_persists_caller_and_agent_rows(groq_client, session_fac
     sent = _FakeAsyncClient.requests[-1]["json"]
     system_msg = sent["messages"][0]["content"]
     assert "MANDATORY DISCLOSURE" in system_msg
-    assert sent["model"] == "qwen/qwen3.6-27b"
-    assert sent["reasoning_effort"] == "none"
+    assert sent["model"] == "openai/gpt-oss-20b"
+    assert "reasoning_effort" not in sent  # only qwen builds set it
     roles = [m["role"] for m in sent["messages"]]
     assert roles == ["system", "user"]
     auth = _FakeAsyncClient.requests[-1]["headers"]["Authorization"]
