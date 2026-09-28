@@ -25,3 +25,27 @@ def downsample_pcm16(data: bytes, factor: int = 6) -> bytes:
         return data
     step = 2 * factor
     return b"".join(data[i : i + 2] for i in range(0, len(data) - 1, step))
+
+
+class PcmResampler:
+    """Filtered PCM resampler with continuity state across frames.
+
+    Naive decimation folds high frequencies into the speech band (harsh,
+    metallic artifacts callers hear as 'disturbance'). ``audioop.ratecv``
+    applies a proper low-pass, and the carried filter state keeps frame
+    boundaries click-free. One instance per audio track.
+    """
+
+    def __init__(self, in_rate: int, out_rate: int = 8000) -> None:
+        self.in_rate = int(in_rate)
+        self.out_rate = int(out_rate)
+        self._state = None
+
+    def convert(self, pcm16: bytes) -> bytes:
+        """Resample one frame of 16-bit LE PCM to the output rate."""
+        if not pcm16 or self.in_rate == self.out_rate:
+            return pcm16
+        out, self._state = audioop.ratecv(
+            pcm16, 2, 1, self.in_rate, self.out_rate, self._state
+        )
+        return out

@@ -43,21 +43,26 @@ def put_sentinel(queue: Any) -> None:
 async def drain_track(track: Any, queue: Any) -> None:
     """Forward one subscribed remote audio track into the bridge queue.
 
-    Resamples down to 8 kHz and encodes to mu-law; drops frames when the queue
-    is full (live caller audio wins over stale backlog). Always ends by putting
-    the end-of-stream sentinel.
+    Resamples to 8 kHz with a proper low-pass (not naive decimation) and
+    encodes to mu-law; drops frames when the queue is full (live caller
+    audio wins over stale backlog). Always ends by putting the end-of-stream
+    sentinel.
     """
     from livekit import rtc
 
-    from app.services.g711 import downsample_pcm16, pcm16_to_ulaw
+    from app.services.g711 import PcmResampler, pcm16_to_ulaw
 
     audio_stream = rtc.AudioStream(track)
+    resampler: Any = None
+    last_rate = 0
     try:
         async for event in audio_stream:
             pcm = bytes(event.frame.data)
-            factor = max(1, round(int(event.frame.sample_rate) / 8000))
-            if factor > 1:
-                pcm = downsample_pcm16(pcm, factor)
+            in_rate = int(event.frame.sample_rate or 8000)
+            if resampler is None or in_rate != last_rate:
+                resampler = PcmResampler(in_rate, 8000)
+                last_rate = in_rate
+            pcm = resampler.convert(pcm)
             try:
                 queue.put_nowait(pcm16_to_ulaw(pcm))
             except asyncio.QueueFull:

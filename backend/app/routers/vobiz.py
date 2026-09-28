@@ -172,12 +172,16 @@ async def _pump_room_to_vobiz(
 ) -> None:
     """Send queued agent mu-law frames to Vobiz as playAudio messages.
 
-    Exits cleanly when any drain puts the b"" sentinel.
+    Paced at one chunk per 20ms of audio: dumping the queue as fast as it
+    fills bursts frames into Vobiz's jitter buffer, which callers hear as
+    choppy/broken speech. Exits cleanly when any drain puts the b"" sentinel.
     """
     import asyncio
     import base64
+    import time
 
     getter = asyncio.ensure_future(queue.get())
+    next_deadline = time.monotonic()
     try:
         while True:
             await asyncio.wait({getter})
@@ -187,8 +191,63 @@ async def _pump_room_to_vobiz(
                 break
             payload = base64.b64encode(ulaw).decode()
             await ws.send_text(build_play_audio(stream_id_box.get("sid", ""), payload))
+            # One LiveKit audio chunk ≈ 20ms of 8kHz speech; hold the cadence
+            # so playout is continuous instead of bursty.
+            next_deadline = max(time.monotonic(), next_deadline) + 0.02
+            delay = next_deadline - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
     finally:
         getter.cancel()
+
+
+def _flush_bridge_queue(queue: Any) -> int:
+    """Drop stale queued agent audio (barge-in); preserve end-of-stream.
+
+    Returns the number of frames dropped. The b"" sentinel (track ended) is
+    put back if it was trailing the backlog — eating it would tear down the
+    whole media bridge mid-call.
+    """
+    import asyncio
+
+    dropped = 0
+    had_sentinel = False
+    while True:
+        try:
+            item = queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if item == b"":
+            had_sentinel = True
+            continue
+        dropped += 1
+    if had_sentinel:
+        try:
+            queue.put_nowait(b"")
+        except asyncio.QueueFull:
+            pass
+    return dropped
+
+
+def _handle_room_data(raw: Any, queue: Any) -> bool:
+    """Route one LiveKit data-channel packet; flush on worker barge_in.
+
+    Returns True when the queue was flushed. Never raises — a malformed
+    packet must not kill the media bridge.
+    """
+    try:
+        if isinstance(raw, (bytes, bytearray)):
+            raw = bytes(raw).decode("utf-8")
+        if hasattr(raw, "data"):  # livekit DataPacket
+            raw = bytes(raw.data).decode("utf-8")
+        msg = json.loads(str(raw))
+        if isinstance(msg, dict) and msg.get("type") == "barge_in":
+            dropped = _flush_bridge_queue(queue)
+            logger.info("barge_in from worker: dropped %d stale frames", dropped)
+            return True
+    except Exception:  # noqa: BLE001 — best effort only
+        pass
+    return False
 
 
 @router.websocket("/media")
@@ -288,6 +347,10 @@ async def vobiz_media(websocket: WebSocket) -> None:
 
     room.on("track_subscribed", _on_frame)
     room.on("disconnected", _on_room_disconnected)
+    # Worker barge-in signals arrive as JSON data packets ({"type":
+    # "barge_in"}): drop the stale queued reply audio so the caller never
+    # hears a previous response replayed over their own speech.
+    room.on("data_received", lambda packet: _handle_room_data(packet, queue))
 
     logger.info("vobiz media bridge joining %s (call %s)", room_name, call_pk)
     await room.connect(settings.livekit_url_internal, token)

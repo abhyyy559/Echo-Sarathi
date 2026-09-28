@@ -96,3 +96,15 @@ class FakeBackendClient:
 def fake_backend() -> FakeBackendClient:
     """Fresh FakeBackendClient per test."""
     return FakeBackendClient()
+
+
+@pytest.fixture(autouse=True)
+def _reset_vad_singleton():
+    """The pipeline caches one process-wide VAD; never leak it between tests."""
+    yield
+    try:
+        from app import pipeline as pipeline_module
+
+        pipeline_module._reset_vad_cache()
+    except Exception:  # pragma: no cover - defensive
+        pass

@@ -56,6 +56,7 @@ from app.prompting import build_opening_line, build_token_map, render_system_pro
 logger = logging.getLogger("voice_agent.pipeline")
 
 PLAYGROUND_PREFIX = "playground-"
+PHONE_PREFIX = "phone-"
 APOLOGY_TEXT = (
     "Hello, this is an automated assistant. We're sorry, but we're unable to "
     "continue this call right now due to a technical problem. Goodbye."
@@ -493,19 +494,26 @@ class TurnTelemetry:
         self._activity_post_lock = asyncio.Lock()
         self._activity_seen_events: set[tuple[str, str, str, float]] = set()
         self._agent_connecting_posted = False
+        self._agent_speaking = False
         self._reset()
+
+    def _publish_data(self, payload: dict[str, Any]) -> None:
+        """Publish one JSON event to the room data channel (best-effort)."""
+        if self._room is None:
+            return
+        try:
+            raw = json.dumps(payload).encode("utf-8")
+            _spawn_task(self._room.local_participant.publish_data(raw))
+        except Exception:
+            logger.debug("Data publish failed", exc_info=True)
 
     def _publish_caption(self, speaker: str, text: str, final: bool = True) -> None:
         """Stream a live caption to the browser over the room data channel."""
-        if self._room is None or not text.strip():
+        if not text.strip():
             return
-        try:
-            payload = json.dumps(
-                {"type": "caption", "speaker": speaker, "text": text, "final": final}
-            ).encode("utf-8")
-            _spawn_task(self._room.local_participant.publish_data(payload))
-        except Exception:
-            logger.debug("Caption publish failed", exc_info=True)
+        self._publish_data(
+            {"type": "caption", "speaker": speaker, "text": text, "final": final}
+        )
 
     def _reset(self) -> None:
         self._user_text = ""
@@ -670,6 +678,12 @@ class TurnTelemetry:
         old_state = self._event_state(ev, "old_state")
         new_state = self._event_state(ev, "new_state")
         if new_state == "speaking" and old_state != "speaking":
+            if self._agent_speaking:
+                # Genuine barge-in: tell the phone bridge to drop stale
+                # queued agent audio NOW (it can't tell new speech from
+                # old buffered frames). LiveKit stops TTS; this stops our
+                # bridge queue from replaying the cut-off reply.
+                self._publish_data({"type": "barge_in", "call_id": self._call_id})
             self._queue_activity(
                 state="listening",
                 event_type="user_state_changed",
@@ -693,6 +707,10 @@ class TurnTelemetry:
     def _on_agent_state_changed(self, ev: Any) -> None:
         old_state = self._event_state(ev, "old_state")
         new_state = self._event_state(ev, "new_state")
+        if new_state == "speaking":
+            self._agent_speaking = True
+        elif old_state == "speaking":
+            self._agent_speaking = False
         if old_state == "speaking" and new_state is not None and new_state != "speaking":
             _spawn_task(self._safe_flush())
         if new_state == "thinking":
@@ -987,6 +1005,25 @@ class DomainCallAgent(Agent):
 # --------------------------------------------------------------------------
 
 
+#: Process-wide Silero VAD. Model load costs seconds — doing it per session
+#: puts dead air at the head of every phone call. Loaded once, reused.
+_VAD_INSTANCE: Any = None
+
+
+def _get_vad() -> Any:
+    """Return the shared VAD instance, loading the model on first use."""
+    global _VAD_INSTANCE
+    if _VAD_INSTANCE is None:
+        _VAD_INSTANCE = silero.VAD.load()
+    return _VAD_INSTANCE
+
+
+def _reset_vad_cache() -> None:
+    """Drop the shared VAD (tests that stub silero.VAD)."""
+    global _VAD_INSTANCE
+    _VAD_INSTANCE = None
+
+
 def _room_metadata(ctx: JobContext) -> Any:
     return getattr(ctx.room, "metadata", None)
 
@@ -1079,12 +1116,14 @@ def _opts(cls: Any, **kwargs: Any) -> Any:
         return cls()
 
 
-def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
+def _build_agent_session(
+    bundle: ProviderBundle, preemptive_generation: bool = True
+) -> AgentSession:
     return AgentSession(
         stt=bundle.stt,
         llm=bundle.llm,
         tts=bundle.tts,
-        vad=silero.VAD.load(),
+        vad=_get_vad(),
         aec_warmup_duration=0.0,
         turn_handling=_opts(
             TurnHandlingOptions,
@@ -1092,7 +1131,9 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
             # Preemptive generation: start the LLM on partial transcripts so
             # the first sentence is ready the moment the turn ends (TTS
             # already synthesizes sentence-by-sentence as tokens stream in).
-            preemptive_generation=True,
+            # Playground-only: on PSTN phone audio the partials are too noisy
+            # and speculative replies answer stale turns / talk over callers.
+            preemptive_generation=preemptive_generation,
             endpointing=_opts(
                 EndpointingOptions,
                 mode="fixed",
@@ -1233,7 +1274,13 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             schema=schema,
         )
 
-        session = _build_agent_session(bundle)
+        # Phone rooms get deterministic turn-taking: PSTN partials are too
+        # noisy for speculative replies (they answer stale turns and talk
+        # over callers). Playground keeps preemptive generation for speed.
+        is_phone_room = room_name.startswith(PHONE_PREFIX)
+        session = _build_agent_session(
+            bundle, preemptive_generation=not is_phone_room
+        )
         telemetry = TurnTelemetry(
             session=session,
             backend=backend,
