@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     cartesia_api_key: str = ""
     groq_api_key: str = ""
+    # Extra comma-separated Groq keys. The text-playground path rotates
+    # through groq_api_key_list on 429s; the voice worker (voice-agent)
+    # builds one client per key. Paste additional keys here when the owner
+    # provides them — no code change needed.
+    groq_api_keys: str = ""
     openai_api_key: str = ""
     # Groq chat model for playground TEXT mode (must match GROQ_MODEL used by
     # the voice worker so both modes exercise the same brain).
@@ -104,6 +109,16 @@ class Settings(BaseSettings):
     def test_phone_number_list(self) -> list[str]:
         """TEST_PHONE_NUMBERS split into a stripped list."""
         return [p.strip() for p in self.test_phone_numbers.split(",") if p.strip()]
+
+    @property
+    def groq_api_key_list(self) -> list[str]:
+        """GROQ_API_KEY first, then GROQ_API_KEYS — de-duplicated, non-empty."""
+        keys: list[str] = []
+        for part in f"{self.groq_api_key},{self.groq_api_keys}".split(","):
+            key = part.strip()
+            if key and key not in keys:
+                keys.append(key)
+        return keys
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -116,7 +131,7 @@ class Settings(BaseSettings):
         return {
             "deepgram": bool(self.deepgram_api_key),
             "cartesia": bool(self.cartesia_api_key),
-            "groq": bool(self.groq_api_key),
+            "groq": bool(self.groq_api_key_list),
             "openai": bool(self.openai_api_key),
             "twilio": bool(self.twilio_account_sid and self.twilio_auth_token),
             "plivo": bool(self.plivo_auth_id and self.plivo_auth_token),

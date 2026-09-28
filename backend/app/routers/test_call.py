@@ -59,11 +59,16 @@ def place_test_call(
             status_code=422, detail="no 'to' given and TEST_PHONE_NUMBERS is empty"
         )
 
-    if settings.consent_enforcement and target not in allowlist:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{target} is not in TEST_PHONE_NUMBERS; consent enforcement is on",
-        )
+    # An explicitly requested number from a signed-in org user is allowed
+    # directly — the request itself is the authorization, so ad-hoc calls
+    # never need a TEST_PHONE_NUMBERS entry. The allowlist remains only as
+    # the default target when no 'to' is given.
+    if not (payload.to and target):
+        if settings.consent_enforcement and target not in allowlist:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{target} is not in TEST_PHONE_NUMBERS; consent enforcement is on",
+            )
 
     if payload.agent_version_id is not None:
         version = db.scalar(
@@ -120,7 +125,7 @@ def place_test_call(
             "phone": target,
             "status": "pending_review",
             "consent": True,
-            "consent_source": "test_allowlist",
+            "consent_source": "manual_test_call" if payload.to else "test_allowlist",
         }
         contact = Contact(
             campaign_id=campaign.id,
@@ -128,7 +133,7 @@ def place_test_call(
             phone=target,
             status="pending_review",
             consent=True,
-            consent_source="test_allowlist",
+            consent_source=contact_card["consent_source"],
         )
         db.add(contact)
         db.flush()

@@ -56,6 +56,7 @@ class ContactCounts(BaseModel):
     busy: int = 0
     failed: int = 0
     opted_out: int = 0
+    skipped: int = 0
 
 
 class CampaignListItem(BaseModel):

@@ -199,7 +199,7 @@ async function runDemo(){
   await dBubble('agent','Hello, am I speaking with Mr. Rao, Anika\'s father?');
   addLat(180,320,195,695);dSetState('listening');
   const ans=await dChoice(["Yes, speaking.","Sorry, who is this?"]);
-  if(ans.startsWith("Sorry")){await dBubble('agent','This is Sarathi, calling from Demo University about Anika\'s attendance.');addLat(180,340,190,710);dSetState('listening');}
+  if(ans.startsWith("Sorry")){await dBubble('agent','This is Sarathi, calling from CMR College of Engineering & Technology about Anika\'s attendance.');addLat(180,340,190,710);dSetState('listening');}
   setField('student_name','Anika',94);dSetState('speaking');
   await dBubble('agent','Thank you. Could you tell me whether Anika will attend classes today?');
   addLat(180,310,188,678);dSetState('listening');
@@ -381,7 +381,7 @@ apInput.onkeydown=e=>{if(e.key==='Enter')handleAgentSend()};
    ═══════════════════════════════════════════════════ */
 (function(){
   const turns=[
-    {who:'agent',text:'Good morning! This is Sarathi calling from Demo University. May I speak with Mrs. Kumar?',time:'0:00'},
+    {who:'agent',text:'Good morning! This is Sarathi calling from CMR College of Engineering & Technology. May I speak with Mrs. Kumar?',time:'0:00'},
     {who:'caller',text:'Yes, this is she. Who is this?',time:'0:04'},
     {who:'agent',text:'Mrs. Kumar, I\'m calling because Aarav was absent from school today. I wanted to check if everything is alright and if there\'s anything we should know.',time:'0:07'},
     {who:'caller',text:'Oh yes, Aarav has a dental appointment this morning. He should be back by lunch.',time:'0:18'},
@@ -603,7 +603,7 @@ new IntersectionObserver((es,ob)=>es.forEach(e=>{
 
 /* ── Voice gallery ── */
 const VOICES=[
-  {name:'Asha',traits:'Warm · Measured',line:'Hello! This is Asha calling from Demo University about Aarav\u2019s attendance today.'},
+  {name:'Asha',traits:'Warm · Measured',line:'Hello! This is Asha calling from CMR College of Engineering & Technology about Aarav\u2019s attendance today.'},
   {name:'Rohan',traits:'Calm · Reassuring',line:'Hi, this is Rohan. Just a gentle reminder about tomorrow\u2019s appointment at ten.'},
   {name:'Meera',traits:'Bright · Energetic',line:'Hey! Meera here — a quick call to confirm your slot for Saturday\u2019s session.'},
   {name:'Arjun',traits:'Deep · Authoritative',line:'Good evening. Arjun calling regarding the pending fee reminder for this month.'},

@@ -36,6 +36,7 @@ def _contact_counts(db: Session, campaign_id: int) -> dict[str, int]:
         "busy": by_status.get("busy", 0),
         "failed": by_status.get("failed", 0),
         "opted_out": by_status.get("opted_out", 0),
+        "skipped": by_status.get("skipped", 0),
     }
 
 

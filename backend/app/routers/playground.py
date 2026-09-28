@@ -584,25 +584,45 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
 async def _groq_chat(
     settings: Settings, messages: list[dict[str, Any]], include_tools: bool = True
 ) -> dict[str, Any]:
-    """One direct Groq chat-completions round trip; returns the assistant message."""
+    """Groq chat-completions round trip with multi-key rotation.
+
+    Each key gets up to ``_GROQ_MAX_RETRIES`` same-key backoff retries; a key
+    that stays 429 is abandoned and the identical request is re-issued on
+    the next key (GROQ_API_KEY first, then GROQ_API_KEYS). Single-key setups
+    behave exactly as before. Only when every key is exhausted does the
+    caller see a 429.
+    """
     body = _groq_request_body(settings, messages)
     if not include_tools:
         body.pop("tools", None)
         body.pop("tool_choice", None)
-    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+    keys = settings.groq_api_key_list or [settings.groq_api_key]
+    last_429_text = ""
     async with httpx.AsyncClient(base_url=_GROQ_BASE_URL, timeout=45.0) as client:
-        response = None
-        for attempt in range(_GROQ_MAX_RETRIES + 1):
-            response = await client.post("/chat/completions", json=body, headers=headers)
+        for key_index, key in enumerate(keys):
+            headers = {"Authorization": f"Bearer {key}"}
+            response = None
+            for attempt in range(_GROQ_MAX_RETRIES + 1):
+                response = await client.post("/chat/completions", json=body, headers=headers)
+                if response.status_code != 429:
+                    break
+                if attempt >= _GROQ_MAX_RETRIES:
+                    break
+                logger.warning("Groq chat rate limited (429, key %d, attempt %s): backing off", key_index + 1, attempt + 1)
+                await asyncio.sleep(_retry_delay(response, attempt))
+            assert response is not None  # loop always runs at least once
             if response.status_code != 429:
-                break
-            if attempt >= _GROQ_MAX_RETRIES:
-                break
-            logger.warning("Groq chat rate limited (429, attempt %s): backing off", attempt + 1)
-            await asyncio.sleep(_retry_delay(response, attempt))
+                break  # success (or a non-429 error handled below)
+            last_429_text = response.text[:300]
+            if key_index < len(keys) - 1:
+                logger.warning(
+                    "Groq key %d/%d exhausted (persistent 429): rotating to next key",
+                    key_index + 1, len(keys),
+                )
+                continue
     assert response is not None  # loop always runs at least once
     if response.status_code == 429:
-        logger.warning("Groq chat rate limited (429): %s", response.text[:300])
+        logger.warning("Groq chat rate limited on all %d key(s) (429): %s", len(keys), last_429_text)
         raise HTTPException(
             status_code=429,
             detail="The AI service rate limit was hit. Wait a few seconds and send again.",

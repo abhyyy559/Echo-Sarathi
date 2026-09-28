@@ -44,7 +44,11 @@ export default function ContactImport({ campaignId, onImported }) {
   const [parsed, setParsed] = useState(null); // { fileName, headers[], rows[][] }
   const [mapping, setMapping] = useState({ ...EMPTY_MAPPING });
   const [customRows, setCustomRows] = useState([]);
-  const [consentDefault, setConsentDefault] = useState(false);
+  // Checked by default: a roster uploaded by your org (e.g. the college's
+  // enrollment list) is the institutional relationship, so these contacts
+  // are callable without any extra allowlist. Uncheck only if you are
+  // unsure about consent for these numbers.
+  const [consentDefault, setConsentDefault] = useState(true);
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
@@ -289,8 +293,8 @@ export default function ContactImport({ campaignId, onImported }) {
           <label className="check-row">
             <input type="checkbox" checked={consentDefault} onChange={(e) => setConsentDefault(e.target.checked)} />
             <span>
-              Treat contacts as having consent when the file has no consent column or a row is blank
-              <span className="hint"> (required for compliance — leave unchecked if unsure)</span>
+              These contacts consented to be called (e.g. your college enrollment roster)
+              <span className="hint"> — uncheck if unsure; unchecked rows need a consent column or per-contact consent before they can be dialed</span>
             </span>
           </label>
 

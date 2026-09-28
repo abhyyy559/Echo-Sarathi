@@ -112,11 +112,11 @@ export default function LandingPage() {
 </section>
 
 
-{/* --- LIVE PILOT: DEMO UNIVERSITY --- */}
-<section className="flow-band" aria-label="Live pilot at Demo University">
+{/* --- LIVE PILOT: CMR College of Engineering & Technology --- */}
+<section className="flow-band" aria-label="Live pilot at CMR College of Engineering & Technology">
   <div className="wrap">
     <span className="kick" style={{justifyContent: "center"}}>Live pilot</span>
-    <h2 className="display">Running now at Demo University.</h2>
+    <h2 className="display">Running now at CMR College of Engineering & Technology.</h2>
     <p className="sec-sub">Absent Student Follow-up &middot; English &middot; India — the agent calls parents every morning, records the reason for absence, and exports the sheet. Try it yourself below, or open the live console.</p>
     <div className="sim-actions" style={{justifyContent: "center"}}>
       <Link to="/playground" className="btn-primary sm">Try the live demo</Link>
@@ -154,7 +154,7 @@ export default function LandingPage() {
     <p className="section-sub">Upload contacts, pick an agent, launch. The AI handles the conversation — and every answer lands in a structured table you can export.</p>
     <div className="showcase-visual">
       <div className="showcase-header">
-        <h4>Campaign: Attendance Check — Demo University</h4>
+        <h4>Campaign: Attendance Check — CMR College of Engineering & Technology</h4>
         <div className="showcase-dots"><span></span><span></span><span></span></div>
       </div>
       <div className="showcase-body">
@@ -167,7 +167,7 @@ export default function LandingPage() {
           <div className="s-bubbles">
             <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Good morning! Am I speaking with Mrs. Devi, parent of Rohan?</div>
             <div className="s-bubble caller"><span className="who">Caller</span>Yes, this is she.</div>
-            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Thank you. I'm calling from Demo University to confirm — will Rohan be attending classes today?</div>
+            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Thank you. I'm calling from CMR College of Engineering & Technology to confirm — will Rohan be attending classes today?</div>
             <div className="s-bubble caller"><span className="who">Caller</span>He has a fever today, won't be coming.</div>
             <div className="s-bubble agent"><span className="who">Sarathi Agent</span>I'm sorry to hear that. I've noted the absence. Is there anything else you'd like us to know?</div>
           </div>

@@ -52,8 +52,9 @@ def test_valid_absent_student_config_passes() -> None:
     schema = _load_validator()
     parsed = schema.validate_domain_config(_valid_config())
     assert parsed.domain_id == "absent-student"
-    assert len(parsed.question_flow) == 4
+    assert len(parsed.question_flow) == 3  # v2: tightened for the 2-minute call budget
     assert "reason_for_absence" in parsed.extraction_schema
+    assert "needs_human_help" in parsed.extraction_schema
 
 
 def test_invalid_extraction_field_type_rejected_with_field_message() -> None:

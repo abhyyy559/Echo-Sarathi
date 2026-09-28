@@ -163,3 +163,36 @@ def test_groq_persistent_429_raises_after_retries(flaky_client):
     )
     assert resp.status_code == 429
     assert len(_FlakyAsyncClient.requests) == 3  # initial + 2 retries
+
+
+def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monkeypatch):
+    """Two keys: k1 429s through all its retries, k2 answers immediately."""
+    from test_playground_text import start_session as _start
+
+    from conftest import make_settings
+
+    monkeypatch.setattr(playground_module.httpx, "AsyncClient", _FlakyAsyncClient)
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []
+    from app.main import create_app
+
+    fresh = create_app(make_settings(groq_api_key="k1", groq_api_keys="k2"))
+    fresh.state.session_factory = session_factory
+    with TestClient(fresh) as client:
+        token, _ = register(client)
+        call_id = _start(client, token)
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 3 + [
+            _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "hello"}}]}),
+        ]
+        _FlakyAsyncClient.requests = []
+        resp = client.post(
+            f"/api/playground/sessions/{call_id}/turns",
+            json={"text": "hi"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["reply_text"] == "hello"
+        bearers = [r["headers"]["Authorization"] for r in _FlakyAsyncClient.requests]
+        assert bearers == ["Bearer k1"] * 3 + ["Bearer k2"]
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []

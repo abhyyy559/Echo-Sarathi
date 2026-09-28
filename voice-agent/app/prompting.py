@@ -40,6 +40,7 @@ LANGUAGE_HEADER = "LANGUAGE INSTRUCTION:"
 QUESTIONS_HEADER = "YOUR GOALS - information to collect during the call:"
 EXTRACTION_HEADER = "RECORDING ANSWERS - extraction discipline:"
 ESCALATION_HEADER = "WHEN TO WRAP UP:"
+CALL_BUDGET_HEADER = "CALL BUDGET - finish fast, calls cost money:"
 
 LANGUAGE_NAMES = {"en": "English", "te": "Telugu", "hi": "Hindi"}
 
@@ -543,6 +544,16 @@ def render_system_prompt(
         "If busy, offer the callback first.\n"
         "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
         "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
+    )
+
+    # 4c. Call budget — every minute costs money. Terse by design.
+    sections.append(
+        f"{CALL_BUDGET_HEADER}\n"
+        "- Target: DONE in under 2 minutes. One question per turn, no small "
+        "talk, no repeating answered goals.\n"
+        "- The moment all REQUIRED goals are captured (or a stop/escalation "
+        "signal fires): one warm closing line, then `end_call(summary)` "
+        "immediately. Never linger, never ask 'anything else?' twice."
     )
 
     # 5. Goals (question flow) as a checklist, woven naturally.

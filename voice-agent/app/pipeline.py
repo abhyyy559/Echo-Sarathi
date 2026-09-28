@@ -154,34 +154,62 @@ _RETRYABLE_LLM_STATUS: frozenset = frozenset({None, 408, 425, 429, 500, 502, 503
 
 
 class FallbackLLM(llm.LLM):
-    """Primary LLM with same-tier provider fallback (ARCHITECTURE.md S5).
+    """Ordered LLM chain with per-member cooldown (ARCHITECTURE.md S5).
 
-    Same-tier, different-provider: the fallback must sound like the same
-    agent. Design: this object never retries inside a stream. On a retryable
-    primary failure the proxy below only marks the primary down and
-    re-raises; the session's own retry then calls chat() again, which serves
-    a concrete secondary stream directly. No duplicated prefixes, no
-    re-implemented stream machinery.
+    Same-tier, different-provider/key: every member must sound like the same
+    agent. ``primary`` is one LLM or an ordered list (e.g. one Groq client
+    per API key); ``fallback`` (e.g. OpenAI) is appended last when given.
+    The session calls chat() per turn and retries it on failure; chat()
+    always serves the first member whose cooldown expired (else the first
+    member, better than silence). On a retryable serving failure the proxy
+    below marks THAT member down and re-raises, so the session retry
+    transparently moves to the next key/provider. This object never retries
+    inside a stream: no duplicated prefixes, no re-implemented machinery.
+
+    Backward compatible: ``FallbackLLM(primary, fallback)`` behaves exactly
+    as before; ``FallbackLLM([k1, k2], openai_llm)`` rotates Groq keys.
     """
 
     def __init__(
-        self, primary: llm.LLM, fallback: llm.LLM, cooldown_s: float = 90.0
+        self,
+        primary: Any,
+        fallback: Any = None,
+        cooldown_s: float = 90.0,
     ) -> None:
         super().__init__()
-        self._primary = primary
-        self._fallback = fallback
+        if isinstance(fallback, (int, float)) and not isinstance(fallback, bool):
+            cooldown_s = float(fallback)
+            fallback = None
+        if fallback is not None:
+            members = [primary, fallback]
+        elif isinstance(primary, (list, tuple)):
+            members = list(primary)
+        else:
+            members = [primary]
+        if not members:
+            raise ValueError("FallbackLLM needs at least one chain member")
+        self._chain: list[Any] = members
         self._cooldown_s = cooldown_s
-        self._primary_down_until = 0.0
+        self._down_until: list[float] = [0.0] * len(members)
 
     @property
     def model(self) -> str:
-        return getattr(self._primary, "model", "fallback-llm")
+        return getattr(self._chain[0], "model", "fallback-llm")
 
-    def _using_fallback(self) -> bool:
-        return time.monotonic() < self._primary_down_until
+    @property
+    def chain_size(self) -> int:
+        """Number of keys/providers in the rotation (observability)."""
+        return len(self._chain)
 
-    def _mark_primary_down(self) -> None:
-        self._primary_down_until = time.monotonic() + self._cooldown_s
+    def _pick_member(self) -> int:
+        now = time.monotonic()
+        for index, down_until in enumerate(self._down_until):
+            if now >= down_until:
+                return index
+        return 0  # all cooling down: serve the first rather than silence
+
+    def _mark_down(self, index: int) -> None:
+        self._down_until[index] = time.monotonic() + self._cooldown_s
 
     def _chat_kwargs(
         self, chat_ctx: llm.ChatContext, tools: Optional[list],
@@ -201,32 +229,38 @@ class FallbackLLM(llm.LLM):
         conn_options: Optional[Any] = None,
         **kwargs: Any,
     ) -> llm.LLMStream:
-        if self._using_fallback():
-            logger.info("LLM fallback active: routing turn directly to secondary")
-            return self._fallback.chat(
-                **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
+        index = self._pick_member()
+        if index > 0 or len(self._chain) > 1:
+            logger.info(
+                "LLM chain serving member %d/%d", index + 1, len(self._chain)
             )
-        # Fail FAST on the primary: its own 3×2s retry loop burns TPM and
-        # minutes while the caller waits in silence. One attempt; on 429/5xx
-        # the proxy marks it down and the session retry goes to secondary.
-        fast_options = APIConnectOptions(
-            max_retry=1, retry_interval=0.5, timeout=15.0
+        member = self._chain[index]
+        if index < len(self._chain) - 1:
+            # Fail FAST on non-final members: their own 3x2s retry loop burns
+            # TPM/quota and minutes while the caller waits in silence. One
+            # attempt; on 429/5xx the proxy marks it down and the session
+            # retry moves to the next key/provider. The FINAL member keeps
+            # the session's own retry policy (last resort).
+            conn_options = APIConnectOptions(
+                max_retry=1, retry_interval=0.5, timeout=15.0
+            )
+        member_stream = member.chat(
+            **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
         )
-        primary_stream = self._primary.chat(
-            **self._chat_kwargs(chat_ctx, tools, fast_options, kwargs)
-        )
-        return _FallbackStream(self, primary_stream)
+        return _FallbackStream(self, member_stream, index)
 
 
 class _FallbackStream(llm.LLMStream):
     """LLMStream proxy that observes failures; never retries itself.
 
-    On a retryable primary failure it marks the primary down for cooldown
-    and re-raises, so the session retry gets a concrete secondary stream
-    from FallbackLLM.chat().
+    On a retryable serving-member failure it marks THAT member down for
+    cooldown and re-raises, so the session retry gets a concrete stream
+    from the next key/provider in the chain.
     """
 
-    def __init__(self, owner: FallbackLLM, primary_stream: llm.LLMStream) -> None:
+    def __init__(
+        self, owner: FallbackLLM, primary_stream: llm.LLMStream, member_index: int = 0
+    ) -> None:
         super().__init__(
             owner,
             chat_ctx=primary_stream.chat_ctx,
@@ -235,6 +269,7 @@ class _FallbackStream(llm.LLMStream):
         )
         self._owner = owner
         self._active = primary_stream
+        self._member_index = member_index
 
     async def _run(self) -> None:
         # Abstract hook required by llm.LLMStream. This proxy never drives
@@ -250,10 +285,11 @@ class _FallbackStream(llm.LLMStream):
             if getattr(exc, "status_code", None) not in _RETRYABLE_LLM_STATUS:
                 raise
             logger.warning(
-                "primary LLM failed (%s), cooling down for fallback",
+                "LLM chain member %d failed (%s), cooling down for next member",
+                self._member_index + 1,
                 getattr(exc, "status_code", "connection-error"),
             )
-            self._owner._mark_primary_down()
+            self._owner._mark_down(self._member_index)
             raise
 
     async def aclose(self) -> None:
@@ -317,7 +353,15 @@ def build_providers(
         bundle.problems.append("CARTESIA_API_KEY missing - text-to-speech disabled")
 
     groq_model = model_override or settings.groq_model
-    if settings.groq_api_key:
+    # Multi-key rotation: one Groq client per API key (GROQ_API_KEY first,
+    # then GROQ_API_KEYS). A 429/quota failure on one key cools THAT key
+    # down for 90s while turns keep flowing on the next key — the call never
+    # sits in silence because a single key hit its TPM cap.
+    groq_keys = list(getattr(settings, "groq_api_keys", ()) or ())
+    if not groq_keys and settings.groq_api_key:
+        groq_keys = [settings.groq_api_key]
+    groq_llms: list[Any] = []
+    if groq_keys:
         # livekit-agents 1.8.3 has no LLM.with_groq classmethod — Groq is an
         # OpenAI-compatible endpoint, so construct it explicitly.
         kwargs: dict[str, Any] = {}
@@ -334,29 +378,40 @@ def build_providers(
         # on_demand 1000 output-tokens/min tier (an uncapped request asks for
         # ~1215 and gets 429 rate_limited, which wedges the whole call).
         kwargs["max_completion_tokens"] = 300
-        primary_llm = openai.LLM(
-            model=groq_model,
-            api_key=settings.groq_api_key,
-            base_url="https://api.groq.com/openai/v1",
-            **kwargs,
-        )
+        for key in groq_keys:
+            groq_llms.append(
+                openai.LLM(
+                    model=groq_model,
+                    api_key=key,
+                    base_url="https://api.groq.com/openai/v1",
+                    **kwargs,
+                )
+            )
+    if groq_llms:
+        chain: list[Any] = list(groq_llms)
         if settings.openai_api_key:
             # Same-tier fallback, different provider: Groq on_demand caps
             # (~8000 TPM shared with retries) wedging calls after ~3 turns.
             # The wrapper re-issues the identical request once on OpenAI.
-            secondary_llm = openai.LLM(
-                model=settings.openai_model,
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_base_url,
-                max_completion_tokens=300,
+            chain.append(
+                openai.LLM(
+                    model=settings.openai_model,
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_base_url,
+                    max_completion_tokens=300,
+                )
             )
+        if len(chain) > 1:
             logger.info(
-                "LLM fallback armed: %s (Groq) -> %s (OpenAI)",
-                groq_model, settings.openai_model,
+                "LLM chain armed (%d members): %s (Groq x%d)%s",
+                len(chain),
+                groq_model,
+                len(groq_llms),
+                f" -> {settings.openai_model} (OpenAI)" if settings.openai_api_key else "",
             )
-            bundle.llm = FallbackLLM(primary_llm, secondary_llm)
+            bundle.llm = FallbackLLM(chain)
         else:
-            bundle.llm = primary_llm
+            bundle.llm = groq_llms[0]
     elif settings.openai_api_key:
         logger.info(
             "GROQ_API_KEY missing - falling back to OpenAI %s",
@@ -1004,6 +1059,10 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
         aec_warmup_duration=0.0,
         turn_handling=TurnHandlingOptions(
             turn_detection="vad",
+            # Preemptive generation: start the LLM on partial transcripts so
+            # the first sentence is ready the moment the turn ends (TTS
+            # already synthesizes sentence-by-sentence as tokens stream in).
+            preemptive_generation=True,
             endpointing=EndpointingOptions(
                 mode="fixed",
                 min_delay=0.35,
@@ -1013,7 +1072,13 @@ def _build_agent_session(bundle: ProviderBundle) -> AgentSession:
                 enabled=True,
                 mode="vad",
                 discard_audio_if_uninterruptible=True,
-                min_duration=0.5,
+                # 350ms: a real "wait/stop/yes" stops the agent fast, while
+                # sub-word noise blips (handled below by min_words) do not.
+                min_duration=0.35,
+                # Word gate against noise: VAD-only blips that STT cannot
+                # turn into even one word never interrupt; a single spoken
+                # word ("stop", "wait", "hello?") always does.
+                min_words=1,
                 false_interruption_timeout=2.0,
                 resume_false_interruption=False,
             ),

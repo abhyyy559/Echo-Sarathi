@@ -39,6 +39,10 @@ CONTACT_STATUSES = (
     "busy",
     "failed",
     "opted_out",
+    # Faculty-excluded: uploaded but deliberately not called this run
+    # (e.g. present students). Launch and the dialer ignore it; flipping
+    # back to pending_review re-includes the contact on the next launch.
+    "skipped",
 )
 CALL_STATUSES = (
     "queued",

@@ -77,6 +77,7 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
     assert captured["aec_warmup_duration"] == 0.0
     assert captured["turn_handling"] == {
         "turn_detection": "vad",
+        "preemptive_generation": True,
         "endpointing": {
             "mode": "fixed",
             "min_delay": 0.35,
@@ -86,7 +87,8 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
             "enabled": True,
             "mode": "vad",
             "discard_audio_if_uninterruptible": True,
-            "min_duration": 0.5,
+            "min_duration": 0.35,
+            "min_words": 1,
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": False,
         },

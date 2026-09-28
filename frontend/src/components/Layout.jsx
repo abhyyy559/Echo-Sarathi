@@ -161,14 +161,6 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="sidebar-user">
-          <div className="sidebar-user-email" title={user && user.email ? user.email : ''}>
-            {(user && user.email) || 'Signed in'}
-          </div>
-          <button type="button" className="btn btn-ghost btn-sm sidebar-logout" onClick={logout}>
-            Sign out
-          </button>
-        </div>
         {/* Utility surfaces — kept out of the main nav on purpose. */}
         <div className="sidebar-footlinks">
           {UTILITY_LINKS.map((link) => (
@@ -177,6 +169,14 @@ export default function Layout() {
               <span>{link.label}</span>
             </NavLink>
           ))}
+        </div>
+        <div className="sidebar-user">
+          <div className="sidebar-user-email" title={user && user.email ? user.email : ''}>
+            {(user && user.email) || 'Signed in'}
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm sidebar-logout" onClick={logout}>
+            Sign out
+          </button>
         </div>
         <div className="sidebar-footer">Phase 1 · English · India</div>
       </aside>

@@ -38,6 +38,22 @@ def _load_env_file() -> None:
             return
 
 
+def _parse_key_list(*values: Optional[str]) -> tuple[str, ...]:
+    """Combine comma-separated key env vars into a de-duplicated key tuple.
+
+    ``GROQ_API_KEY`` (single) comes first for backward compatibility, then
+    every key in ``GROQ_API_KEYS`` (comma-separated) that is not a duplicate.
+    Empty entries are dropped, so unset vars simply contribute nothing.
+    """
+    keys: list[str] = []
+    for value in values:
+        for part in str(value or "").split(","):
+            key = part.strip()
+            if key and key not in keys:
+                keys.append(key)
+    return tuple(keys)
+
+
 def _get(key: str, default: Optional[str] = None) -> Optional[str]:
     value: Optional[str] = os.getenv(key, default)
     if value is not None and value.strip() == "":
@@ -63,10 +79,14 @@ class Settings:
     openai_model: str
     log_level: str
     cartesia_pronunciation_dict_id: Optional[str] = None
+    # Multi-key rotation (GROQ_API_KEY first, then GROQ_API_KEYS). Defaulted
+    # last so positional construction in older tests keeps working.
+    groq_api_keys: tuple[str, ...] = ()
 
     @staticmethod
     def from_env() -> "Settings":
         _load_env_file()
+        single_groq_key = _get("GROQ_API_KEY")
         return Settings(
             livekit_url=os.getenv("LIVEKIT_URL", "ws://localhost:7880"),
             livekit_api_key=os.getenv("LIVEKIT_API_KEY", "devkey"),
@@ -74,7 +94,10 @@ class Settings:
             deepgram_api_key=_get("DEEPGRAM_API_KEY"),
             cartesia_api_key=_get("CARTESIA_API_KEY"),
             cartesia_pronunciation_dict_id=_get("CARTESIA_PRONUNCIATION_DICT_ID"),
-            groq_api_key=_get("GROQ_API_KEY"),
+            groq_api_key=single_groq_key,
+            # Multi-key rotation: GROQ_API_KEY first, then GROQ_API_KEYS.
+            # Extra keys are only useful once pasted in .env (see .env.example).
+            groq_api_keys=_parse_key_list(single_groq_key, _get("GROQ_API_KEYS")),
             openai_api_key=_get("OPENAI_API_KEY"),
             openai_base_url=_get("OPENAI_BASE_URL"),
             internal_api_token=os.getenv("INTERNAL_API_TOKEN", ""),
@@ -106,9 +129,9 @@ class Settings:
             problems.append("DEEPGRAM_API_KEY missing - STT disabled")
         if not self.cartesia_api_key:
             problems.append("CARTESIA_API_KEY missing - TTS disabled")
-        if not self.groq_api_key and not self.openai_api_key:
+        if not self.groq_api_keys and not self.openai_api_key:
             problems.append(
-                "GROQ_API_KEY and OPENAI_API_KEY both missing - LLM disabled"
+                "GROQ_API_KEY/GROQ_API_KEYS and OPENAI_API_KEY all missing - LLM disabled"
             )
         return problems
 

@@ -5,7 +5,7 @@ Usage (from backend/):
     python scripts/seed_demo.py --purge-sample-data  # wipe demo org's campaigns/contacts/calls
 
 Creates (idempotently):
-- organization "Demo University" (slug demo-university)
+- organization "CMR College of Engineering & Technology" (slug cmr-cet)
 - owner user demo@example.com / demo1234
 - starter agent "Absent Student Follow-up" with v1 built from
   domain-configs/absent-student.json
@@ -59,14 +59,20 @@ def _load_absent_student_config() -> dict[str, Any]:
 
 def _version_payload_from_config(config: dict[str, Any]) -> dict[str, Any]:
     """Map the legacy domain-config file onto the AgentVersion payload shape."""
+    # The file's voice_settings (language, voices, known_context_keys, ...)
+    # flow straight into the version: the JSON file stays the source of truth
+    # for fresh seeds. VoiceSettings ignores nothing (extra="allow").
+    voice_settings = dict(config.get("voice_settings") or {})
+    if "known_context_keys" in config and "known_context_keys" not in voice_settings:
+        voice_settings["known_context_keys"] = config["known_context_keys"]
     return {
         "system_prompt": config["system_prompt"],
-        "company_context": {"institution": "Demo University"},
+        "company_context": {"institution": "CMR College of Engineering & Technology"},
         "question_flow": config["question_flow"],
         "extraction_schema": config["extraction_schema"],
         "disclosure_script": config["mandatory_disclosure"],
         "escalation_rules": config["escalation_rules"],
-        "voice_settings": {"voice_id": "default", "speed": 1.0},
+        "voice_settings": voice_settings or {"voice_id": "default", "speed": 1.0},
     }
 
 
@@ -92,7 +98,7 @@ def seed_demo(database_url: str | None = None) -> dict[str, Any]:
         if existing is not None:
             return {"status": "already_seeded", "email": DEMO_EMAIL}
 
-        org = Organization(name="Demo University", slug="demo-university")
+        org = Organization(name="CMR College of Engineering & Technology", slug="cmr-cet")
         db.add(org)
         db.flush()
 

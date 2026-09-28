@@ -23,6 +23,7 @@ const STATUS_META = {
   busy: { cls: 'orange', label: 'Busy' },
   failed: { cls: 'red', label: 'Failed' },
   opted_out: { cls: 'purple', label: 'Opted out' },
+  skipped: { cls: 'gray', label: 'Skipped' },
   escalated: { cls: 'red-outline', label: 'Escalated' },
   flagged: { cls: 'red-outline', label: 'Flagged' },
 };

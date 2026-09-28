@@ -19,6 +19,7 @@ const CONTACT_STATUS_FILTERS = [
   'busy',
   'failed',
   'opted_out',
+  'skipped',
 ];
 const LAUNCHABLE = ['draft', 'created', 'paused'];
 const CANCELED_like = ['canceled', 'cancelled'];
@@ -140,9 +141,11 @@ export default function CampaignDetailPage() {
     istClock.hour >= CALLING_HOURS_START && istClock.hour < CALLING_HOURS_END;
   const launchBlockedReason = !hasContacts
     ? 'Upload contacts first — a campaign needs at least one contact before it can be launched.'
-    : !withinCallingHours
-      ? `Calls only run between 9 AM and 9 PM IST. It is currently ${istClock.label} IST, so launching is paused until the window opens.`
-      : null;
+    : (campaign?.counts?.pending_review || 0) === 0
+      ? 'Nobody is pending review — include at least one contact (Skip/Include on the Contacts tab) before launching.'
+      : !withinCallingHours
+        ? `Calls only run between 9 AM and 9 PM IST. It is currently ${istClock.label} IST, so launching is paused until the window opens.`
+        : null;
 
   // ---- contacts list ----
   const [contactsData, setContactsData] = useState(null);
@@ -263,6 +266,44 @@ export default function CampaignDetailPage() {
     }
   }
 
+  // ---- include / skip (faculty picks who gets called this run) ----
+  // pending_review = will be called on launch; skipped = stays on the roster
+  // but is never dialed. Only pre-call states are toggleable here.
+  const TOGGLEABLE = ['pending_review', 'skipped', 'invalid', 'opted_out'];
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState(null);
+
+  async function setContactStatus(contact, status) {
+    await api.updateContact(contact.id, { status });
+  }
+
+  async function toggleSkip(contact) {
+    setBulkError(null);
+    try {
+      await setContactStatus(contact, contact.status === 'skipped' ? 'pending_review' : 'skipped');
+      refreshContacts();
+    } catch (e) {
+      setBulkError(e.message || 'Could not update contact.');
+    }
+  }
+
+  async function bulkSetStatus(status) {
+    const rows = (contactsData && contactsData.items) || [];
+    const targets = rows.filter((c) => TOGGLEABLE.includes(c.status) && c.status !== status);
+    if (targets.length === 0) return;
+    setBulkBusy(true);
+    setBulkError(null);
+    try {
+      await Promise.all(targets.map((c) => setContactStatus(c, status)));
+      refreshContacts();
+    } catch (e) {
+      setBulkError(e.message || 'Some contacts could not be updated — refresh and retry.');
+      refreshContacts();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   // ---- derived ----
   const canLaunch = LAUNCHABLE.includes(campaignStatus);
   const canPause = campaignStatus === 'running';
@@ -315,6 +356,15 @@ export default function CampaignDetailPage() {
       label: '',
       render: (c) => (
         <div className="row-actions" onClick={(e) => e.stopPropagation()}>
+          {TOGGLEABLE.includes(c.status) && (
+            <button
+              className="btn btn-secondary btn-sm"
+              title={c.status === 'skipped' ? 'Include this contact in the calling run' : 'Skip this contact for this run (kept on the roster)'}
+              onClick={() => toggleSkip(c)}
+            >
+              {c.status === 'skipped' ? 'Include' : 'Skip'}
+            </button>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={() => openEdit(c)}>
             Edit
           </button>
@@ -476,6 +526,25 @@ export default function CampaignDetailPage() {
             <div className="table-toolbar">
               <h3 className="card-title">Contacts</h3>
               <div className="toolbar-right">
+                <span className="hint inline-hint" title="Skipped contacts stay on the roster but are never dialed">
+                  Launch calls everyone pending review — skip the rest
+                </span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={bulkBusy || contactsLoading}
+                  title="Skip every toggleable contact on this page"
+                  onClick={() => bulkSetStatus('skipped')}
+                >
+                  Skip listed
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={bulkBusy || contactsLoading}
+                  title="Include every skipped contact on this page back into the run"
+                  onClick={() => bulkSetStatus('pending_review')}
+                >
+                  Include listed
+                </button>
                 <label className="filter-label" htmlFor="status-filter">
                   Status
                 </label>
@@ -499,6 +568,7 @@ export default function CampaignDetailPage() {
                 </button>
               </div>
             </div>
+            {bulkError && <div className="banner banner-error inset">{bulkError}</div>}
             {contactsError && <div className="banner banner-error inset">{contactsError}</div>}
             <DataTable
               columns={contactColumns}

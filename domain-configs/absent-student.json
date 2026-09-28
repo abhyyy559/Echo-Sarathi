@@ -1,35 +1,34 @@
 {"domain_id": "absent-student",
  "name": "Absent Student Follow-up",
- "version": "1.0.0",
- "system_prompt": "You are an AI voice assistant representing [Institution Name]. Your role is to contact parents or guardians of absent students to inquire about the reason for their absence and gather relevant details.",
- "mandatory_disclosure": "Hello, this is an AI assistant from [Institution Name]. This call is recorded.",
+ "version": "2.0.0",
+ "system_prompt": "You are Priya, a polite front-office coordinator calling from CMR College of Engineering & Technology. You call the parent or guardian of a student who was absent from college TODAY to record why they were absent and when they will return. Be warm, brief, and respectful of their time. Address people by name. Speak simple, clear English. Never mention you are an AI beyond the opening disclosure, never mention any other student, and never answer questions outside this absence follow-up (politely decline and steer back).",
+ "mandatory_disclosure": "Hello, this is an AI assistant calling from CMR College of Engineering and Technology. This call is being recorded.",
  "question_flow": [
- {"step": 1, "question": "Could you please share the reason for [Student Name]'s absence today?"},
- {"step": 2, "question": "Do you expect [Student Name] to return by [Expected Return Date]?"},
- {"step": 3, "question": "Is the absence due to a medical reason? If yes, has a medical certificate been submitted?"},
- {"step": 4, "question": "Would you like to provide any additional information or speak to a human representative?"}
+  {"step": 1, "question": "Could you please tell me the reason for [Student Name]'s absence from college today?"},
+  {"step": 2, "question": "By which date do you expect [Student Name] to return to college?"},
+  {"step": 3, "question": "Is there anything else you would like us to know, or would you like someone from the college to call you back?"}
  ],
  "extraction_schema": {
- "reason_for_absence": {"type": "string", "description": "Reason provided for the student's absence.", "validation": "required", "confidence_threshold": 0.8},
- "expected_return_date": {"type": "date", "description": "Anticipated return date of the student.", "validation": "required", "confidence_threshold": 0.8},
- "is_sick_leave": {"type": "boolean", "description": "Whether the absence is due to illness.", "validation": "optional", "confidence_threshold": 0.7},
- "medical_cert_submitted": {"type": "boolean", "description": "Confirmation of medical certificate submission.", "validation": "optional", "confidence_threshold": 0.7},
- "call_outcome": {"type": "string", "description": "Outcome of the call (e.g., resolved, escalated).", "validation": "required", "confidence_threshold": 0.8},
- "escalation_needed": {"type": "boolean", "description": "Whether human intervention is required.", "validation": "optional", "confidence_threshold": 0.7}
+  "reason_for_absence": {"type": "string", "description": "Reason provided for the student's absence today.", "validation": "required", "confidence_threshold": 0.8},
+  "expected_return_date": {"type": "date", "description": "Date the parent says the student will return to college.", "validation": "required", "confidence_threshold": 0.8},
+  "is_sick_leave": {"type": "boolean", "description": "Whether the absence is due to illness.", "validation": "optional", "confidence_threshold": 0.7},
+  "needs_human_help": {"type": "boolean", "description": "Caller asked for a human callback, has a complaint or query, or wants to speak to college staff.", "validation": "optional", "confidence_threshold": 0.7},
+  "call_outcome": {"type": "string", "description": "Outcome of the call (e.g., resolved, escalated).", "validation": "required", "confidence_threshold": 0.8},
+  "escalation_needed": {"type": "boolean", "description": "Whether human intervention is required.", "validation": "optional", "confidence_threshold": 0.7}
  },
  "escalation_rules": [
- "Caller expresses anger or frustration.",
- "Mention of grievance or complaint.",
- "Indication of medical emergency.",
- "Explicit request to speak to a human representative.",
- "Inability to extract required information after three clarification attempts."
+  "Caller expresses anger or frustration.",
+  "Mention of grievance or complaint.",
+  "Indication of medical emergency.",
+  "Explicit request to speak to a human representative or a callback from college staff.",
+  "Inability to extract required information after three clarification attempts."
  ],
  "fallback_responses": [
- "I apologize for the inconvenience. Could you please repeat your response?",
- "Thank you for the information. I have noted your response.",
- "I understand. Let me confirm: [Repeat extracted information].",
- "I am here to assist. Please provide your details again."
+  "I am sorry, I did not catch that. Could you please repeat it?",
+  "Thank you, I have noted that down.",
+  "Just to confirm, you said [Repeat extracted information]. Is that right?",
+  "I understand. Could you please share that detail once more?"
  ],
+ "known_context_keys": ["student_name", "parent_name", "class_section", "absent_date"],
  "voice_settings": {"language": "en",
-  "voices_by_language": {"en": "", "te": ""}}
-}
+  "voices_by_language": {"en": "", "te": ""}}}

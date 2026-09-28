@@ -99,9 +99,18 @@ async def import_contacts_endpoint(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=422, detail="uploaded file is empty")
-    default_consent = consent_default is not None and consent_default.strip().lower() in (
-        "1", "true", "yes", "y", "on",
-    )
+    # Roster default: a campaign roster uploaded by the org (e.g. the
+    # college's own enrollment list) IS the institutional relationship, so
+    # contacts count as consented unless the uploader explicitly opts out.
+    # No TEST_PHONE_NUMBERS entry is ever needed for roster numbers. An
+    # explicit consent_default=true/false (or a per-row consent column) still
+    # wins over this default.
+    if consent_default is None:
+        default_consent = True
+    else:
+        default_consent = consent_default.strip().lower() in (
+            "1", "true", "yes", "y", "on",
+        )
     try:
         result = import_contacts(
             db,
@@ -145,6 +154,11 @@ def patch_contact(
     if payload.status is not None:
         if payload.status not in CONTACT_STATUSES:
             raise HTTPException(status_code=422, detail=f"invalid status: {payload.status}")
+        if contact.status == "calling" and payload.status != "calling":
+            raise HTTPException(
+                status_code=422,
+                detail="contact has a live call in progress and cannot be moved",
+            )
         contact.status = payload.status
     if payload.phone is not None:
         phone, ok = normalize_phone(payload.phone)
