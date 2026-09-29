@@ -124,6 +124,12 @@ def health(request: Request) -> dict[str, Any]:
         # No service registry this phase; the voice worker is checked manually.
         "voice_agent": "unknown",
         "providers": settings.provider_presence,
+        # Armed LLM failover members, in the order they will be tried. Names
+        # and models only, never keys: it is the fastest way to confirm a
+        # pasted key actually parsed into the chain.
+        "llm_chain": [
+            {"name": name, "model": model} for name, _url, _key, model in settings.llm_chain
+        ],
         # Real TCP reachability from the backend network (keys can be present
         # while egress/DNS is broken — this is what actually pages).
         "egress": reachability,

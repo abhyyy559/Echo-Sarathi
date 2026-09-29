@@ -241,6 +241,41 @@ def test_cap_reply_keeps_short_replies_intact() -> None:
     assert _cap_reply("   ") == ""
 
 
+def test_placeholder_key_never_occupies_a_chain_slot() -> None:
+    """The shipped OPENAI_API_KEY=your_openai_api_key must not be armed: a
+    template key 401s on every turn and reads like a provider outage."""
+    from app.config import Settings
+
+    settings = Settings(
+        database_url="sqlite://",
+        openai_api_key="your_openai_api_key",
+        cerebras_api_key="",
+        openrouter_api_key="",
+        groq_api_key="gsk_real",
+        _env_file=None,
+    )
+    assert [(name, key) for name, _u, key, _m in settings.llm_chain] == [("groq", "gsk_real")]
+
+
+def test_shorthand_keys_extend_the_chain_in_order() -> None:
+    from app.config import Settings
+
+    settings = Settings(
+        database_url="sqlite://",
+        openai_api_key="sk-real",
+        cerebras_api_key="ck-real",
+        openrouter_api_key="or-real",
+        groq_api_key="gsk_real",
+        _env_file=None,
+    )
+    assert [name for name, _u, _k, _m in settings.llm_chain] == [
+        "groq",
+        "openai",
+        "cerebras",
+        "openrouter",
+    ]
+
+
 def test_never_stated_date_is_refused(groq_client, session_factory):
     """Regression from the first live test call: caller answered 'hlooo' and
     the agent recorded expected_return_date='tomorrow at 8am' at 95%."""

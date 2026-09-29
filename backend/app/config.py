@@ -185,11 +185,14 @@ class Settings(BaseSettings):
             if name == "groq" and api_key in self.groq_api_key_list:
                 continue  # already added from GROQ_API_KEY(S)
             members.append((name, base_url, api_key, model))
-        if self.openai_api_key:
+        # Shorthand keys append to the chain. A template leftover (the
+        # shipped OPENAI_API_KEY=your_openai_api_key) must never occupy a slot:
+        # it would 401 on every turn and look like a provider outage.
+        if self.openai_api_key and not _looks_like_template(self.openai_api_key):
             members.append(
                 ("openai", "https://api.openai.com/v1", self.openai_api_key, "gpt-4o-mini")
             )
-        if self.cerebras_api_key:
+        if self.cerebras_api_key and not _looks_like_template(self.cerebras_api_key):
             members.append(
                 (
                     "cerebras",
@@ -198,7 +201,7 @@ class Settings(BaseSettings):
                     "llama-3.3-70b",
                 )
             )
-        if self.openrouter_api_key:
+        if self.openrouter_api_key and not _looks_like_template(self.openrouter_api_key):
             members.append(
                 (
                     "openrouter",
