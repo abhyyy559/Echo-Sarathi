@@ -1,9 +1,17 @@
 import React from 'react';
 
+/**
+ * Pre-filled contact card for testing.
+ *
+ * These were empty, so every test run began with the operator typing the same
+ * student/parent names by hand - pure friction during the verification loop.
+ * They are only DEFAULTS for the form: edit any field before starting a
+ * session, and the change is used verbatim.
+ */
 export const ABSENT_STUDENT_DEFAULTS = {
-  student_name: '',
-  parent_name: '',
-  class_section: '',
+  student_name: 'Abhi',
+  parent_name: 'Ram',
+  class_section: '10-B',
   absent_date: '',
 };
 

@@ -381,6 +381,64 @@ def test_shared_quota_skips_the_rest_of_that_provider(flaky_client, monkeypatch)
     assert bearers == ["Bearer k1", "Bearer ck1"]
 
 
+def test_diagnostics_reports_chain_and_events_without_keys(groq_client):
+    """The operator's verification aid: what is configured, which provider
+    served, what fell back. It must never leak a key."""
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(chat("Noted, thank you."))
+    turn = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "he has a fever"},
+        headers=auth_headers(token),
+    )
+    assert turn.status_code == 200, turn.text
+
+    resp = client.get("/api/playground/diagnostics", headers=auth_headers(token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["components"]["llm"]["configured"] is True
+    assert body["components"]["stt"]["name"] == "Deepgram"
+    assert body["components"]["tts"]["name"] == "Cartesia"
+    assert body["llm_chain"], "chain should list the armed provider"
+    entry = body["llm_chain"][0]
+    assert entry["key_present"] is True
+    assert entry["output_cap"] > 0
+    # No secret material anywhere in the payload.
+    raw = json.dumps(body)
+    assert "test-groq-key" not in raw
+    assert "Bearer" not in raw
+    # Events exist for this call and are attributable to it.
+    kinds = {e["kind"] for e in body["events"]}
+    assert "llm_attempt" in kinds
+    assert any(e["call_id"] == call_id for e in body["events"])
+
+
+def test_events_endpoint_supports_incremental_polling(groq_client):
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(chat("Sure."))
+    client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "hello"},
+        headers=auth_headers(token),
+    )
+    first = client.get("/api/playground/events", headers=auth_headers(token)).json()
+    assert first["events"]
+    seq = first["latest_seq"]
+    # Polling with the cursor returns nothing new until something happens.
+    second = client.get(
+        f"/api/playground/events?since={seq}", headers=auth_headers(token)
+    ).json()
+    assert second["events"] == []
+
+
+def test_diagnostics_requires_auth(groq_client):
+    assert groq_client.get("/api/playground/diagnostics").status_code == 401
+
+
 def test_placeholder_key_never_occupies_a_chain_slot() -> None:
     """The shipped OPENAI_API_KEY=your_openai_api_key must not be armed: a
     template key 401s on every turn and reads like a provider outage."""

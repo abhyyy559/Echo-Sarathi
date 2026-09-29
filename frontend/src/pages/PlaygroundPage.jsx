@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { agentsApi, api, callExportUrl, playgroundApi } from '../api.js';
 import LatencyPanel from '../components/LatencyPanel.jsx';
+import DiagnosticsPanel from '../components/DiagnosticsPanel.jsx';
 import LeadCardForm, { ABSENT_STUDENT_DEFAULTS } from '../components/LeadCardForm.jsx';
 import TextPlayground, { confidenceClass } from '../components/TextPlayground.jsx';
 import { cleanTranscriptText } from '../utils/transcript.js';
@@ -46,6 +47,9 @@ export default function PlaygroundPage() {
   const [contactCard, setContactCard] = useState({ ...ABSENT_STUDENT_DEFAULTS });
   const [versionInfo, setVersionInfo] = useState(null); // {agentName, version}
   const [infoError, setInfoError] = useState(null);
+  // Surfaced in the Diagnostics panel so an operator can tell which run an
+  // event belongs to.
+  const [activeCallId, setActiveCallId] = useState(null);
 
   // ---- live session (voice mode) ----
   const [connectError, setConnectError] = useState(null);
@@ -385,6 +389,7 @@ export default function PlaygroundPage() {
     try {
       sess = await playgroundApi.startSession(Number(selectedVersionId), contactCard);
       sessionRef.current = sess;
+      setActiveCallId(sess.call_id ?? null);
     } catch (e) {
       setConnectError(e.message || 'Could not start a playground session.');
       setPhase(PHASES.SETUP);
@@ -456,6 +461,14 @@ export default function PlaygroundPage() {
 
   // ------------------------------------------------------------------ render
 
+  function renderDiagnosticsSidebar() {
+    return (
+      <div style={{ marginTop: 18 }}>
+        <DiagnosticsPanel active={phase !== PHASES.IDLE} callId={activeCallId} />
+      </div>
+    );
+  }
+
   function renderLatencySidebar(turns) {
     return (
       <div style={{ marginTop: 18 }}>
@@ -463,6 +476,7 @@ export default function PlaygroundPage() {
         <div style={{ marginTop: 8 }}>
           <LatencyPanel turns={turns} />
         </div>
+        {renderDiagnosticsSidebar()}
       </div>
     );
   }
@@ -476,6 +490,7 @@ export default function PlaygroundPage() {
         <div style={{ marginTop: 8 }}>
           <LatencyPanel turns={turns} />
         </div>
+        {renderDiagnosticsSidebar()}
       </div>
     );
   }

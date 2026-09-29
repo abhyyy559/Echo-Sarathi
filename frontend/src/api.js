@@ -192,6 +192,11 @@ export const playgroundApi = {
       method: 'POST',
       body: JSON.stringify(body || {}),
     }),
+  // Verification aid: what is configured, which provider served, what fell back.
+  diagnostics: () => apiFetch('/api/playground/diagnostics'),
+  // Live feed, polled with the last seq so nothing is re-fetched.
+  events: (since) => apiFetch(`/api/playground/events?since=${Number(since) || 0}`),
+  clearEvents: () => apiFetch('/api/playground/events', { method: 'DELETE' }),
 };
 
 export const devApi = {

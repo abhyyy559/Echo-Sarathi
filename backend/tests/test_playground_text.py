@@ -376,7 +376,7 @@ def test_history_trimmed_and_llm_leg_recorded(groq_client, session_factory):
     from app.routers.playground import _MAX_HISTORY_ROWS
 
     assert len(sent["messages"]) == 1 + _MAX_HISTORY_ROWS + 1
-    assert _MAX_HISTORY_ROWS == 8
+    assert _MAX_HISTORY_ROWS == 6
     with session_factory() as db:
         rows = db.scalars(
             select(Transcript)

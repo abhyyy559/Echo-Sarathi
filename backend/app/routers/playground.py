@@ -33,6 +33,7 @@ from app.deps import get_current_user, get_org_or_404
 from app.models import Agent, AgentVersion, Call, Campaign, Contact, ExtractedField, Organization, Transcript, User
 from app.schemas import DryRunCreate
 from app.timeutil import utcnow
+from app.services.telemetry import recorder as telemetry
 from app.services.token_substitution import apply_token_substitution, build_token_map
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,11 @@ _MAX_TOOL_ROUNDS = 2
 # rows plus a long system prompt put a single turn near the ceiling, which is
 # why 3 keys did not triple throughput. 8 rows is enough working context for
 # the flow and roughly halves the per-turn prompt cost.
-_MAX_HISTORY_ROWS = 8
+# Groq's INPUT tokens-per-minute bucket is organization-wide, and the system
+# prompt is re-sent on every single turn, so prompt size IS the throughput
+# ceiling. 6 rows is still enough working context for this flow (the last three
+# exchanges) and measurably cheaper than the 14 it replaced.
+_MAX_HISTORY_ROWS = 6
 _GROQ_MAX_RETRIES = 2
 _GROQ_RETRY_DELAYS = (2.0, 5.0)
 
@@ -123,6 +128,31 @@ def _proper_name(value: str) -> str:
     """
     parts = [p for p in str(value or "").split() if p]
     return " ".join(p[0].upper() + p[1:] if p else p for p in parts)
+
+
+def _display_card(contact: dict[str, str]) -> dict[str, str]:
+    """Contact card with human names properly cased.
+
+    The model copies names verbatim from the card, so a card carrying
+    "ram"/"abhi" made the agent address the parent as "ram" for the whole
+    call. Only name-ish keys are touched; values like "10-B" are untouched.
+    """
+    name_keys = {
+        "student_name",
+        "parent_name",
+        "parent",
+        "guardian",
+        "contact_person",
+        "contact_name",
+        "full_name",
+        "lead_name",
+        "candidate_name",
+        "name",
+    }
+    return {
+        key: (_proper_name(value) if key in name_keys and value else value)
+        for key, value in (contact or {}).items()
+    }
 
 
 def _cap_reply(text: str, max_sentences: int = 2) -> str:
@@ -287,6 +317,103 @@ def _set_room_metadata_best_effort(
             room_name,
             exc_info=True,
         )
+
+
+@router.get("/diagnostics")
+def playground_diagnostics(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Everything the operator needs to verify a test run, in one call.
+
+    Answers the questions that were previously only answerable by scrolling
+    docker logs: which providers are configured, which one actually served the
+    last turn, which fell back and why, and what the last events were.
+
+    Never returns keys - only whether a key is present and which provider it
+    belongs to.
+    """
+    settings: Settings = request.app.state.settings
+    chain = settings.llm_chain
+    return {
+        "components": {
+            "stt": {
+                "name": "Deepgram",
+                "configured": bool(settings.deepgram_api_key),
+                "required_for": "voice input transcription",
+            },
+            "tts": {
+                "name": "Cartesia",
+                "configured": bool(settings.cartesia_api_key),
+                "required_for": "voice output",
+            },
+            "rooms": {
+                "name": "LiveKit",
+                "configured": bool(
+                    settings.livekit_api_key and settings.livekit_api_secret
+                ),
+                "url": settings.livekit_url,
+                "required_for": "browser + worker room join",
+            },
+            "llm": {
+                "name": f"{len(chain)} provider(s) armed",
+                "configured": bool(chain),
+                "required_for": "every reply",
+            },
+            "telephony": {
+                "name": "Vobiz",
+                "configured": bool(
+                    settings.vobiz_auth_id and settings.vobiz_api_key
+                ),
+                "required_for": "phone calls only (not the playground)",
+            },
+        },
+        "llm_chain": [
+            {
+                "position": index + 1,
+                "provider": name,
+                "model": model,
+                "key_present": bool(api_key),
+                "reasoning_model": _is_reasoning_model(model),
+                "output_cap": _max_tokens_for(model),
+                "healthy": _last_provider_health(name),
+            }
+            for index, (name, base_url, api_key, model) in enumerate(chain)
+        ],
+        "events": telemetry.since(limit=120),
+        "latest_seq": telemetry.latest_seq(),
+    }
+
+
+@router.get("/events")
+def playground_events(
+    since: int = 0,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Live event feed for the Diagnostics panel (polled while a session runs)."""
+    events = telemetry.since(seq=since, limit=200)
+    return {"events": events, "latest_seq": telemetry.latest_seq()}
+
+
+@router.delete("/events")
+def clear_playground_events(
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    telemetry.clear()
+    return {"ok": True, "latest_seq": telemetry.latest_seq()}
+
+
+def _last_provider_health(provider: str) -> dict[str, Any]:
+    """Most recent attempt for a provider, so the panel can show its state."""
+    for event in reversed(telemetry.since(limit=200)):
+        if event.get("provider") == provider and event.get("kind") == "llm_attempt":
+            return {
+                "status": event.get("status"),
+                "latency_ms": event.get("latency_ms"),
+                "at": event.get("at"),
+                "ok": event.get("status") == 200,
+            }
+    return {"status": None, "latency_ms": None, "at": None, "ok": None}
 
 
 @router.post("/sessions")
@@ -498,20 +625,14 @@ def _render_caller_context(contact: dict[str, str], institution: str) -> str:
             names.append(value)
     if names:
         lines.append(
-            "- SAY THE NAMES OUT LOUD: greet the person using their name. "
-            f"Known name(s) on this record: {', '.join(names)}."
+            "- Say names out loud and greet by name. Known: "
+            f"{', '.join(names)}. Never say 'the parent of the student' when you "
+            "have a real name."
         )
-        lines.append(
-            "- NEVER say 'the parent or guardian of the student' or 'the person "
-            "we are calling about' when you have a real name on this record."
-        )
-    lines.extend(
-        [
-            "- VERIFY RELATIONSHIP BEFORE DETAILS: confirm you are speaking with the "
-            "right person before discussing any details.",
-            "- If the person who answered is NOT that person, do not share any details: "
-            "ask when they will be available, thank them politely, and end the call.",
-        ]
+    lines.append(
+        "- VERIFY before details: if the person who answered is NOT "
+        f"{parent or 'the named contact'}, share nothing, ask when they will be "
+        "available, thank them, and end the call."
     )
     return "\n".join(lines)
 
@@ -531,7 +652,16 @@ def _render_text_system_prompt(
     """
     sections: list[str] = []
 
-    card = contact or {}
+    # 0. Today's date. Without it the model cannot resolve "after 2 days" or
+    # "next week" into a real date, so it either guessed or refused the value -
+    # the missing expected_return_date in live tests. Cheap, and it is what
+    # makes relative-date capture work.
+    sections.append(
+        "TODAY: " + utcnow().strftime("%A %d %B %Y") + ". Resolve relative "
+        "answers against it ('after 2 days' = 2 days from today)."
+    )
+
+    card = _display_card(contact or {})
     tokens = build_token_map(card, institution=institution)
 
     # 1. Mandatory disclosure FIRST and verbatim.
@@ -608,14 +738,27 @@ def _render_text_system_prompt(
         "- NEVER invent a value. A value the caller never said does not exist - "
         "no guessed date, not even a likely one. Silences, greetings and "
         "off-topic answers contain no answers. If unsure, ask instead.",
+        "- If a tool reply says NOT RECORDED but the caller DID just tell you "
+        "the value, call the tool AGAIN with what they said - do not ask them "
+        "to repeat themselves. Never re-ask a question they already answered.",
         "- When everything is captured (or they want to stop), call "
         "`end_call(summary)` including any unfilled required fields.",
         "Fields:",
     ]
     schema = config.extraction_schema or {}
     if isinstance(schema, dict):
-        for field_name, spec in schema.items():
+        ordered = sorted(
+            schema.items(),
+            key=lambda kv: 0
+            if isinstance(kv[1], dict)
+            and str(kv[1].get("validation") or "").lower() == "required"
+            else 1,
+        )
+        for field_name, spec in ordered:
             if isinstance(spec, dict):
+                # The description is what tells the model WHEN to record the
+                # field; the type and validation words are recoverable from the
+                # name and the [REQUIRED] tag.
                 description = str(spec.get("description") or spec.get("type") or "").strip()
                 required_marker = (
                     " [REQUIRED]" if str(spec.get("validation") or "").lower() == "required" else ""
@@ -811,6 +954,12 @@ def _is_tool_choice_conflict(status_code: int, text: str) -> bool:
     return "tool_use_failed" in text or "Tool choice is none" in text
 
 
+def _short_error(text: str, limit: int = 220) -> str:
+    """One-line provider error, trimmed to what is actually useful in a panel."""
+    collapsed = " ".join(str(text or "").split())
+    return collapsed[:limit]
+
+
 def _message_or_raise(response: Any) -> dict[str, Any]:
     """Extract ``choices[0].message`` or fail loudly with the provider body.
 
@@ -846,7 +995,10 @@ def _message_or_raise(response: Any) -> dict[str, Any]:
 
 
 async def _groq_chat(
-    settings: Settings, messages: list[dict[str, Any]], include_tools: bool = True
+    settings: Settings,
+    messages: list[dict[str, Any]],
+    include_tools: bool = True,
+    call_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Chat-completions round trip over the configured provider chain.
 
@@ -870,9 +1022,26 @@ async def _groq_chat(
     last_error_text = ""
     rate_limited = False
     exhausted_providers: set[str] = set()
+    # Operators watch this in the playground Diagnostics panel to see WHICH
+    # provider served the turn and WHY it moved on, live.
+    telemetry.record(
+        "llm_chain_start",
+        message=f"{len(members)} member(s) in chain: "
+        + ", ".join(f"{n}:{m}" for n, _u, _k, m in members),
+        call_id=call_id,
+        include_tools=include_tools,
+    )
     async with httpx.AsyncClient(timeout=45.0) as client:
         for member_index, (name, base_url, api_key, model) in enumerate(members):
             if name in exhausted_providers:
+                telemetry.record(
+                    "llm_skip",
+                    level="warn",
+                    provider=name,
+                    model=model,
+                    message="skipped: provider's shared token bucket is exhausted",
+                    call_id=call_id,
+                )
                 continue
             member_body = _member_body(body, model)
             headers = {"Authorization": f"Bearer {api_key}"}
@@ -881,11 +1050,27 @@ async def _groq_chat(
                 headers["X-Title"] = "EchoSarathi"
             response = None
             for attempt in range(_GROQ_MAX_RETRIES + 1):
+                attempt_started = time.monotonic()
                 try:
                     response = await client.post(
                         f"{base_url.rstrip('/')}/chat/completions",
                         json=member_body,
                         headers=headers,
+                    )
+                    telemetry.record(
+                        "llm_attempt",
+                        level="info" if response.status_code == 200 else "warn",
+                        provider=name,
+                        model=model,
+                        status=response.status_code,
+                        latency_ms=round((time.monotonic() - attempt_started) * 1000),
+                        message=(
+                            "served the turn"
+                            if response.status_code == 200
+                            else _short_error(response.text)
+                        ),
+                        call_id=call_id,
+                        attempt=attempt + 1,
                     )
                 except (httpx.TimeoutException, httpx.TransportError) as exc:
                     # Network-level failure: a different provider is the fix,
@@ -893,6 +1078,15 @@ async def _groq_chat(
                     last_error_text = f"{type(exc).__name__}: {exc}"
                     logger.warning(
                         "LLM provider %s transport failure: %s", name, last_error_text
+                    )
+                    telemetry.record(
+                        "llm_attempt",
+                        level="error",
+                        provider=name,
+                        model=model,
+                        latency_ms=round((time.monotonic() - attempt_started) * 1000),
+                        message=f"transport failure: {type(exc).__name__}",
+                        call_id=call_id,
                     )
                     response = None
                     break
@@ -908,6 +1102,16 @@ async def _groq_chat(
                         "LLM tool-choice conflict on %s; retrying with tool "
                         "traffic stripped from history",
                         name,
+                    )
+                    telemetry.record(
+                        "llm_tool_conflict",
+                        level="warn",
+                        provider=name,
+                        model=model,
+                        status=response.status_code,
+                        message="model emitted a tool call with tools disabled; "
+                        "retrying once with tool history stripped",
+                        call_id=call_id,
                     )
                     member_body = {
                         **member_body,
@@ -931,6 +1135,16 @@ async def _groq_chat(
                         "LLM %s hit a shared TPM/RPM bucket; skipping its "
                         "remaining keys",
                         name,
+                    )
+                    telemetry.record(
+                        "llm_quota_shared",
+                        level="warn",
+                        provider=name,
+                        model=model,
+                        status=429,
+                        message="organization token bucket exhausted; this "
+                        "provider's remaining keys are skipped (they share it)",
+                        call_id=call_id,
                     )
                     break
                 if attempt >= _GROQ_MAX_RETRIES:
@@ -970,11 +1184,25 @@ async def _groq_chat(
                     )
                     exhausted_providers.add(name)
     if rate_limited:
+        telemetry.record(
+            "llm_chain_exhausted",
+            level="error",
+            message="every provider in the chain is rate limited",
+            call_id=call_id,
+            last_error=last_error_text[:200],
+        )
         raise HTTPException(
             status_code=429,
             detail="The AI service rate limit was hit. Wait a few seconds and send again.",
         )
     logger.error("LLM chain exhausted. Last error: %s", last_error_text)
+    telemetry.record(
+        "llm_chain_exhausted",
+        level="error",
+        message="every provider in the chain failed; caller sees 502",
+        call_id=call_id,
+        last_error=last_error_text[:200],
+    )
     raise HTTPException(
         status_code=502, detail="The language model did not respond. Try again shortly."
     )
@@ -1320,7 +1548,9 @@ async def _run_agent_turn(
         # ones like container.exec) and a request with tools absent makes any
         # tool call a server-side error. A legal tool call costs one round
         # trip; an illegal one costs a 400 plus a wasted key.
-        message = await _groq_chat(settings, messages, include_tools=True)
+        message = await _groq_chat(
+            settings, messages, include_tools=True, call_id=call.id
+        )
         groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
@@ -1371,6 +1601,7 @@ async def _run_agent_turn(
                     }
                 ],
                 include_tools=True,
+                call_id=call.id,
             )
         except HTTPException:
             message = {}

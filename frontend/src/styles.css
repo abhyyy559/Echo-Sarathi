@@ -5334,3 +5334,115 @@ input[type='range']::-moz-range-thumb {
 .chip.in-progress { border-color: rgba(91, 169, 124, 0.3); color: var(--green); }
 .chip.queued { border-color: rgba(163, 154, 142, 0.25); color: var(--muted); }
 
+
+/* --- Diagnostics panel (playground) ----------------------------------------- */
+/* Answers "is this actually working?": which components are configured, which
+   LLM served the turn, what fell back and why. Dense and monospace because it
+   is read while a call is in progress. */
+
+.dp-wrap {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.dp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+.dp-title { font-size: 12px; font-weight: 600; }
+.dp-sub { font-size: 11px; color: var(--dim); flex: 1; }
+.dp-caret { font-size: 11px; color: var(--dim); }
+
+.dp-body { padding: 0 10px 10px; }
+
+.dp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.dp-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 7px;
+}
+.dp-card-top { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.dp-card-name { font-size: 11px; font-weight: 600; }
+.dp-card-req { font-size: 10px; color: var(--dim); margin-top: 2px; }
+.dp-ok { font-size: 10px; color: var(--green); }
+.dp-missing { font-size: 10px; color: #b91c1c; }
+
+.dp-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 10px 0 5px;
+}
+.dp-clear {
+  font-size: 10px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 1px 5px;
+}
+
+.dp-member, .dp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.dp-member { padding: 1px 0; }
+.dp-pos { color: var(--dim); min-width: 10px; }
+.dp-name { font-weight: 600; }
+.dp-model { color: var(--muted); }
+.dp-tag {
+  font-size: 9px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+  color: var(--dim);
+}
+.dp-cap { color: var(--dim); }
+.dp-lat { color: var(--muted); min-width: 46px; text-align: right; }
+
+.dp-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; }
+.dp-dot-ok { background: var(--green); }
+.dp-dot-bad { background: #b91c1c; }
+.dp-dot-idle { background: var(--line); }
+
+.dp-log {
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: rgba(0, 0, 0, 0.02);
+}
+.dp-row { align-items: flex-start; }
+.dp-time { color: var(--dim); flex: 0 0 auto; }
+.dp-lvl { flex: 0 0 auto; font-weight: 600; }
+.dp-prov { flex: 0 0 auto; color: var(--muted); }
+.dp-status { flex: 0 0 auto; color: var(--dim); }
+.dp-msg { flex: 1; word-break: break-word; }
+.dp-error { color: #b91c1c; font-size: 10.5px; margin-bottom: 4px; }
+.dp-empty { color: var(--dim); font-size: 10.5px; }
+.dp-foot { font-size: 10px; color: var(--dim); margin-top: 5px; }
