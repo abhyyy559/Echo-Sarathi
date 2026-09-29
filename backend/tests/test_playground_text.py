@@ -173,14 +173,15 @@ def test_start_event_produces_opening_line_without_user_message(groq_client):
     body = resp.json()
     assert body["done"] is False
     assert body["turn_index"] == 0
-    assert "disclosure" in body["reply_text"] or "automated" in body["reply_text"]
-
-    sent = _FakeAsyncClient.requests[-1]["json"]
-    roles = [m["role"] for m in sent["messages"]]
-    # Kickoff rides as a user-role message: some Groq models reject tool-bound
-    # requests without a trailing user query. It is never persisted.
-    assert roles == ["system", "user"], "start event must send no real user message"
-    assert "opening utterance" in sent["messages"][-1]["content"]
+    # The opening is deterministic: disclosure + one question, no LLM round
+    # trip (a model-written greeting repeated the identity twice and cost a
+    # full provider call before the caller heard anything).
+    assert "AI assistant calling from CMR" in body["reply_text"]
+    assert "parent" in body["reply_text"].lower()
+    # No dangling substitution artifacts may ever be spoken.
+    assert ", ," not in body["reply_text"]
+    # Nothing was sent to the provider for the opening turn.
+    assert _FakeAsyncClient.requests == []
 
 
 def test_tool_calls_record_extracted_field_and_feed_result_back(groq_client, session_factory):
@@ -333,11 +334,23 @@ def test_session_contact_persisted_and_injected_into_start_prompt(groq_client, s
     )
     assert resp.status_code == 200, resp.text
 
+    # Personalization now happens in the deterministic opening itself, which
+    # is stronger than hoping the model copies names into its greeting.
+    opening = resp.json()["reply_text"]
+    assert "Aarav" in opening
+    assert "Suresh" in opening
+
+    # The same contact still reaches the LLM prompt on the next real turn.
+    script(chat("Sure, I can help with that."))
+    follow_up = groq_client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "yes, this is Suresh"},
+        headers=auth_headers(token),
+    )
+    assert follow_up.status_code == 200, follow_up.text
     sent = _FakeAsyncClient.requests[-1]["json"]
     system_msg = sent["messages"][0]["content"]
-    kickoff_msg = sent["messages"][-1]["content"]
     assert "Aarav" in system_msg and "Suresh" in system_msg
-    assert "Aarav" in kickoff_msg
 
 
 def test_history_trimmed_and_llm_leg_recorded(groq_client, session_factory):

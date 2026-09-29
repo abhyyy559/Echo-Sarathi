@@ -54,21 +54,24 @@ VOBIZ_STATUS_MAP = {
     "failed": "failed",
     "canceled": "canceled",
     "cancelled": "canceled",
-    # Plivo-style hangup callback (Event=Hangup) — the call is over either way.
+    # Plivo-style hangup callback (Event=Hangup) â€” the call is over either way.
     "hangup": "completed",
 }
 
 
 def _build_answer_xml(
-    ws_base_url: str, call_id: int, stream_status_url: str = ""
+    ws_base_url: str, call_id: int, stream_status_url: str = "", bridge_token: str = ""
 ) -> str:
     """Voice XML bridging the call to our media websocket (mu-law 8kHz).
 
     statusCallbackUrl gives us stream lifecycle events (StartStream/
-    StopStream/failures) — without them a failed WS connect is invisible and
+    StopStream/failures) â€” without them a failed WS connect is invisible and
     the call sits silent. maxRetries=3 survives transient tunnel blips.
+    bridge_token authenticates the media handshake (H3).
     """
     ws_url = f"{ws_base_url}/vobiz/media?call_id={call_id}"
+    if bridge_token:
+        ws_url += f"&bridge_token={bridge_token}"
     status_attrs = ""
     if stream_status_url:
         status_attrs = (
@@ -92,13 +95,32 @@ async def _payload_dict(request: Request) -> dict[str, Any]:
         body = await request.json()
         if isinstance(body, dict):
             return dict(body)
-    except Exception:  # noqa: BLE001 — fall through to form parsing
+    except Exception:  # noqa: BLE001 â€” fall through to form parsing
         pass
     try:
         form = await request.form()
         return {str(k): v for k, v in form.items()}
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _check_webhook_secret(request: Request) -> None:
+    """Opt-in shared-secret gate for Vobiz HTTP webhooks (H2).
+
+    Vobiz signs nothing natively, so this checks a pre-shared header value.
+    Unset secret = accept with a warning (documented soft leg); set secret
+    = reject mismatches with 403.
+    """
+    settings = request.app.state.settings
+    secret = str(getattr(settings, "vobiz_webhook_secret", "") or "")
+    if not secret:
+        logger.warning("VOBIZ_WEBHOOK_SECRET unset â€” accepting unsigned webhook")
+        return
+    import secrets as _secrets
+
+    presented = request.headers.get("X-Vobiz-Signature", "")
+    if not presented or not _secrets.compare_digest(presented, secret):
+        raise HTTPException(status_code=403, detail="invalid webhook signature")
 
 
 # --- media bridge (Vobiz <-> LiveKit phone rooms) ---------------------------
@@ -217,7 +239,7 @@ def _flush_bridge_queue(queue: Any) -> int:
     """Drop stale queued agent audio (barge-in); preserve end-of-stream.
 
     Returns the number of frames dropped. The b"" sentinel (track ended) is
-    put back if it was trailing the backlog — eating it would tear down the
+    put back if it was trailing the backlog â€” eating it would tear down the
     whole media bridge mid-call.
     """
     import asyncio
@@ -244,7 +266,7 @@ def _flush_bridge_queue(queue: Any) -> int:
 def _handle_room_data(raw: Any, queue: Any) -> bool:
     """Route one LiveKit data-channel packet; flush on worker barge_in.
 
-    Returns True when the queue was flushed. Never raises — a malformed
+    Returns True when the queue was flushed. Never raises â€” a malformed
     packet must not kill the media bridge.
     """
     try:
@@ -257,7 +279,7 @@ def _handle_room_data(raw: Any, queue: Any) -> bool:
             dropped = _flush_bridge_queue(queue)
             logger.info("barge_in from worker: dropped %d stale frames", dropped)
             return True
-    except Exception:  # noqa: BLE001 — best effort only
+    except Exception:  # noqa: BLE001 â€” best effort only
         pass
     return False
 
@@ -280,6 +302,20 @@ async def vobiz_media(websocket: WebSocket) -> None:
             await websocket.close(code=code)
         except Exception:  # noqa: BLE001
             pass
+
+    # H3: per-call bridge token minted at answer time. Reject strangers
+    # before the handshake (4403); empty internal token = warn + allow.
+    from app.services.media_bridge import verify_bridge_token
+
+    settings = websocket.app.state.settings
+    if not verify_bridge_token(
+        websocket.query_params.get("bridge_token"),
+        query_call_id,
+        settings.internal_api_token,
+    ):
+        logger.warning("vobiz media bridge rejected (bad token) call_id=%s", query_call_id)
+        await _close(4403)
+        return
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + HANDSHAKE_TIMEOUT_SECONDS
@@ -397,7 +433,7 @@ async def vobiz_media(websocket: WebSocket) -> None:
         except Exception:  # noqa: BLE001
             logger.warning("room disconnect failed for %s", room_name, exc_info=True)
         # The media leg ending IS the call ending (Vobiz sends no separate
-        # completion callback on this path) — never leave the row stuck in
+        # completion callback on this path) â€” never leave the row stuck in
         # a live status, or it vanishes from reports. Reconcile against the
         # provider first so carrier outcomes (busy/no-answer) land truthfully
         # instead of everything reading "completed".
@@ -420,7 +456,7 @@ async def vobiz_media(websocket: WebSocket) -> None:
                         if done_call.ended_at is None:
                             done_call.ended_at = utcnow()
                         db.commit()
-        except Exception:  # noqa: BLE001 — finalize best-effort only
+        except Exception:  # noqa: BLE001 â€” finalize best-effort only
             logger.warning("finalize-on-close failed for call %s", call_pk, exc_info=True)
 
 
@@ -431,6 +467,7 @@ async def vobiz_answer(
     db: Session = Depends(get_db),
 ) -> Response:
     """Answer webhook: return Voice XML bridging the call to the media stream."""
+    _check_webhook_secret(request)
     payload = await _payload_dict(request)
 
     call = db.get(Call, call_id)
@@ -452,7 +489,14 @@ async def vobiz_answer(
 
     settings = request.app.state.settings
     stream_status_url = f"{settings.public_base_url.rstrip('/')}/vobiz/stream-status"
-    xml = _build_answer_xml(settings.media_ws_base_url, call_id, stream_status_url)
+    from app.services.media_bridge import build_bridge_token
+
+    xml = _build_answer_xml(
+        settings.media_ws_base_url,
+        call_id,
+        stream_status_url,
+        build_bridge_token(call_id, settings.internal_api_token),
+    )
     return Response(content=xml, media_type=XML_MEDIA_TYPE)
 
 
@@ -464,8 +508,9 @@ async def vobiz_stream_status(
     """<Stream> lifecycle callbacks: StartStream / StopStream / failures.
 
     Matched by CallUUID, falling back to the call_id embedded in ServiceURL.
-    Purely diagnostic — never changes call state.
+    Purely diagnostic â€” never changes call state.
     """
+    _check_webhook_secret(request)
     payload = await _payload_dict(request)
     provider_id = str(
         payload.get("CallUUID")
@@ -482,7 +527,7 @@ async def vobiz_stream_status(
         if m:
             call = db.get(Call, int(m.group(1)))
     if call is None:
-        logger.warning("vobiz stream-status for unknown call: %s", payload)
+        logger.warning("vobiz stream-status for unknown call keys=%s", sorted(payload.keys()))
         return Response(status_code=200)
     event = str(payload.get("Event") or payload.get("event") or "unknown")
     log_call_event(db, call.id, f"vobiz_stream:{event}", payload)
@@ -497,6 +542,7 @@ async def vobiz_status(
     db: Session = Depends(get_db),
 ) -> Response:
     """Status callback: best-effort mapping onto call/contact state."""
+    _check_webhook_secret(request)
     payload = await _payload_dict(request)
 
     provider_id = str(
@@ -526,7 +572,7 @@ async def vobiz_status(
         else None
     )
     if call is None:
-        logger.warning("vobiz status webhook for unknown call: %s", payload)
+        logger.warning("vobiz status webhook for unknown call keys=%s", sorted(payload.keys()))
         return Response(status_code=200)
 
     log_call_event(db, call.id, f"vobiz_status:{raw_status or 'unknown'}", payload)

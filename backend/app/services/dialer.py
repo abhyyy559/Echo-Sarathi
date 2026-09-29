@@ -31,7 +31,7 @@ from app.services.calls_service import (
     maybe_complete_campaign,
 )
 from app.services.import_service import normalize_phone
-from app.services.telephony import TelephonyClient
+from app.services.telephony import TelephonyClient, mask_phone
 from app.timeutil import is_within_calling_hours, utcnow
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ class DialerService:
         contact.status = "calling"
         contact.last_call_id = call.id
         db.commit()
-        logger.info("dialer: call %s ringing to %s (contact %s)", call.id, contact.phone, contact.id)
+        logger.info("dialer: call %s ringing to %s (contact %s)", call.id, mask_phone(contact.phone), contact.id)
 
     async def run(self, interval_seconds: float = 1.0) -> None:
         """Background loop; each tick runs in a worker thread."""

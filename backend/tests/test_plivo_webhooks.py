@@ -65,7 +65,11 @@ def _seed_call(
         return int(call.id), int(contact.id)
 
 
-def _start_frame(call_uuid: str = "8c43a765-94fa-4ee9-b9a3-242703e41f63", internal_call_id: str = "42") -> str:
+def _start_frame(call_uuid: str = "8c43a765-94fa-4ee9-b9a3-242703e41f63", internal_call_id: str = "42", bridge_token: str | None = "valid") -> str:
+    from app.services.media_bridge import build_bridge_token
+
+    if bridge_token == "valid":
+        bridge_token = build_bridge_token(internal_call_id, "test_internal_token")
     return json.dumps(
         {
             "sequenceNumber": 0,
@@ -75,7 +79,7 @@ def _start_frame(call_uuid: str = "8c43a765-94fa-4ee9-b9a3-242703e41f63", intern
                 "streamId": "str_001",
                 "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000},
             },
-            "extra_headers": f"call_id={internal_call_id}",
+            "extra_headers": f"call_id={internal_call_id};bridge_token={bridge_token}",
         }
     )
 
@@ -216,3 +220,12 @@ def test_media_call_without_agent_version_close_4404(client, session_factory):
         with pytest.raises(WebSocketDisconnect) as excinfo:
             ws.receive_text()
     assert excinfo.value.code == 4404
+
+
+def test_media_bad_bridge_token_close_4403(client, session_factory):
+    call_id, _ = _seed_call(session_factory)
+    with client.websocket_connect("/plivo/media") as ws:
+        ws.send_text(_start_frame(internal_call_id=str(call_id), bridge_token="forged"))
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            ws.receive_text()
+    assert excinfo.value.code == 4403

@@ -20,7 +20,11 @@ def _media_frame() -> str:
     return base64.b64encode(bytes([0xFF]) * 160).decode()
 
 
-def _start_frame(call_id: Any = "42", call_sid: str = "CAfixed123") -> str:
+def _start_frame(call_id: Any = "42", call_sid: str = "CAfixed123", bridge_token: str | None = "valid") -> str:
+    from app.services.media_bridge import build_bridge_token
+
+    if bridge_token == "valid":
+        bridge_token = build_bridge_token(call_id, "test_internal_token")
     return json.dumps(
         {
             "event": "start",
@@ -28,7 +32,7 @@ def _start_frame(call_id: Any = "42", call_sid: str = "CAfixed123") -> str:
             "start": {
                 "streamSid": "MZ1234567890",
                 "callSid": call_sid,
-                "customParameters": {"call_id": str(call_id)},
+                "customParameters": {"call_id": str(call_id), "bridge_token": bridge_token},
             },
         }
     )
@@ -136,3 +140,13 @@ def test_handshake_skips_connected_and_junk_then_closes_on_non_start(client):
         with pytest.raises(WebSocketDisconnect) as excinfo:
             ws.receive_text()
     assert excinfo.value.code == 4400
+
+
+def test_forged_bridge_token_rejected_4403(client, session_factory):
+    call_id = _seed_call(session_factory)
+    with client.websocket_connect("/twilio/media") as ws:
+        ws.send_text(json.dumps({"event": "connected"}))
+        ws.send_text(_start_frame(call_id=call_id, bridge_token="forged"))
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            ws.receive_text()
+    assert excinfo.value.code == 4403

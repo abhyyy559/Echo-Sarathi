@@ -22,6 +22,7 @@ PLIVO_STREAM_SAMPLE_RATE = 8000
 # the start frame relays it back in ``extra_headers`` so the websocket route
 # can resolve our call row directly.
 EXTRA_HEADER_KEY = "call_id"
+BRIDGE_TOKEN_HEADER_KEY = "bridge_token"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class PlivoStreamEvent:
     call_id: str  # Plivo CallUUID (start.callId); may be empty on media frames
     internal_call_id: str  # our call id carried in extra_headers; "" if absent
     media_payload: str
+    bridge_token: str = ""  # per-call media auth, carried in extra_headers
     content_type: str = ""
     sample_rate: int = 0
 
@@ -80,6 +82,7 @@ def parse_plivo_event(raw: Any) -> PlivoStreamEvent:
             stream_id=stream_id,
             call_id=call_id,
             internal_call_id=str(extra.get(EXTRA_HEADER_KEY) or ""),
+            bridge_token=str(extra.get(BRIDGE_TOKEN_HEADER_KEY) or ""),
             media_payload=str(media_map.get("payload") or ""),
             content_type=str(fmt.get("encoding") or ""),
             sample_rate=int(fmt.get("sampleRate") or 0),
@@ -90,14 +93,19 @@ def parse_plivo_event(raw: Any) -> PlivoStreamEvent:
         raise ValueError(f"bad plivo event: {exc}") from exc
 
 
-def build_plivo_stream_xml(media_ws_base_url: str, call_id: int) -> str:
+def build_plivo_stream_xml(
+    media_ws_base_url: str, call_id: int, bridge_token: str = ""
+) -> str:
     """Answer XML starting a bidirectional mu-law 8 kHz stream for the call."""
     ws_url = f"{media_ws_base_url.rstrip('/')}/plivo/media"
+    extra = f"{EXTRA_HEADER_KEY}={call_id}"
+    if bridge_token:
+        extra += f";{BRIDGE_TOKEN_HEADER_KEY}={bridge_token}"
     return (
         "<Response>"
         f'<Stream bidirectional="true" keepCallAlive="true" '
         f'contentType="audio/x-mulaw;rate={PLIVO_STREAM_SAMPLE_RATE}" '
-        f'extraHeaders="{EXTRA_HEADER_KEY}={call_id}">'
+        f'extraHeaders="{extra}">'
         f"{ws_url}"
         "</Stream>"
         "</Response>"

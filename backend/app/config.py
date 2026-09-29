@@ -4,9 +4,12 @@ Every variable name matches the project-level `.env.example` maintained by devop
 """
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -30,18 +33,22 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
-    twilio_validate_signature: bool = False
+    twilio_validate_signature: bool = True
 
     # Vobiz (India CPaaS: REST calls + XML <Stream> bidirectional websockets)
     vobiz_auth_id: str = ""
     vobiz_auth_token: str = ""
     vobiz_phone_number: str = ""
+    # Optional shared secret for Vobiz webhook callbacks (X-Vobiz-Signature
+    # header must equal this value). Empty = accept + warn (Vobiz offers no
+    # native signing); set it on exposed deployments.
+    vobiz_webhook_secret: str = ""
 
     # Plivo
     plivo_auth_id: str = ""
     plivo_auth_token: str = ""
     plivo_phone_number: str = ""
-    plivo_validate_signature: bool = False
+    plivo_validate_signature: bool = True
 
     # Public https base URL of this backend (e.g. https://x.ngrok-free.app).
     # TwiML webhooks and the Twilio Media Streams WS URL are derived from it.
@@ -74,6 +81,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "change_me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # one week
+    # H5: open registration mints owner-role orgs. Leave true for local
+    # demos; set false on any network-exposed deployment.
+    allow_public_registration: bool = True
     # Comma-separated allowlist of browser origins for CORS.
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
@@ -108,6 +118,79 @@ class Settings(BaseSettings):
     # Groq chat model for playground TEXT mode (must match GROQ_MODEL used by
     # the voice worker so both modes exercise the same brain).
     groq_model: str = "openai/gpt-oss-20b"
+
+    # --- LLM provider chain (free/cheap tiers, OpenAI-compatible) ---
+    # A single Groq key hits 429 after a handful of turns, which is what makes
+    # the agent go silent mid-conversation. Each entry below is one
+    # OpenAI-compatible endpoint; the chain is tried in order and a member is
+    # skipped on 429/5xx/timeouts. Format: NAME:base_url:key:model, comma
+    # separated. Blank entries are ignored, so leaving this unset keeps the
+    # historical Groq-only behaviour.
+    llm_fallback_chain: str = ""
+    openrouter_api_key: str = ""
+    cerebras_api_key: str = ""
+
+    @property
+    def llm_chain(self) -> list[tuple[str, str, str, str]]:
+        """Ordered ``(name, base_url, api_key, model)`` provider members.
+
+        Defaults to the configured Groq key so existing setups are unchanged.
+        """
+        members: list[tuple[str, str, str, str]] = []
+        for key in self.groq_api_key_list:
+            members.append(("groq", self.groq_base_url, key, self.groq_model))
+        for entry in self.llm_fallback_chain.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            # name:base_url:key:model - base_url itself contains "://" so the
+            # fields are peeled from both ends instead of a naive split.
+            name, _, rest = entry.partition(":")
+            head, _, model = rest.rpartition(":")
+            base_url, _, api_key = head.rpartition(":")
+            name, base_url, api_key, model = (
+                name.strip(),
+                base_url.strip(),
+                api_key.strip(),
+                model.strip(),
+            )
+            if not all((name, base_url, api_key, model)) or not base_url.startswith("http"):
+                _logger.warning("ignoring malformed LLM_FALLBACK_CHAIN entry: %r", entry)
+                continue
+            if name == "groq" and api_key in self.groq_api_key_list:
+                continue  # already added from GROQ_API_KEY(S)
+            members.append((name, base_url, api_key, model))
+        if self.openai_api_key:
+            members.append(
+                ("openai", "https://api.openai.com/v1", self.openai_api_key, "gpt-4o-mini")
+            )
+        if self.cerebras_api_key:
+            members.append(
+                (
+                    "cerebras",
+                    "https://api.cerebras.ai/v1",
+                    self.cerebras_api_key,
+                    "llama-3.3-70b",
+                )
+            )
+        if self.openrouter_api_key:
+            members.append(
+                (
+                    "openrouter",
+                    "https://openrouter.ai/api/v1",
+                    self.openrouter_api_key,
+                    "meta-llama/llama-3.3-70b-instruct:free",
+                )
+            )
+        seen: set[tuple[str, str]] = set()
+        unique: list[tuple[str, str, str, str]] = []
+        for name, base_url, api_key, model in members:
+            marker = (name, api_key)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            unique.append((name, base_url, api_key, model))
+        return unique
 
     @property
     def test_phone_number_list(self) -> list[str]:

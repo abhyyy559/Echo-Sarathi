@@ -107,29 +107,34 @@ services:
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
   # --- LiveKit (self-hosted dev server) ---------------------------------------
-  # RETIRED 2026-09-29: LiveKit Cloud is now the single room server
-  # (wss://echo-sarathi-2hya0f27.livekit.cloud via ../.env). This service is
-  # kept as a commented fallback for fully-offline work: uncomment to revive
-  # it, and set LIVEKIT_URL=ws://localhost:7880,
-  # LIVEKIT_URL_INTERNAL=ws://livekit:7880, LIVEKIT_API_KEY=devkey,
-  # LIVEKIT_API_SECRET=secret_for_local_dev_only in ../.env.
-  # livekit:
-  #   image: livekit/livekit-server:latest
-  #   container_name: voice-agent-livekit
-  #   env_file:
-  #     - ../.env
-  #   entrypoint: []
-  #   command:
-  #     [
-  #       "sh",
-  #       "-c",
-  #       "export LIVEKIT_KEYS=\"devkey: $${LIVEKIT_API_SECRET:-secret_for_local_dev_only}\" && exec /livekit-server --dev --bind 0.0.0.0",
-  #     ]
-  #   ports:
-  #     - "7880:7880"       # HTTP/WebSocket signaling
-  #     - "7881:7881"       # RTC over TCP fallback
-  #     - "7881:7881/udp"   # RTC media (UDP)
-  #   restart: unless-stopped
+  # LOCAL MODE (re-enabled 2026-09-29): the LiveKit Cloud API secret was never
+  # available, and Cloud rejects the pair we have (401 invalid token), so the
+  # self-hosted dev server is back as the room server. Set in ../.env:
+  #   LIVEKIT_URL=ws://localhost:7880   (browser, host)
+  #   LIVEKIT_URL_INTERNAL=ws://livekit:7880   (containers)
+  #   LIVEKIT_API_KEY=devkey
+  #   LIVEKIT_API_SECRET=secret_for_local_dev_only
+  # To go back to LiveKit Cloud, comment this service out and put the cloud
+  # wss:// URL + the REAL API secret (not a participant JWT) in ../.env.
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: voice-agent-livekit
+    environment:
+      # Local-only development credential. Not a secret, never leaves this
+      # machine, and is ignored entirely when Cloud is used.
+      LIVEKIT_KEYS: "devkey: secret_for_local_dev_only"
+      LIVEKIT_DEVPASSWORD: devpassword
+    ports:
+      - "7880:7880"       # HTTP/WebSocket signaling
+      - "7881:7881"       # RTC over TCP fallback
+      - "7881:7881/udp"   # RTC media (UDP)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7880"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
 
   # --- Voice agent worker (LiveKit Agents runtime) -----------------------------
   # Joins playground-* rooms; STT=Deepgram, TTS=Cartesia, LLM=Groq (OpenAI
@@ -146,11 +151,21 @@ services:
       # (cloud URL + API key/secret). No literals here: a literal LIVEKIT_URL
       # would override the cloud URL with the retired self-hosted address.
       BACKEND_INTERNAL_URL: http://backend:8000
+      # The worker only ever dials the room server from INSIDE the compose
+      # network, so it uses the service name. The browser-facing host address
+      # (ws://localhost:7880 in ../.env) is unreachable here, and the LiveKit
+      # CLI reads LIVEKIT_URL from the environment in preference to the
+      # ws_url passed in code, so this override is what stops the worker
+      # retrying 127.0.0.1:7880 forever. Backend and frontend keep the host
+      # URL from ../.env.
+      LIVEKIT_URL: ws://livekit:7880
       ENVIRONMENT: development
       LOG_LEVEL: info
     depends_on:
       backend:
         condition: service_healthy
+      livekit:
+        condition: service_started
     # No ports: the worker dials out to LiveKit/backend; nothing listens.
     # No healthcheck: the worker serves no HTTP endpoint to probe.
     command: ["python", "agent.py"]

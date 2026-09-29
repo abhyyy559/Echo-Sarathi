@@ -16,6 +16,7 @@ after 3 asks -> graceful wrap-up + flag. Values are never fabricated.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
@@ -23,6 +24,23 @@ logger = logging.getLogger("voice_agent.extraction")
 
 LOW_CONFIDENCE_THRESHOLD: float = 0.6
 MAX_ASKS_PER_FIELD: int = 3
+
+_GROUNDING_STOPWORDS = frozenset(
+    "the a an is was are be been being has have had will would shall should "
+    "he she it they him her them his hers theirs you we i me my mine our ours "
+    "for of to in on at from with by and or not no yes so as if then than that "
+    "this these those there here what when where which who whom whose how why "
+    "do does did done am".split()
+)
+
+# Resolved dates ("30", "September", "Monday") are exempt from grounding:
+# the prompt tells the model to convert relative answers, which legitimately
+# share no words with what was said.
+_DATE_LIKE_RE = re.compile(
+    r"\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|today|tomorrow|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday",
+    re.IGNORECASE,
+)
 
 #: Values that are NOT a value. An extraction carrying one of these means the
 #: caller did not actually provide the information (PE the LLM hedging with
@@ -132,9 +150,33 @@ class ExtractionCoordinator:
                     pass
         return self.low_confidence_threshold
 
-    def record(self, field_name: str, value: str, confidence: float) -> RecordResult:
-        """Store (or flag) one extracted value. Never invents data."""
+    def record(self, field_name: str, value: str, confidence: float, quiet: bool = False) -> RecordResult:
+        """Store (or flag) one extracted value. Never invents data.
+
+        ``quiet`` is for background safety nets (the heuristic pass): a
+        rejection is recorded as a flag for the end-call summary but never
+        triggers wrap-up side effects — a guess the model didn't even make
+        must not finalize a live call mid-conversation (C3).
+        """
         clamped = max(0.0, min(1.0, float(confidence)))
+        # Every record() call is an ask signal: the model (or safety net)
+        # touched this field again. Required + unfilled + exhausted asks
+        # escalates even when nobody calls mark_asked() (H20: it was dead).
+        if str(field_name) in self.required_fields and str(field_name) not in self.recorded:
+            self.ask_counts[str(field_name)] = self.ask_counts.get(str(field_name), 0) + 1
+            count = self.ask_counts[str(field_name)]
+            if (
+                count >= self.max_asks_per_field
+                and str(field_name) not in self.flagged_fields
+            ):
+                reason = (
+                    f"Required field '{field_name}' still unfilled after "
+                    f"{self.max_asks_per_field} touches - giving up on it and wrapping up."
+                )
+                self.flagged_fields[str(field_name)] = reason
+                if not quiet:
+                    self._wrap_up_reasons.append(reason)
+                logger.warning("escalation: %s", reason)
         # Validate the field name against the known schema when one is loaded.
         if self.schema and str(field_name) not in self.schema:
             reason = (
@@ -174,7 +216,8 @@ class ExtractionCoordinator:
                 f"{effective:.2f} - not captured."
             )
             self.flagged_fields.setdefault(field_name, reason)
-            self._wrap_up_reasons.append(reason)
+            if not quiet:
+                self._wrap_up_reasons.append(reason)
             logger.warning("escalation: %s", reason)
             return RecordResult(
                 field_name=field_name,
@@ -226,6 +269,32 @@ class VoiceAgentTools:
         self._backend = backend
         self._call_id = call_id
         self._schema = schema or {}
+        # Latest final caller utterance, set by the pipeline on every turn.
+        # Powers the transcript-grounding check below (M13).
+        self.recent_caller_text: str = ""
+
+    def _grounding_rejection(self, field_name: str, value: str) -> Optional[str]:
+        """Reject model-called values with no transcript evidence (M13).
+
+        Returns a reason string when the value must NOT be banked, else None.
+        Skipped when no recent caller text is available (offline unit tests).
+        """
+        recent = str(self.recent_caller_text or "").strip()
+        if not recent:
+            return None
+        text = str(value or "").strip()
+        if not text or _DATE_LIKE_RE.search(text):
+            return None
+        words = {
+            w for w in re.findall(r"[a-z0-9']+", text.lower())
+            if len(w) > 2 and w not in _GROUNDING_STOPWORDS
+        }
+        if not words:
+            return None
+        caller_words = set(re.findall(r"[a-z0-9']+", recent.lower()))
+        if words & caller_words:
+            return None
+        return f"value '{text}' for '{field_name}' was never stated by the caller."
 
     async def heuristic_extract(self, transcript: str) -> int:
         """Deterministic safety-net extraction (FR-12 companion).
@@ -236,8 +305,6 @@ class VoiceAgentTools:
         is never lost just because the model skipped its tool call.
         Returns how many fields were captured.
         """
-        import re
-
         text = (transcript or "").strip()
         if not text:
             return 0
@@ -262,6 +329,7 @@ class VoiceAgentTools:
                         field_name,
                         sentence.strip(" ."),
                         0.7,
+                        quiet=True,
                     )
                     captured += 1
                     break
@@ -274,16 +342,33 @@ class VoiceAgentTools:
         confidence: float,
         *,
         source_turn_index: int = 0,
+        quiet: bool = False,
     ) -> str:
         """Record one extracted field and escalate when it is unreliable.
 
         Only ACCEPTED values are persisted to the backend. A value the
         coordinator rejects (placeholder, low confidence, or out-of-schema
         field name) is never posted — the LLM is told to re-ask or keep going.
+
+        ``quiet=True`` (heuristic safety net): rejections flag the field for
+        the end-call summary but never post a wrap-up completion — a
+        background guess must not finalize a live call (C3).
         """
-        result = self._coordinator.record(field_name, str(value), float(confidence))
+        result = self._coordinator.record(str(field_name), str(value), float(confidence), quiet=quiet)
+        if result.accepted and not quiet:
+            # M13: transcript grounding for model-called tools. A confident
+            # value that shares no words with what the caller just said
+            # ("next week" @ 0.9, unmentioned) is downgraded to a re-ask
+            # instead of being banked as fact. Agent-resolved dates are
+            # exempt; empty recent text (offline tests) skips the check.
+            grounded_reason = self._grounding_rejection(str(field_name), str(value))
+            if grounded_reason is not None:
+                return (
+                    f"NOT RECORDED: {grounded_reason} Re-ask specifically, or "
+                    f"record it once the caller actually states it."
+                )
         if not result.accepted:
-            if result.should_wrap_up:
+            if result.should_wrap_up and not quiet:
                 await self._backend.post_complete(
                     self._call_id,
                     status="wrapped_up_flagged",

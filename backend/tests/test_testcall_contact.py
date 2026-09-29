@@ -72,15 +72,30 @@ def test_test_call_derives_domain_config_when_omitted(client, session_factory):
 
 
 def test_test_call_explicit_to_needs_no_allowlist_entry(client, session_factory):
-    """An explicitly requested number works with an empty TEST_PHONE_NUMBERS."""
+    """A roster number (consented, same org) works with empty TEST_PHONE_NUMBERS."""
     from fastapi.testclient import TestClient
     from sqlalchemy import select
 
     from app.main import create_app
-    from app.models import Contact
+    from app.models import Campaign, Contact
 
-    token, _user = register(client)
+    token, user = register(client)
     ids = _make_agent_and_version(client, token)
+    with session_factory() as db:
+        campaign = Campaign(name="Roster", org_id=user["org_id"], status="draft")
+        db.add(campaign)
+        db.flush()
+        db.add(
+            Contact(
+                campaign_id=campaign.id,
+                org_id=user["org_id"],
+                name="Roster Parent",
+                phone="+919812345602",
+                consent=True,
+                consent_source="campaign_roster",
+            )
+        )
+        db.commit()
     fresh = create_app(make_settings(test_phone_numbers=""))
     fresh.state.session_factory = session_factory
     with TestClient(fresh) as bare:
@@ -91,9 +106,31 @@ def test_test_call_explicit_to_needs_no_allowlist_entry(client, session_factory)
         )
     assert resp.status_code == 200, resp.text
     with session_factory() as db:
-        contact = db.scalar(
-            select(Contact).where(Contact.phone == "+919812345602")
-        )
+        from app.models import Call
+
+        call = db.get(Call, resp.json()["call_id"])
+        contact = db.get(Contact, call.contact_id)
         assert contact is not None
         assert contact.consent is True
-        assert contact.consent_source == "manual_test_call"
+        assert contact.consent_source == "manual_roster_call"
+
+
+def test_test_call_explicit_unknown_number_rejected_without_allowlist(
+    client, session_factory
+):
+    """An explicit non-roster number with empty allowlist is refused (H4)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    token, _ = register(client)
+    ids = _make_agent_and_version(client, token)
+    fresh = create_app(make_settings(test_phone_numbers=""))
+    fresh.state.session_factory = session_factory
+    with TestClient(fresh) as bare:
+        resp = bare.post(
+            "/api/test-call",
+            json={"to": "+919812345699", "agent_version_id": ids["version"]["id"]},
+            headers=auth_headers(token),
+        )
+    assert resp.status_code == 422, resp.text

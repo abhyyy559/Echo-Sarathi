@@ -40,6 +40,36 @@ def put_sentinel(queue: Any) -> None:
             pass
 
 
+def build_bridge_token(call_id: Any, secret: str) -> str:
+    """Per-call media-bridge token: HMAC-SHA256(call_id) hex (truncated).
+
+    Minted when the answer XML is built, verified on websocket handshake, so
+    only the provider leg we actually placed can join the LiveKit phone room.
+    """
+    import hashlib
+    import hmac
+
+    return hmac.new(
+        str(secret or "").encode(), str(call_id).encode(), hashlib.sha256
+    ).hexdigest()[:32]
+
+
+def verify_bridge_token(token: Any, call_id: Any, secret: str) -> bool:
+    """Constant-time check of a presented bridge token.
+
+    Empty secret (tests / local dev without INTERNAL_API_TOKEN) accepts with
+    no check — real protection requires the internal token to be set.
+    """
+    import hmac
+
+    if not secret:
+        return True
+    presented = str(token or "")
+    if not presented:
+        return False
+    return hmac.compare_digest(presented, build_bridge_token(call_id, secret))
+
+
 async def drain_track(track: Any, queue: Any) -> None:
     """Forward one subscribed remote audio track into the bridge queue.
 

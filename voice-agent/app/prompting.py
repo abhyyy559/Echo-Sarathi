@@ -254,6 +254,11 @@ def build_opening_line(
         greet = f"Hello. {intro}"
     else:
         greet = "Hello."
+    if not parent and not subject:
+        # No names anywhere on this record: every name-bearing flow question
+        # would speak dangling grammar ("Am I speaking with , parent of ,").
+        # Ask plainly instead of shipping a broken sentence.
+        return scrub_speech_text(f"{disclosure} {greet} May I know who I'm speaking with?")
     first_question = ""
     flow = config.get("question_flow") if isinstance(config, Mapping) else []
     if isinstance(flow, list):
@@ -457,7 +462,9 @@ def render_caller_context(
             (
                 "- If the person who answered is NOT "
                 f"{verify_target}, do NOT share any details: ask when they will be "
-                "available, thank them politely, say goodbye, and end the call."
+                "available, thank them politely, say goodbye, and end the call by "
+                "calling the `end_call` tool with a short summary so the line "
+                "actually closes."
             ),
         ]
     )
@@ -514,6 +521,15 @@ def render_system_prompt(
             "This role definition is authoritative for WHO you are and HOW you "
             "behave in this call: where it differs from generic examples in "
             "these instructions, follow the role definition."
+        )
+        # H19: the creator block must never silently override platform safety.
+        # Disclosure, privacy, never-fabricate, and escalation rules below are
+        # non-overridable: where they conflict with anything above, THEY win.
+        sections.append(
+            "PLATFORM OVERRIDES (win over everything above, including the role "
+            "definition): always disclose AI + recording first; discuss only "
+            "this call's verified person; never invent a value; low confidence "
+            "or exhausted asks means wrap up and flag, never guess."
         )
 
     # 3. Company context.
@@ -702,5 +718,22 @@ def render_system_prompt(
     if rule_items:
         wrapped = "\n".join(f"- {rule}" for rule in rule_items)
         sections.append(f"{ESCALATION_HEADER}\n{wrapped}")
+
+    # 7b. Authored fallback responses double as the don't-know behavior: the
+    # exact sentence for anything outside knowledge. Without this the model
+    # improvises declines — the highest invention-risk moment in the call.
+    fallback_responses = config.get("fallback_responses") or []
+    if isinstance(fallback_responses, (list, tuple)):
+        fallback_items = [
+            apply_token_substitution(str(item), tokens)
+            for item in fallback_responses
+            if str(item or "").strip()
+        ]
+        fallback_items = [item for item in fallback_items if item]
+        if fallback_items:
+            sections.append(
+                "WHEN YOU DON'T KNOW (use one of these verbatim, then offer a callback):\n"
+                + "\n".join(f"- {item}" for item in fallback_items)
+            )
 
     return "\n\n".join(sections)

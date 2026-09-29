@@ -101,7 +101,12 @@ class Settings:
         _load_env_file()
         single_groq_key = _get("GROQ_API_KEY")
         return Settings(
-            livekit_url=os.getenv("LIVEKIT_URL", "ws://localhost:7880"),
+            # Inside the compose network the room server is reachable by
+            # service name; LIVEKIT_URL is the browser-facing host address and
+            # resolves to the worker's own loopback otherwise. Same trick the
+            # backend bridges use.
+            livekit_url=os.getenv("LIVEKIT_URL_INTERNAL")
+            or os.getenv("LIVEKIT_URL", "ws://localhost:7880"),
             livekit_api_key=os.getenv("LIVEKIT_API_KEY", "devkey"),
             livekit_api_secret=os.getenv("LIVEKIT_API_SECRET", "secret"),
             deepgram_api_key=_get("DEEPGRAM_API_KEY"),

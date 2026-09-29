@@ -78,6 +78,10 @@ def register(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     settings: Settings = request.app.state.settings
+    if not settings.allow_public_registration:
+        # H5: open registration mints owner-role orgs. Closed by default in
+        # hardened deployments via ALLOW_PUBLIC_REGISTRATION=false.
+        raise HTTPException(status_code=403, detail="public registration is disabled")
     email = _validate_email(payload.email)
     if db.scalar(select(User).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="email already registered")

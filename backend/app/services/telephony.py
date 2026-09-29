@@ -8,6 +8,7 @@ telephony credentials.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Mapping, Protocol
 
 from app.config import Settings
@@ -15,11 +16,23 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+def mask_phone(phone: Any) -> str:
+    """Mask a phone number for logs: all but the last 4 digits hidden.
+
+    Full numbers in logs are PII (M1); debugging rarely needs more than the
+    tail to correlate with a contact row.
+    """
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if len(digits) <= 4:
+        return "****"
+    return "*" * (len(digits) - 4) + digits[-4:]
+
+
 class TelephonyClient(Protocol):
     """Interface for placing an outbound call.
 
     Returns the provider's id for the call (Twilio CallSid / Plivo request
-    uuid). Raises on failure — the dialer converts exceptions into per-call
+    uuid). Raises on failure â€” the dialer converts exceptions into per-call
     failures.
     """
 
@@ -50,13 +63,13 @@ class TwilioClient:
             status_callback=f"{base}/twilio/status",
             status_callback_method="POST",
             status_callback_event=["initiated", "ringing", "answered", "completed"],
-            # NOTE: no record=/recording_status_callback — trial accounts
+            # NOTE: no record=/recording_status_callback â€” trial accounts
             # reject recording params with HTTP 400 ("limited parameter
             # access"). Call content is captured by our own pipeline
             # (LiveKit room + transcript rows), so provider recording is
             # redundant for demos; re-add behind a paid-account flag later.
         )
-        logger.info("placed twilio call call_id=%s sid=%s to=%s", call_id, call.sid, to)
+        logger.info("placed twilio call call_id=%s sid=%s to=%s", call_id, call.sid, mask_phone(to))
         return str(call.sid)
 
 
@@ -64,7 +77,7 @@ class PlivoClient:
     """Production telephony client using the Plivo REST API.
 
     Plivo's create-call response carries a request uuid, not the final call
-    UUID — the answer / status webhooks overwrite provider_call_id with the
+    UUID â€” the answer / status webhooks overwrite provider_call_id with the
     real CallUUID (see routers/plivo.py).
     """
 
@@ -105,7 +118,7 @@ class PlivoClient:
             "placed plivo call call_id=%s request_uuid=%s to=%s",
             call_id,
             request_uuid,
-            to,
+            mask_phone(to),
         )
         return request_uuid or f"PL{call_id:010d}"
 
@@ -178,10 +191,10 @@ class VobizClient:
                 raise
             try:
                 body = resp.json()
-            except Exception:  # noqa: BLE001 — non-JSON success is still success
+            except Exception:  # noqa: BLE001 â€” non-JSON success is still success
                 body = {}
         sid = self._call_id_from_response(body)
-        logger.info("placed vobiz call call_id=%s provider_id=%s to=%s", call_id, sid, to)
+        logger.info("placed vobiz call call_id=%s provider_id=%s to=%s", call_id, sid, mask_phone(to))
         return sid or f"VB{call_id:010d}"
 
 

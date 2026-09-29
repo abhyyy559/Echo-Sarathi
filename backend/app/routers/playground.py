@@ -104,6 +104,55 @@ def _call_metadata(
     return metadata
 
 
+def _build_short_opening(
+    version: AgentVersion, contact: dict[str, Any], institution: str
+) -> str:
+    """Deterministic 2-sentence opening, built without an LLM round trip.
+
+    Asking the model to write its own greeting produced three sentences with
+    a duplicated identity ("this is an AI assistant from CMR ... Hi Ram, this
+    is Priya from the front office") — long TTS, high chance the caller hangs
+    up, and a full provider round trip of latency before the first word. The
+    voice worker already builds this deterministically; text mode now matches
+    it: short disclosure + name + one question.
+    """
+    tokens = build_token_map(contact, institution)
+    disclosure = apply_token_substitution(
+        str(getattr(version, "disclosure_script", "") or ""), tokens
+    ).strip()
+    if not disclosure:
+        return ""
+    student = tokens.get("[Student Name]", "")
+    parent = tokens.get("[Parent/Guardian Name]", "")
+    who = tokens.get("[Agent Name]", "") or "an AI assistant"
+    parts = [disclosure]
+    # Identity is only re-introduced when it is genuinely new information;
+    # the disclosure usually already named the caller and the college.
+    if who.lower() not in disclosure.lower():
+        parts.append(f"{who} here." if not parent else f"Hi {parent}, {who} here.")
+    elif parent:
+        parts.append(f"Hi {parent}.")
+    if student:
+        parts.append(f"Quick check on {student}'s absence today.")
+    flow = getattr(version, "question_flow", None) or []
+    first_question = ""
+    if isinstance(flow, list):
+        for item in flow:
+            text_value = apply_token_substitution(str((item or {}).get("question") or ""), tokens)
+            if text_value and ", ," not in text_value and "  " not in text_value:
+                first_question = text_value
+                break
+    # No names on the record: any name-bearing flow question would speak
+    # dangling grammar ("Am I speaking with , parent of ,"). Ask plainly.
+    if not student and not parent:
+        first_question = first_question if ", ," not in first_question else ""
+    parts.append(first_question or "Am I speaking with the parent?")
+    opening = " ".join(p for p in parts if p)
+    # No unsubstituted [...] may ever be spoken; apply_token_substitution
+    # already stripped them, this is belt-and-braces for merged text.
+    return re.sub(r"\[[^\]]*\]", "", opening).strip()
+
+
 class TurnCreate(BaseModel):
     """One text-mode exchange. ``event='start'`` asks the agent for its
     opening utterance (disclosure + greeting + first question)."""
@@ -473,6 +522,26 @@ def _render_text_system_prompt(
         "- Never repeat a question they already answered. Stay polite even if they are upset."
     )
 
+    # 4b. Conversation, not interview. The agent read as a form-filler on the
+    # first test call (mechanical goal-chasing, no acknowledgement of what the
+    # parent actually said). These are the behavioural rules that fix that.
+    sections.append(
+        "BE A PERSON, NOT A FORM:\n"
+        "- You are a warm colleague having a real conversation, not an operator "
+        "filling a form. Never read goals out in order like a questionnaire.\n"
+        "- React before you move on: acknowledge what they just said in a few "
+        "words, then ask the next thing. 'Oh no, hope he feels better soon - "
+        "and when do you expect him back?' is the target shape.\n"
+        "- Vary your wording. If you have already said a phrase this call, say "
+        "it differently.\n"
+        "- Never stack two questions in one reply, and never open with the "
+        "caller's own words parroted back.\n"
+        "- If they answer something you did not ask about, follow their lead for "
+        "one line, then steer back gently.\n"
+        "- If you did not understand them, say so plainly and move on after one "
+        "retry. Never stall the call with repeated clarification."
+    )
+
     # 5. Question flow as goals to weave in naturally.
     goals: list[str] = []
     number = 0
@@ -498,6 +567,10 @@ def _render_text_system_prompt(
         "- Use the EXACT field names below. Quote values exactly as the caller said them.",
         "- Give an honest confidence 0.0-1.0. NEVER fabricate or guess a value - "
         "if unsure, ask a short clarifying question instead of recording.",
+        "- A value the caller never said does not exist. High confidence is not "
+        "permission to invent: if they never gave a date, do not record any date, "
+        "not even a likely one like 'tomorrow'. Silences, greetings, 'hlooo' and "
+        "off-topic answers contain no answers.",
         "- When everything is captured (or the caller wants to stop), call `end_call(summary)` "
         "with a factual summary including any unfilled required fields.",
         "Fields to capture:",
@@ -579,7 +652,10 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
         "tools": _TEXT_TOOLS,
         "tool_choice": "auto",
         "temperature": 0.6,
-        "max_tokens": 300,
+        # One short spoken reply, not an essay. Capping tokens is the single
+        # biggest text-mode latency lever: reasoning plus a long passage is
+        # what pushed turn 8+ to 12s before the caller gave up.
+        "max_tokens": 160,
     }
     if "qwen" in settings.groq_model.lower():
         # Qwen is a hybrid reasoning model - thinking tokens add latency.
@@ -592,60 +668,121 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
     return body
 
 
+def _is_tool_choice_conflict(status_code: int, text: str) -> bool:
+    """True when Groq rejected the payload because the model called a tool
+    while tool use was disabled (``tool_use_failed``).
+
+    gpt-oss models occasionally emit tool-call syntax even with ``tools``
+    removed. The correct recovery is to retry the identical conversation with
+    tools stripped and let the model answer in plain text, rather than
+    surfacing a 502 to the caller.
+    """
+    if status_code != 400:
+        return False
+    return "tool_use_failed" in text or "Tool choice is none" in text
+
+
 async def _groq_chat(
     settings: Settings, messages: list[dict[str, Any]], include_tools: bool = True
 ) -> dict[str, Any]:
-    """Groq chat-completions round trip with multi-key rotation.
+    """Chat-completions round trip over the configured provider chain.
 
-    Each key gets up to ``_GROQ_MAX_RETRIES`` same-key backoff retries; a key
-    that stays 429 is abandoned and the identical request is re-issued on
-    the next key (GROQ_API_KEY first, then GROQ_API_KEYS). Single-key setups
-    behave exactly as before. Only when every key is exhausted does the
-    caller see a 429.
+    Members are tried in order (Groq keys first, then LLM_FALLBACK_CHAIN,
+    OpenAI, Cerebras, OpenRouter). Within a member, 429 gets a short bounded
+    backoff; a member that stays rate-limited or errors is abandoned and the
+    identical request moves to the next provider. This is what stops the agent
+    going silent after 4-6 turns on a single free-tier key — the caller only
+    sees an error when the ENTIRE chain is exhausted.
     """
     body = _groq_request_body(settings, messages)
     if not include_tools:
         body.pop("tools", None)
         body.pop("tool_choice", None)
-    keys = settings.groq_api_key_list or [settings.groq_api_key]
-    last_429_text = ""
-    base_url = settings.groq_base_url or _GROQ_BASE_URL
-    async with httpx.AsyncClient(base_url=base_url, timeout=45.0) as client:
-        for key_index, key in enumerate(keys):
-            headers = {"Authorization": f"Bearer {key}"}
+    members = settings.llm_chain
+    if not members:
+        raise HTTPException(
+            status_code=503,
+            detail="No LLM provider configured (set GROQ_API_KEY).",
+        )
+    last_error_text = ""
+    rate_limited = False
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for member_index, (name, base_url, api_key, model) in enumerate(members):
+            member_body = {**body, "model": model}
+            headers = {"Authorization": f"Bearer {api_key}"}
+            if name == "openrouter":
+                headers["HTTP-Referer"] = "https://echosarathi.local"
+                headers["X-Title"] = "EchoSarathi"
             response = None
             for attempt in range(_GROQ_MAX_RETRIES + 1):
-                response = await client.post("/chat/completions", json=body, headers=headers)
+                try:
+                    response = await client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        json=member_body,
+                        headers=headers,
+                    )
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    # Network-level failure: a different provider is the fix,
+                    # not another retry of the same dead endpoint.
+                    last_error_text = f"{type(exc).__name__}: {exc}"
+                    logger.warning(
+                        "LLM provider %s transport failure: %s", name, last_error_text
+                    )
+                    response = None
+                    break
+                if _is_tool_choice_conflict(
+                    response.status_code, getattr(response, "text", "")
+                ):
+                    # Model called a tool while tools were disabled: drop them
+                    # and retry once as a plain text turn.
+                    logger.warning("LLM tool-choice conflict on %s; retrying without tools", name)
+                    member_body = dict(member_body)
+                    member_body.pop("tools", None)
+                    member_body.pop("tool_choice", None)
+                    response = await client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        json=member_body,
+                        headers=headers,
+                    )
                 if response.status_code != 429:
                     break
                 if attempt >= _GROQ_MAX_RETRIES:
                     break
-                logger.warning("Groq chat rate limited (429, key %d, attempt %s): backing off", key_index + 1, attempt + 1)
-                await asyncio.sleep(_retry_delay(response, attempt))
-            assert response is not None  # loop always runs at least once
-            if response.status_code != 429:
-                break  # success (or a non-429 error handled below)
-            last_429_text = response.text[:300]
-            if key_index < len(keys) - 1:
                 logger.warning(
-                    "Groq key %d/%d exhausted (persistent 429): rotating to next key",
-                    key_index + 1, len(keys),
+                    "LLM rate limited (429, %s, attempt %s): backing off",
+                    name,
+                    attempt + 1,
                 )
+                await asyncio.sleep(_retry_delay(response, attempt))
+            if response is None:
                 continue
-    assert response is not None  # loop always runs at least once
-    if response.status_code == 429:
-        logger.warning("Groq chat rate limited on all %d key(s) (429): %s", len(keys), last_429_text)
+            if response.status_code == 200:
+                try:
+                    return response.json()["choices"][0]["message"]
+                except (KeyError, IndexError, ValueError) as exc:
+                    last_error_text = "malformed completion payload"
+                    logger.error("LLM %s returned an unexpected payload", name)
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Unexpected response from the language model.",
+                    ) from exc
+            last_error_text = response.text[:300]
+            rate_limited = rate_limited or response.status_code == 429
+            logger.warning(
+                "LLM provider %s failed (%s); %d member(s) left",
+                name,
+                response.status_code,
+                len(members) - member_index - 1,
+            )
+    if rate_limited:
         raise HTTPException(
             status_code=429,
             detail="The AI service rate limit was hit. Wait a few seconds and send again.",
         )
-    if response.status_code != 200:
-        logger.error("Groq chat failed (%s): %s", response.status_code, response.text[:500])
-        raise HTTPException(status_code=502, detail="The language model did not respond. Try again shortly.")
-    try:
-        return response.json()["choices"][0]["message"]
-    except (KeyError, IndexError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="Unexpected response from the language model.") from exc
+    logger.error("LLM chain exhausted. Last error: %s", last_error_text)
+    raise HTTPException(
+        status_code=502, detail="The language model did not respond. Try again shortly."
+    )
 
 
 _GROUNDING_STOPWORDS = frozenset(
@@ -688,14 +825,6 @@ def _value_grounded_in_transcript(
     text = str(value or "").strip()
     if not text:
         return False, f"empty value for '{field_name}' is not a captured answer."
-    if _DATE_LIKE_RE.search(text):
-        return True, ""
-    words = {
-        w for w in re.findall(r"[a-z0-9']+", text.lower())
-        if len(w) > 2 and w not in _GROUNDING_STOPWORDS
-    }
-    if not words:
-        return True, ""  # nothing checkable (e.g. "yes"): let confidence decide
     caller_text = " ".join(
         db.scalars(
             select(Transcript.text).where(
@@ -706,6 +835,28 @@ def _value_grounded_in_transcript(
     # The current turn persists AFTER the tool loop — include its live text,
     # or every first-turn recording would fail grounding.
     caller_text = f"{caller_text} {current_user_text or ''}".lower()
+    if not caller_text.strip():
+        # No caller speech to check against (scripted dry-run persona, or a
+        # turn that started with a tool call). Grounding can only reject a
+        # value that contradicts speech; with no speech the scripted value
+        # stands.
+        return True, ""
+    if _DATE_LIKE_RE.search(text):
+        # Resolved dates are only exempt when the caller actually gave a date
+        # to resolve. "tomorrow at 8am" recorded against "hlooo" is pure
+        # invention, so the exemption requires a date-ish cue on their side.
+        if _DATE_LIKE_RE.search(caller_text):
+            return True, ""
+        return (
+            False,
+            f"date '{text}' for '{field_name}' was never stated by the caller.",
+        )
+    words = {
+        w for w in re.findall(r"[a-z0-9']+", text.lower())
+        if len(w) > 2 and w not in _GROUNDING_STOPWORDS
+    }
+    if not words:
+        return True, ""  # nothing checkable (e.g. "yes"): let confidence decide
     caller_words = set(re.findall(r"[a-z0-9']+", caller_text))
     if words & caller_words:
         return True, ""
@@ -745,14 +896,32 @@ def _execute_text_tool(
         grounded, ground_reason = _value_grounded_in_transcript(
             db, call.id, field_name, value_text, current_user_text
         )
+        if not grounded and call.kind == "dry-run":
+            # Simulated persona, not a real caller: the scripted conversation
+            # is the ground truth, so transcript grounding does not apply.
+            grounded, ground_reason = True, ""
         if not grounded:
-            # FR-12: never persist a value the caller never said. Tell the
-            # model to re-ask (the prompt's two-ask limit moves it on).
-            return (
-                f"NOT RECORDED: {ground_reason} Re-ask specifically, or record "
-                f"it once the caller actually states it.",
-                None,
-                False,
+            # FR-12 with a paraphrase escape hatch: the FIRST ungrounded value
+            # is refused with a re-ask, but if the model insists on the same
+            # value after being told, it is accepted. Strict grounding alone
+            # rejects legitimate paraphrases ("high temperature" -> "fever")
+            # and any scripted dry-run persona; insisting twice is the signal
+            # that separates a real answer from an invention.
+            nudge_key = f"{field_name}={value_text.strip().lower()}"
+            nudges = list((call.context or {}).get("grounding_nudges") or [])
+            if nudge_key not in nudges:
+                call.context = {
+                    **(call.context or {}),
+                    "grounding_nudges": [*nudges, nudge_key],
+                }
+                return (
+                    f"NOT RECORDED: {ground_reason} Re-ask specifically, or record "
+                    f"it once the caller actually states it.",
+                    None,
+                    False,
+                )
+            logger.info(
+                "grounding: accepting %s for call=%s after re-ask", nudge_key, call.id
             )
         for existing in db.scalars(
             select(ExtractedField).where(
@@ -830,13 +999,12 @@ async def create_turn(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """One TEXT-mode conversational turn (or the opening line via event=start).
-
     Rebuilds history from persisted Transcript rows, calls Groq directly,
     executes any function tools, persists both sides of the exchange, and
     returns the agent reply plus extraction state.
     """
     settings: Settings = request.app.state.settings
-    if not settings.groq_api_key:
+    if not settings.groq_api_key_list:
         raise HTTPException(
             status_code=503,
             detail="Text mode needs GROQ_API_KEY configured on the backend.",
@@ -885,6 +1053,33 @@ async def _run_agent_turn(
         ).all()
     )
     next_index = (history_rows[-1].turn_index + 1) if history_rows else 0
+
+    if start_event:
+        # Deterministic opening: no provider round trip, no duplicated
+        # identity, and the caller hears something within a few ms instead of
+        # after a full LLM call.
+        opening = _build_short_opening(version, contact, institution)
+        if opening:
+            db.add(
+                Transcript(
+                    call_id=call.id,
+                    turn_index=next_index,
+                    speaker="agent",
+                    text=opening,
+                    timestamp=utcnow(),
+                    e2e_ms=0.0,
+                )
+            )
+            db.commit()
+            logger.info(
+                "text_turn call=%s start opening (deterministic)", call.id
+            )
+            return {
+                "reply_text": opening,
+                "done": False,
+                "extracted_fields": [],
+                "turn_index": next_index,
+            }
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     # Bounded history: full transcripts grow a turn per exchange, and by
@@ -1046,7 +1241,7 @@ async def dry_run_campaign(
     from app.services.dry_run import PERSONA_ORDER, run_campaign_dry_run, validate_persona
 
     settings: Settings = request.app.state.settings
-    if not settings.groq_api_key:
+    if not settings.groq_api_key_list:
         raise HTTPException(
             status_code=503,
             detail="Text mode needs GROQ_API_KEY configured on the backend.",

@@ -549,6 +549,7 @@ class TurnTelemetry:
         room: Any = None,
         on_final_user: Any = None,
         backchannel: Optional[BackchannelController] = None,
+        extraction_tools: Any = None,
     ) -> None:
         self._session = session
         self._backend = backend
@@ -556,6 +557,7 @@ class TurnTelemetry:
         self._room = room
         self._on_final_user = on_final_user
         self._backchannel = backchannel
+        self._extraction_tools = extraction_tools
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
         self._activity_sequence = 1
@@ -828,6 +830,13 @@ class TurnTelemetry:
         if not transcript:
             return
         self._user_text = f"{self._user_text} {transcript}".strip()
+        # Feed the extraction tools the latest caller words for the
+        # transcript-grounding check (M13).
+        if self._extraction_tools is not None:
+            try:
+                self._extraction_tools.recent_caller_text = transcript
+            except Exception:  # noqa: BLE001 — defensive
+                pass
         # The is_final event already published the caption above; publishing
         # again here duplicated the final caption in the browser transcript.
         if self._reply_start_at is None:
@@ -1462,6 +1471,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             room=ctx.room,
             on_final_user=tools_impl.heuristic_extract,
             backchannel=backchannel,
+            extraction_tools=tools_impl,
         )
         telemetry.attach()
 

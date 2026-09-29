@@ -59,11 +59,23 @@ def place_test_call(
             status_code=422, detail="no 'to' given and TEST_PHONE_NUMBERS is empty"
         )
 
-    # An explicitly requested number from a signed-in org user is allowed
-    # directly — the request itself is the authorization, so ad-hoc calls
-    # never need a TEST_PHONE_NUMBERS entry. The allowlist remains only as
-    # the default target when no 'to' is given.
-    if not (payload.to and target):
+    # An explicitly requested number is allowed only when it belongs to a
+    # consenting contact in the caller's own org (e.g. a roster number the
+    # faculty uploaded) — the request itself is NOT authorization for
+    # arbitrary dialing. Anything else stays behind the TEST_PHONE_NUMBERS
+    # gate so one authenticated user cannot place billable calls anywhere.
+    roster_match = None
+    if payload.to and target:
+        roster_match = db.scalar(
+            select(Contact)
+            .join(Campaign, Campaign.id == Contact.campaign_id)
+            .where(
+                Contact.phone == target,
+                Campaign.org_id == user.org_id,
+                Contact.consent.is_(True),
+            )
+        )
+    if not (payload.to and target and roster_match is not None):
         if settings.consent_enforcement and target not in allowlist:
             raise HTTPException(
                 status_code=422,
@@ -120,20 +132,18 @@ def place_test_call(
         select(Contact).where(Contact.campaign_id == campaign.id, Contact.phone == target)
     )
     if contact is None:
-        contact_card: dict[str, Any] = {
-            "name": payload.contact.get("name") if payload.contact else None,
-            "phone": target,
-            "status": "pending_review",
-            "consent": True,
-            "consent_source": "manual_test_call" if payload.to else "test_allowlist",
-        }
         contact = Contact(
             campaign_id=campaign.id,
-            name=contact_card["name"] or f"Test Call ({target})",
+            name=(payload.contact.get("name") if payload.contact else None)
+            or f"Test Call ({target})",
             phone=target,
             status="pending_review",
             consent=True,
-            consent_source=contact_card["consent_source"],
+            consent_source=(
+                "manual_roster_call"
+                if roster_match is not None
+                else ("manual_test_call" if payload.to else "test_allowlist")
+            ),
         )
         db.add(contact)
         db.flush()

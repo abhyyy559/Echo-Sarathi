@@ -163,6 +163,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.warning(
                 "INTERNAL_API_TOKEN is empty — /internal/* endpoints reject all calls"
             )
+        if app_settings.jwt_secret == "change_me":
+            logger.warning(
+                "JWT_SECRET is the default value — tokens are forgeable; "
+                "set a long random secret in production"
+            )
+        if app_settings.allow_public_registration:
+            logger.warning(
+                "ALLOW_PUBLIC_REGISTRATION is on — anyone can self-register "
+                "an owner org; set false on exposed deployments"
+            )
 
         dialer_task: asyncio.Task | None = None
         if _should_run_dialer(app_settings):

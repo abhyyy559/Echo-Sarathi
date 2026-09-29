@@ -196,6 +196,148 @@ def test_invented_value_refused_despite_high_confidence(groq_client, session_fac
         assert [f.field_name for f in rows] == []
 
 
+def test_never_stated_date_is_refused(groq_client, session_factory):
+    """Regression from the first live test call: caller answered 'hlooo' and
+    the agent recorded expected_return_date='tomorrow at 8am' at 95%."""
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+    from test_playground_text import chat, script, start_session, tool_call
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        tool_call(
+            "record_extracted_field",
+            {"field_name": "expected_return_date", "value": "tomorrow at 8am", "confidence": 0.95},
+        ),
+        chat("Sorry, when do you expect him back?"),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "hlooo"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["extracted_fields"] == []
+    with session_factory() as db:
+        rows = db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call_id)
+        ).all()
+        assert [f.field_name for f in rows] == []
+
+
+def test_stated_relative_date_is_accepted(groq_client, session_factory):
+    """The grounding guard must not block a date the caller really gave."""
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+    from test_playground_text import chat, script, start_session, tool_call
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        tool_call(
+            "record_extracted_field",
+            {"field_name": "expected_return_date", "value": "tomorrow", "confidence": 0.9},
+        ),
+        chat("Noted, thank you."),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "he will come tomorrow morning"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["extracted_fields"] == [
+        {"field_name": "expected_return_date", "field_value": "tomorrow", "confidence": 0.9}
+    ]
+    with session_factory() as db:
+        rows = db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call_id)
+        ).all()
+        assert [(f.field_name, f.field_value) for f in rows] == [
+            ("expected_return_date", "tomorrow")
+        ]
+
+
+def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_factory, monkeypatch):
+    """Live failure being fixed: one Groq key 429s mid-conversation and the
+    agent goes silent. A second configured provider must serve the turn."""
+    from test_playground_text import start_session as _start
+
+    from conftest import make_settings
+
+    monkeypatch.setattr(playground_module.httpx, "AsyncClient", _FlakyAsyncClient)
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []
+    from app.main import create_app
+
+    fresh = create_app(
+        make_settings(
+            groq_api_key="k1",
+            llm_fallback_chain="cerebras:https://api.cerebras.ai/v1:ck1:llama-3.3-70b",
+        )
+    )
+    fresh.state.session_factory = session_factory
+    with TestClient(fresh) as client:
+        token, _ = register(client)
+        call_id = _start(client, token)
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 3 + [
+            _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "still here"}}]}),
+        ]
+        _FlakyAsyncClient.requests = []
+        resp = client.post(
+            f"/api/playground/sessions/{call_id}/turns",
+            json={"text": "hi"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["reply_text"] == "still here"
+        bearers = [r["headers"]["Authorization"] for r in _FlakyAsyncClient.requests]
+        assert bearers == ["Bearer k1"] * 3 + ["Bearer ck1"]
+        assert _FlakyAsyncClient.requests[-1]["url"] == (
+            "https://api.cerebras.ai/v1/chat/completions"
+        )
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []
+
+
+def test_exhausted_chain_reports_rate_limit(session_factory, monkeypatch):
+    """Every member rate-limited -> the caller sees 429, not a silent 502."""
+    from test_playground_text import start_session as _start
+
+    from conftest import make_settings
+
+    monkeypatch.setattr(playground_module.httpx, "AsyncClient", _FlakyAsyncClient)
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []
+    from app.main import create_app
+
+    fresh = create_app(
+        make_settings(
+            groq_api_key="k1",
+            llm_fallback_chain="cerebras:https://api.cerebras.ai/v1:ck1:llama-3.3-70b",
+        )
+    )
+    fresh.state.session_factory = session_factory
+    with TestClient(fresh) as client:
+        token, _ = register(client)
+        call_id = _start(client, token)
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 6
+        _FlakyAsyncClient.requests = []
+        resp = client.post(
+            f"/api/playground/sessions/{call_id}/turns",
+            json={"text": "hi"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 429
+    _FlakyAsyncClient.planned = []
+    _FlakyAsyncClient.requests = []
+
+
 def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monkeypatch):
     """Two keys: k1 429s through all its retries, k2 answers immediately."""
     from test_playground_text import start_session as _start

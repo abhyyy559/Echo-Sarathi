@@ -46,6 +46,11 @@ async def _check_signature(request: Request, form) -> None:  # type: ignore[no-u
     settings = request.app.state.settings
     if not getattr(settings, "twilio_validate_signature", False):
         return
+    if not settings.twilio_auth_token:
+        # Fail open with a loud warning when no secret is configured (local
+        # dev without Twilio creds); real protection requires the secret.
+        logger.warning("TWILIO_VALIDATE_SIGNATURE on but no auth token — skipping check")
+        return
     from twilio.request_validator import RequestValidator
 
     validator = RequestValidator(settings.twilio_auth_token)
@@ -54,7 +59,7 @@ async def _check_signature(request: Request, form) -> None:  # type: ignore[no-u
         raise HTTPException(status_code=403, detail="invalid Twilio signature")
 
 
-def _build_voice_twiml(ws_base_url: str, call_id: int) -> str:
+def _build_voice_twiml(ws_base_url: str, call_id: int, bridge_token: str = "") -> str:
     """TwiML connecting the call to the voice-agent Media Stream."""
     from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
@@ -62,6 +67,8 @@ def _build_voice_twiml(ws_base_url: str, call_id: int) -> str:
     connect = Connect()
     stream = Stream(url=f"{ws_base_url}/twilio/media", track="inbound_track")
     stream.parameter(name="call_id", value=str(call_id))
+    if bridge_token:
+        stream.parameter(name="bridge_token", value=bridge_token)
     connect.append(stream)
     response.append(connect)
     return str(response)
@@ -188,6 +195,14 @@ async def twilio_media(websocket: WebSocket) -> None:
         if call is None or call.agent_version_id is None:
             await _close(4404)
             return
+        from app.services.media_bridge import verify_bridge_token
+
+        if not verify_bridge_token(
+            ev.bridge_token, call_pk, settings.internal_api_token
+        ):
+            logger.warning("twilio media bridge rejected (bad token) call=%s", call_pk)
+            await _close(4403)
+            return
         if not ev.call_sid or ev.call_sid != call.provider_call_id:
             logger.warning("callSid mismatch on media bridge for call %s", call_pk)
             await _close(4403)
@@ -290,7 +305,13 @@ async def twilio_voice(
     db.commit()
 
     settings = request.app.state.settings
-    xml = _build_voice_twiml(settings.media_ws_base_url, call_id)
+    from app.services.media_bridge import build_bridge_token
+
+    xml = _build_voice_twiml(
+        settings.media_ws_base_url,
+        call_id,
+        build_bridge_token(call_id, settings.internal_api_token),
+    )
     return Response(content=xml, media_type=XML_MEDIA_TYPE)
 
 

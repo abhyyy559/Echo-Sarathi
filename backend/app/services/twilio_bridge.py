@@ -19,6 +19,7 @@ class MediaEvent:
     media_payload: str
     call_id: str
     call_sid: str = ""
+    bridge_token: str = ""
 
 
 def parse_stream_event(raw: Any) -> MediaEvent:
@@ -52,6 +53,7 @@ def parse_stream_event(raw: Any) -> MediaEvent:
             media_payload=str(media.get("payload") or "") if isinstance(media, Mapping) else "",
             call_id=str(params.get("call_id") or "") if isinstance(params, Mapping) else "",
             call_sid=call_sid,
+            bridge_token=str(params.get("bridge_token") or "") if isinstance(params, Mapping) else "",
         )
     except ValueError:
         raise

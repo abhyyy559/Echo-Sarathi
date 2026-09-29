@@ -60,6 +60,9 @@ async def _check_signature(request: Request, form) -> None:  # type: ignore[no-u
     settings = request.app.state.settings
     if not getattr(settings, "plivo_validate_signature", False):
         return
+    if not settings.plivo_auth_token:
+        logger.warning("PLIVO_VALIDATE_SIGNATURE on but no auth token — skipping check")
+        return
     try:
         from plivo.utils.signature_v3 import validate_v3_signature
     except ImportError:  # pragma: no cover - SDK layout varies by version
@@ -173,6 +176,14 @@ async def plivo_media(websocket: WebSocket) -> None:
         if call is None or call.agent_version_id is None:
             await _close(4404)
             return
+        from app.services.media_bridge import verify_bridge_token
+
+        if not verify_bridge_token(
+            ev.bridge_token, call_pk, settings.internal_api_token
+        ):
+            logger.warning("plivo media bridge rejected (bad token) call=%s", call_pk)
+            await _close(4403)
+            return
         if ev.call_id and ev.call_id != call.provider_call_id:
             logger.warning("CallUUID mismatch on media bridge for call %s", call_pk)
         contact = db.get(Contact, call.contact_id) if call.contact_id else None
@@ -280,7 +291,13 @@ async def plivo_voice(
     db.commit()
 
     settings = request.app.state.settings
-    xml = build_plivo_stream_xml(settings.media_ws_base_url, call_id)
+    from app.services.media_bridge import build_bridge_token
+
+    xml = build_plivo_stream_xml(
+        settings.media_ws_base_url,
+        call_id,
+        build_bridge_token(call_id, settings.internal_api_token),
+    )
     return Response(content=xml, media_type=XML_MEDIA_TYPE)
 
 
