@@ -183,6 +183,101 @@ def _cap_reply(text: str, max_sentences: int = 2) -> str:
     return kept
 
 
+def _backfill_grounded_fields(
+    db: Session,
+    call: Call,
+    version: Any,
+    user_text: str,
+    extracted_now: list[dict[str, Any]],
+    turn_index: int,
+) -> int:
+    """Deterministic safety net for extraction (never fabricates).
+
+    The model's tool calling is probabilistic. gpt-oss-20b was so eager it
+    emitted tool calls into tools-less requests (Groq 400), and
+    qwen/qwen3.8-27b is the opposite: it skips ``record_extracted_field``
+    entirely on some turns, so a plainly stated "sick" was never recorded and
+    the call reported no fields at all. Leaving that to sampling is not
+    acceptable, so when the model recorded nothing this turn we look for a
+    CALLER sentence that literally overlaps the field name/description.
+
+    Safety properties, all deliberate:
+    - only the caller's own words from THIS turn are candidates
+    - a real word overlap with the field name/description is required
+    - the normal grounding check still runs, so a paraphrase is refused first
+      and the two-strike rule still applies
+    - a field the model already recorded is never touched
+
+    Mirrors the voice worker's heuristic pass, so text and voice behave the
+    same way.
+    """
+    text = str(user_text or "").strip()
+    if not text or extracted_now:
+        return 0
+    schema = getattr(version, "extraction_schema", None)
+    if not isinstance(schema, dict) or not schema:
+        return 0
+    already = {
+        row.field_name
+        for row in db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call.id)
+        ).all()
+    }
+    captured = 0
+    for field_name, spec in schema.items():
+        if field_name in already:
+            continue
+        # REQUIRED fields only. The net exists so a required answer the caller
+        # plainly gave is never lost; inferring optional/boolean fields from a
+        # sentence match produces low-value data ("He is sick" stored as a
+        # boolean) and is not worth the noise.
+        if not isinstance(spec, dict) or str(spec.get("validation") or "").lower() != "required":
+            continue
+        description = str(spec.get("description") or "")
+        cue_words = {
+            w.lower()
+            for w in re.split(r"[^a-z0-9]+", f"{field_name} {description}")
+            if len(w) > 3
+        }
+        if not cue_words:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+|,\s+", text):
+            sentence = sentence.strip(" .")
+            if not sentence:
+                continue
+            words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
+            if not (words & cue_words):
+                continue
+            result_text, field_record, _done = _execute_text_tool(
+                db,
+                call,
+                "record_extracted_field",
+                {"field_name": field_name, "value": sentence, "confidence": 0.7},
+                turn_index,
+                text,
+            )
+            if field_record and "summary" not in field_record:
+                extracted_now.append(field_record)
+                captured += 1
+                logger.info(
+                    "grounded backfill call=%s field=%s value=%r",
+                    call.id,
+                    field_name,
+                    sentence,
+                )
+            break
+    if captured:
+        telemetry.record(
+            "extraction_backfill",
+            level="warn",
+            message=f"model recorded nothing; recovered {captured} field(s) "
+            "from the caller's own words",
+            call_id=call.id,
+            fields=[f.get("field_name") for f in extracted_now],
+        )
+    return captured
+
+
 def _build_short_opening(
     version: AgentVersion, contact: dict[str, Any], institution: str
 ) -> str:
@@ -195,9 +290,12 @@ def _build_short_opening(
     voice worker already builds this deterministically; text mode now matches
     it: short disclosure + name + ONE question.
 
-    Each name is spoken exactly once. Announcing the reason ("quick check on
-    abhi's absence") and then asking a question that repeats both names is
-    what produced the 4-clause opener seen on the second test call.
+    Each name is spoken exactly once, and the opening asks ONE thing: is this
+    the right person. The reason for the call is deliberately NOT in the
+    opener - the caller answers "yes", and only then does the agent say who it
+    is calling about and why. Opening with "could you tell me the reason"
+    skipped verification entirely, which is the wrong order for a cold call to
+    a stranger's parent.
     """
     tokens = build_token_map(contact, institution)
     disclosure = apply_token_substitution(
@@ -215,25 +313,13 @@ def _build_short_opening(
         parts.append(f"Hi {parent}, {who} here." if parent else f"{who} here.")
     elif parent:
         parts.append(f"Hi {parent}.")
-    # One question, one mention of the student. The flow question is only used
-    # when it does not also re-ask for the name we just greeted.
-    flow = getattr(version, "question_flow", None) or []
-    first_question = ""
-    if isinstance(flow, list) and student:
-        for item in flow:
-            text_value = apply_token_substitution(
-                str((item or {}).get("question") or ""), tokens
-            )
-            if not text_value or ", ," in text_value:
-                continue
-            if parent and parent.lower() in text_value.lower():
-                continue  # would say the parent's name twice in one breath
-            if student.lower() in text_value.lower():
-                first_question = text_value
-                break
-    if not first_question and student:
-        first_question = f"Am I speaking with {student}'s parent?"
-    parts.append(first_question or "Am I speaking with the parent?")
+    # Verification only, one short question.
+    if parent:
+        parts.append(f"Am I speaking with {parent}?")
+    elif student:
+        parts.append(f"Are you {student}'s parent?")
+    else:
+        parts.append("May I know who I'm speaking with?")
     opening = " ".join(p for p in parts if p)
     # No unsubstituted [...] may ever be spoken; apply_token_substitution
     # already stripped them, this is belt-and-braces for merged text.
@@ -363,7 +449,7 @@ def playground_diagnostics(
             "telephony": {
                 "name": "Vobiz",
                 "configured": bool(
-                    settings.vobiz_auth_id and settings.vobiz_api_key
+                    settings.vobiz_auth_id and settings.vobiz_auth_token
                 ),
                 "required_for": "phone calls only (not the playground)",
             },
@@ -1628,6 +1714,22 @@ async def _run_agent_turn(
             extracted_now.append(field_record)
     assistant_text = _scrub_tool_markup(assistant_text)
     assistant_text = _cap_reply(assistant_text)
+
+    # Deterministic extraction backstop. The model's tool calling is
+    # probabilistic: with gpt-oss it was so eager it 400'd, and with
+    # qwen3.8-27b it silently SKIPS the tool on some turns ("sick" was stated
+    # plainly and reason_for_absence was never recorded). A coin flip must not
+    # decide whether a captured field exists, so when the model recorded
+    # nothing this turn we look for a caller sentence that literally overlaps
+    # the field name/description.
+    #
+    # This cannot fabricate: it only ever records words the CALLER said in
+    # THIS turn, it requires a real overlap with the field, and it runs
+    # through the same grounding check as a model tool call. If the model did
+    # record the field, we never touch it.
+    _backfill_grounded_fields(
+        db, call, version, user_text, extracted_now, next_index
+    )
 
     elapsed_ms = round((time.monotonic() - started_mono) * 1000.0)
 

@@ -54,6 +54,9 @@ export default function DiagnosticsPanel({ active = false, callId = null }) {
   const [seq, setSeq] = useState(0);
   const [error, setError] = useState('');
   const [open, setOpen] = useState(true);
+  // Backs off when the API keeps failing so a broken backend is not hammered
+  // every 1.5s from every open tab.
+  const [backoffMs, setBackoffMs] = useState(POLL_MS);
   const seqRef = useRef(0);
 
   const loadDiag = useCallback(async () => {
@@ -61,8 +64,24 @@ export default function DiagnosticsPanel({ active = false, callId = null }) {
       const data = await playgroundApi.diagnostics();
       setDiag(data);
       setError('');
+      setBackoffMs(POLL_MS);
     } catch (err) {
-      setError(String(err?.message || err));
+      // A 500 from the API surfaces in the browser as a CORS/network error:
+      // the server-error middleware sits ABOVE the CORS layer, so a 500
+      // carries no CORS headers and fetch reports ERR_FAILED. Status 0 here
+      // therefore means "the server answered, but with an error" as often as
+      // "the server is down" - say which we can, and re-probe rather than
+      // hammering every 1.5s.
+      const status = err?.status;
+      if (status === 0) {
+        setError(
+          'diagnostics: server error or unreachable (browser reports this as a CORS failure when the API returns 500)'
+        );
+        setBackoffMs((prev) => Math.min(prev ? prev * 2 : POLL_MS * 2, 15000));
+      } else {
+        setError(`diagnostics failed: HTTP ${status} ${err?.message || ''}`.trim());
+        setBackoffMs(POLL_MS);
+      }
     }
   }, []);
 
@@ -89,9 +108,9 @@ export default function DiagnosticsPanel({ active = false, callId = null }) {
     const id = setInterval(() => {
       loadDiag();
       loadEvents(seqRef.current);
-    }, POLL_MS);
+    }, backoffMs);
     return () => clearInterval(id);
-  }, [active, loadDiag, loadEvents]);
+  }, [active, backoffMs, loadDiag, loadEvents]);
 
   const clear = async () => {
     try {

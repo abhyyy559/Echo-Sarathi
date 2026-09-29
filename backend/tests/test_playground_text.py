@@ -173,11 +173,14 @@ def test_start_event_produces_opening_line_without_user_message(groq_client):
     body = resp.json()
     assert body["done"] is False
     assert body["turn_index"] == 0
-    # The opening is deterministic: disclosure + one question, no LLM round
-    # trip (a model-written greeting repeated the identity twice and cost a
-    # full provider call before the caller heard anything).
+    # The opening is deterministic: disclosure + name + ONE question, no LLM
+    # round trip (a model-written greeting repeated the identity twice and cost
+    # a full provider call before the caller heard anything).
     assert "AI assistant calling from CMR" in body["reply_text"]
-    assert "parent" in body["reply_text"].lower()
+    # One question only, and it is the verification question - the reason for
+    # the call comes after the caller confirms who they are.
+    assert body["reply_text"].count("?") == 1
+    assert "who I'm speaking with" in body["reply_text"]
     # No dangling substitution artifacts may ever be spoken.
     assert ", ," not in body["reply_text"]
     # Nothing was sent to the provider for the opening turn.
@@ -337,8 +340,12 @@ def test_session_contact_persisted_and_injected_into_start_prompt(groq_client, s
     # Personalization now happens in the deterministic opening itself, which
     # is stronger than hoping the model copies names into its greeting.
     opening = resp.json()["reply_text"]
-    assert "Aarav" in opening
     assert "Suresh" in opening
+    # The parent is greeted and verified by name; the STUDENT is deliberately
+    # not named in the opener (that comes after they confirm who they are).
+    assert opening.count("Suresh") == 2  # "Hi Suresh" + "Am I speaking with Suresh?"
+    assert "Aarav" not in opening
+    assert "?" in opening
 
     # The same contact still reaches the LLM prompt on the next real turn.
     script(chat("Sure, I can help with that."))
@@ -351,6 +358,10 @@ def test_session_contact_persisted_and_injected_into_start_prompt(groq_client, s
     sent = _FakeAsyncClient.requests[-1]["json"]
     system_msg = sent["messages"][0]["content"]
     assert "Aarav" in system_msg and "Suresh" in system_msg
+    # Both names are in the history the model reads, so it can introduce the
+    # student naturally once the caller is confirmed.
+    history = " ".join(m["content"] for m in sent["messages"][1:])
+    assert "Suresh" in history
 
 
 def test_history_trimmed_and_llm_leg_recorded(groq_client, session_factory):
