@@ -75,9 +75,20 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
     pipeline_module._build_agent_session(bundle)
 
     assert captured["aec_warmup_duration"] == 0.0
+    # Model-based turn detection pinned to the local mini model (no doomed
+    # cloud attempt from self-hosted workers); plain "vad" on old SDKs.
+    turn_detection = captured["turn_handling"].pop("turn_detection")
+    if turn_detection == "vad":
+        assert pipeline_module._inference is None
+    else:
+        assert type(turn_detection).__name__ == "TurnDetector"
+    # Preemptive shape is version-dependent (mapping on 1.8+, bool on older):
+    # resolve it through the same helper the pipeline uses.
+    expected_preemptive = pipeline_module._preemptive_kwargs(True)[
+        "preemptive_generation"
+    ]
     assert captured["turn_handling"] == {
-        "turn_detection": "vad",
-        "preemptive_generation": True,
+        "preemptive_generation": expected_preemptive,
         "endpointing": {
             "mode": "fixed",
             "min_delay": 0.6,

@@ -126,9 +126,19 @@ def test_preemptive_off_for_phone_rooms(monkeypatch) -> None:
     bundle = pipeline_module.ProviderBundle(stt=object(), llm=object(), tts=object())
 
     pipeline_module._build_agent_session(bundle, preemptive_generation=False)
-    assert captured["turn_handling"]["preemptive_generation"] is False
+    turn_handling = captured["turn_handling"]
+    assert not turn_handling.get("preemptive_generation")
     pipeline_module._build_agent_session(bundle)
-    assert captured["turn_handling"]["preemptive_generation"] is True
+    # Must match the helper output after the installed SDK's own filtering:
+    # 1.8+ carries the options mapping, 1.7 drops the unknown key entirely.
+    turn_handling = captured["turn_handling"]
+    annotations = getattr(pipeline_module.TurnHandlingOptions, "__annotations__", {}) or {}
+    if "preemptive_generation" in annotations:
+        assert turn_handling.get("preemptive_generation") == pipeline_module._preemptive_kwargs(
+            True
+        ).get("preemptive_generation")
+    else:
+        assert "preemptive_generation" not in turn_handling
 
 
 def test_barge_in_published_when_user_speaks_over_agent() -> None:

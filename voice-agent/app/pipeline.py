@@ -55,6 +55,18 @@ from app.prompting import build_opening_line, build_token_map, render_system_pro
 
 logger = logging.getLogger("voice_agent.pipeline")
 
+try:  # livekit-agents >= 1.8: preemptive generation takes an options mapping
+    from livekit.agents.voice.turn import (
+        PreemptiveGenerationOptions as _PreemptiveOpts,
+    )
+except ImportError:  # 1.7.x and older: plain boolean flag
+    _PreemptiveOpts = None  # type: ignore[assignment]
+
+try:
+    from livekit.agents import inference as _inference
+except ImportError:  # very old SDKs without the inference module
+    _inference = None  # type: ignore[assignment]
+
 PLAYGROUND_PREFIX = "playground-"
 PHONE_PREFIX = "phone-"
 APOLOGY_TEXT = (
@@ -1024,6 +1036,22 @@ def _reset_vad_cache() -> None:
     _VAD_INSTANCE = None
 
 
+def _preemptive_kwargs(enabled: bool) -> dict[str, Any]:
+    """Version-tolerant preemptive-generation option.
+
+    livekit-agents 1.8+ requires a ``PreemptiveGenerationOptions`` MAPPING
+    and raises ``TypeError: 'bool' object is not a mapping`` for a plain
+    boolean (this killed every phone session with the apology fallback).
+    Older versions take the boolean. Disabled means the key is omitted
+    entirely — deterministic turn-taking on PSTN rooms.
+    """
+    if _PreemptiveOpts is None:
+        return {"preemptive_generation": bool(enabled)}
+    if not enabled:
+        return {}
+    return {"preemptive_generation": _opts(_PreemptiveOpts)}
+
+
 def _room_metadata(ctx: JobContext) -> Any:
     return getattr(ctx.room, "metadata", None)
 
@@ -1116,6 +1144,21 @@ def _opts(cls: Any, **kwargs: Any) -> Any:
         return cls()
 
 
+def _turn_detection() -> Any:
+    """Model-based end-of-turn detector, pinned to the local mini model.
+
+    The audio turn detector beats VAD-only endpointing on hesitant speech,
+    but the full cloud model is unreachable from self-hosted workers (401s
+    in our logs, then a slow fallback). Pinning ``v1-mini`` skips the doomed
+    cloud attempt and runs the ONNX model on local CPU. Falls back to plain
+    ``"vad"`` on SDKs without the inference module.
+    """
+    detector_cls = getattr(_inference, "TurnDetector", None) if _inference else None
+    if detector_cls is None:
+        return "vad"
+    return _opts(detector_cls, version="v1-mini")
+
+
 def _build_agent_session(
     bundle: ProviderBundle, preemptive_generation: bool = True
 ) -> AgentSession:
@@ -1127,13 +1170,13 @@ def _build_agent_session(
         aec_warmup_duration=0.0,
         turn_handling=_opts(
             TurnHandlingOptions,
-            turn_detection="vad",
+            turn_detection=_turn_detection(),
             # Preemptive generation: start the LLM on partial transcripts so
             # the first sentence is ready the moment the turn ends (TTS
             # already synthesizes sentence-by-sentence as tokens stream in).
             # Playground-only: on PSTN phone audio the partials are too noisy
             # and speculative replies answer stale turns / talk over callers.
-            preemptive_generation=preemptive_generation,
+            **_preemptive_kwargs(preemptive_generation),
             endpointing=_opts(
                 EndpointingOptions,
                 mode="fixed",
