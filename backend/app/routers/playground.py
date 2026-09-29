@@ -49,12 +49,18 @@ _GROQ_MAX_RETRIES = 2
 _GROQ_RETRY_DELAYS = (2.0, 5.0)
 
 
+# Never sleep past this on a 429: Groq sometimes answers Retry-After: 60+,
+# but our HTTP client times out at 45s — honoring it blindly converts a
+# backoff into a hung request that surfaces as a failure in the browser.
+_GROQ_MAX_RETRY_AFTER_SECONDS = 10.0
+
+
 def _retry_delay(response: Any, attempt: int) -> float:
-    """Backoff for a 429: honor Retry-After, else 2s then 5s."""
+    """Backoff for a 429: honor Retry-After (capped), else 2s then 5s."""
     try:
         header = response.headers.get("retry-after")
         if header is not None:
-            return max(0.0, float(header))
+            return max(0.0, min(float(header), _GROQ_MAX_RETRY_AFTER_SECONDS))
     except (TypeError, ValueError, AttributeError):
         pass
     if 0 <= attempt < len(_GROQ_RETRY_DELAYS):
@@ -578,6 +584,11 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
     if "qwen" in settings.groq_model.lower():
         # Qwen is a hybrid reasoning model - thinking tokens add latency.
         body["reasoning_effort"] = "none"
+    elif "gpt-oss" in settings.groq_model.lower():
+        # Parity with the voice worker: gpt-oss burns thinking tokens against
+        # the same 300-token budget as the reply (truncated/empty replies that
+        # trigger more tool rounds, more tokens, more 429s — the doom loop).
+        body["reasoning_effort"] = "low"
     return body
 
 
@@ -637,13 +648,86 @@ async def _groq_chat(
         raise HTTPException(status_code=502, detail="Unexpected response from the language model.") from exc
 
 
+_GROUNDING_STOPWORDS = frozenset(
+    "the a an is was are be been being has have had will would shall should "
+    "he she it they him her them his hers theirs you we i me my mine our ours "
+    "for of to in on at from with by and or not no yes so as if then than that "
+    "this these those there here what when where which who whom whose how why "
+    "do does did done am s t ve re ll m d don doesn isn wasn aren".split()
+)
+# A value counts as a resolved date (exempt from word-overlap grounding)
+# when it names an actual day: digits ("30", "2026-09-30"), month names, or
+# weekday/today/tomorrow tokens. Bare spans like "next week" or "one month"
+# are NOT dates — that vagueness is exactly the fabrication shape.
+_DATE_LIKE_RE = re.compile(
+    r"\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|today|tomorrow|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday",
+    re.IGNORECASE,
+)
+
+
+def _value_grounded_in_transcript(
+    db: Session,
+    call_id: int,
+    field_name: str,
+    value: str,
+    current_user_text: str = "",
+) -> tuple[bool, str]:
+    """FR-12 grounding check: the value must echo the caller's own words.
+
+    The model sometimes records plausible-but-invented values at high
+    confidence (seen live: ``expected_return_date="next week"`` when the
+    caller never mentioned any date). At least one content word of the value
+    must appear in the caller's transcript turns, otherwise the value is
+    refused and the model is told to re-ask.
+
+    Agent-resolved dates are exempt: the prompt instructs the model to convert
+    relative answers ("after 2 days") into real dates, which legitimately
+    share no words with what was said.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return False, f"empty value for '{field_name}' is not a captured answer."
+    if _DATE_LIKE_RE.search(text):
+        return True, ""
+    words = {
+        w for w in re.findall(r"[a-z0-9']+", text.lower())
+        if len(w) > 2 and w not in _GROUNDING_STOPWORDS
+    }
+    if not words:
+        return True, ""  # nothing checkable (e.g. "yes"): let confidence decide
+    caller_text = " ".join(
+        db.scalars(
+            select(Transcript.text).where(
+                Transcript.call_id == call_id, Transcript.speaker == "caller"
+            )
+        ).all()
+    )
+    # The current turn persists AFTER the tool loop — include its live text,
+    # or every first-turn recording would fail grounding.
+    caller_text = f"{caller_text} {current_user_text or ''}".lower()
+    caller_words = set(re.findall(r"[a-z0-9']+", caller_text))
+    if words & caller_words:
+        return True, ""
+    return (
+        False,
+        f"value '{text}' for '{field_name}' was never stated by the caller.",
+    )
+
+
 def _execute_text_tool(
-    db: Session, call: Call, name: str, arguments: dict[str, Any], source_turn_index: int
+    db: Session,
+    call: Call,
+    name: str,
+    arguments: dict[str, Any],
+    source_turn_index: int,
+    current_user_text: str = "",
 ) -> tuple[str, Optional[dict[str, Any]], bool]:
     """Run one tool call against the DB.
 
     Returns ``(tool_result_text, extracted_field_or_None, done_flag)``.
     Field upsert semantics mirror the internal API (_apply_fields).
+    ``current_user_text`` feeds the grounding check (see above).
     """
     if name == "record_extracted_field":
         field_name = str(arguments.get("field_name") or "").strip()
@@ -657,6 +741,19 @@ def _execute_text_tool(
                 conf = None
         except (TypeError, ValueError):
             conf = None
+        value_text = "" if value is None else str(value)
+        grounded, ground_reason = _value_grounded_in_transcript(
+            db, call.id, field_name, value_text, current_user_text
+        )
+        if not grounded:
+            # FR-12: never persist a value the caller never said. Tell the
+            # model to re-ask (the prompt's two-ask limit moves it on).
+            return (
+                f"NOT RECORDED: {ground_reason} Re-ask specifically, or record "
+                f"it once the caller actually states it.",
+                None,
+                False,
+            )
         for existing in db.scalars(
             select(ExtractedField).where(
                 ExtractedField.call_id == call.id,
@@ -844,7 +941,8 @@ async def _run_agent_turn(
             except json.JSONDecodeError:
                 arguments = {}
             result_text, field_record, done_flag = _execute_text_tool(
-                db, call, str(function.get("name") or ""), arguments, next_index
+                db, call, str(function.get("name") or ""), arguments, next_index,
+                user_text,
             )
             if field_record and "summary" not in field_record:
                 extracted_now.append(field_record)
@@ -875,7 +973,7 @@ async def _run_agent_turn(
         if pseudo["name"] != "record_extracted_field":
             continue
         _result_text, field_record, _done_flag = _execute_text_tool(
-            db, call, pseudo["name"], pseudo["arguments"], next_index
+            db, call, pseudo["name"], pseudo["arguments"], next_index, user_text
         )
         if field_record and "summary" not in field_record:
             extracted_now.append(field_record)

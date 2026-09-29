@@ -165,6 +165,37 @@ def test_groq_persistent_429_raises_after_retries(flaky_client):
     assert len(_FlakyAsyncClient.requests) == 3  # initial + 2 retries
 
 
+def test_invented_value_refused_despite_high_confidence(groq_client, session_factory):
+    """Regression: expected_return_date='next week' the caller never said."""
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+    from test_playground_text import chat, script, start_session, tool_call
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        tool_call(
+            "record_extracted_field",
+            {"field_name": "expected_return_date", "value": "next week", "confidence": 0.9},
+        ),
+        chat("When will he be back?"),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "He is sick."},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["extracted_fields"] == []
+    with session_factory() as db:
+        rows = db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call_id)
+        ).all()
+        assert [f.field_name for f in rows] == []
+
+
 def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monkeypatch):
     """Two keys: k1 429s through all its retries, k2 answers immediately."""
     from test_playground_text import start_session as _start
