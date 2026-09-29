@@ -1,10 +1,12 @@
 """Text-path robustness: pseudo tool-call markup + Groq 429 retry."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.routers.playground as playground_module
@@ -153,20 +155,106 @@ def test_groq_429_retries_then_succeeds(flaky_client):
 
 
 def test_groq_persistent_429_raises_after_retries(flaky_client):
-    from test_playground_text import start_session as _start
+    from app.routers.playground import _groq_chat
 
-    client = flaky_client
-    token, _ = register(client)
-    call_id = _start(client, token)
-    _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 3
-    _FlakyAsyncClient.requests = []
-    resp = client.post(
-        f"/api/playground/sessions/{call_id}/turns",
-        json={"text": "hi"},
-        headers=auth_headers(token),
-    )
-    assert resp.status_code == 429
-    assert len(_FlakyAsyncClient.requests) == 3  # initial + 2 retries
+    async def scenario() -> None:
+        from app.config import Settings as _S
+
+        client = flaky_client
+        token, _ = register(client)
+        call_id = start_session(client, token)
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 3
+        _FlakyAsyncClient.requests = []
+        settings = _S(groq_api_key="k1", database_url="sqlite://", _env_file=None)
+        # wait_before_retry_ms=0 disables the give-up-and-retry pass so this
+        # test can assert the per-member retry budget on its own.
+        with pytest.raises(HTTPException) as excinfo:
+            await _groq_chat(
+                settings, [{"role": "user", "content": "hi"}], wait_before_retry_ms=0
+            )
+        assert excinfo.value.status_code == 429
+        assert len(_FlakyAsyncClient.requests) == 3
+
+    asyncio.run(scenario())
+
+
+def test_rate_limited_chain_waits_once_and_recovers(flaky_client):
+    """The complaint being fixed: the caller spoke once and got silence, then
+    had to repeat themselves. One short wait and a single retry must turn that
+    into a (slower) answer."""
+    from app.config import Settings as _S
+    from app.routers.playground import _groq_chat
+
+    async def scenario() -> None:
+        client = flaky_client
+        token, _ = register(client)
+        start_session(client, token)
+        _FlakyAsyncClient.planned = [
+            _FlakyResponse(429, headers={"retry-after": "0"})] * 3 + [
+            _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "sorry, one moment - yes, noted"}}]}),
+        ]
+        _FlakyAsyncClient.requests = []
+        settings = _S(groq_api_key="k1", database_url="sqlite://", _env_file=None)
+        original_sleep = playground_module.asyncio.sleep
+
+        async def instant(_seconds: object) -> None:
+            return None
+
+        playground_module.asyncio.sleep = instant  # type: ignore[assignment]
+        try:
+            result = await _groq_chat(
+                settings, [{"role": "user", "content": "hi"}], wait_before_retry_ms=10
+            )
+        finally:
+            playground_module.asyncio.sleep = original_sleep  # type: ignore[assignment]
+        assert result["content"] == "sorry, one moment - yes, noted"
+        assert len(_FlakyAsyncClient.requests) == 4
+
+    asyncio.run(scenario())
+
+
+def test_hard_quota_exhaustion_is_not_retried(flaky_client):
+    """A Gemini-style plan/quota rejection must not burn three retries."""
+    from app.config import Settings as _S
+    from app.routers.playground import _groq_chat
+
+    async def scenario() -> None:
+        client = flaky_client
+        token, _ = register(client)
+        start_session(client, token)
+        gemini_quota = {
+            "error": {
+                "code": 429,
+                "message": "You exceeded your current quota, please check your plan "
+                "and billing details.",
+            }
+        }
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, gemini_quota)]
+        _FlakyAsyncClient.requests = []
+        settings = _S(
+            groq_api_key="",
+            llm_fallback_chain="gemini|https://x/v1|gk|gemini-flash-latest",
+            database_url="sqlite://",
+            _env_file=None,
+        )
+        original_sleep = playground_module.asyncio.sleep
+
+        async def instant(_seconds: object) -> None:
+            return None
+
+        playground_module.asyncio.sleep = instant  # type: ignore[assignment]
+        try:
+            with pytest.raises(HTTPException) as excinfo:
+                await _groq_chat(
+                    settings, [{"role": "user", "content": "hi"}], wait_before_retry_ms=0
+                )
+        finally:
+            playground_module.asyncio.sleep = original_sleep  # type: ignore[assignment]
+        assert excinfo.value.status_code == 429
+        # One attempt only, not three.
+        assert len(_FlakyAsyncClient.requests) == 1
+
+    asyncio.run(scenario())
 
 
 def test_invented_value_refused_despite_high_confidence(groq_client, session_factory):
@@ -604,7 +692,7 @@ def test_exhausted_chain_reports_rate_limit(session_factory, monkeypatch):
     with TestClient(fresh) as client:
         token, _ = register(client)
         call_id = _start(client, token)
-        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 6
+        _FlakyAsyncClient.planned = [_FlakyResponse(429, headers={"retry-after": "0"})] * 12
         _FlakyAsyncClient.requests = []
         resp = client.post(
             f"/api/playground/sessions/{call_id}/turns",

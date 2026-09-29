@@ -278,6 +278,48 @@ def _backfill_grounded_fields(
     return captured
 
 
+#: Turns before this many transcript rows get the FULL instruction set. The
+#: opening, the verification and the first real answer are where the rules
+#: matter most, so they are spent on in full.
+_FULL_PROMPT_ROWS = 3
+
+
+def _render_compact_system_prompt(
+    captured: list[str], remaining: list[str], today: str
+) -> str:
+    """Short continuation prompt for mid/late turns.
+
+    THE binding constraint is arithmetic, not vibes: Groq's ITPM is 7000 for
+    this organization and the full system prompt is ~1100 tokens, so a
+    conversation dies at roughly 4-5 turns no matter how many API keys are
+    added (they share one org bucket). Since the system prompt is re-sent on
+    EVERY request, the only way through is to stop re-sending it.
+
+    The conversation history already carries the persona, the names, the
+    disclosure and what has already been said, so after the opening turns the
+    model only needs: who it is, today's date, which fields are done, and the
+    three rules that must never be forgotten. That is ~200 tokens instead of
+    ~1100 - roughly 4x the turns per minute for the same quality of reply.
+    """
+    state = (
+        f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
+    )
+    todo = f"Still needed: {', '.join(remaining)}." if remaining else ""
+    return (
+        f"TODAY: {today}.\n"
+        "You are the same outbound phone agent from earlier in this call; the "
+        "person is already verified. Reply in 1-2 short spoken sentences, one "
+        "thing per reply: if you still need an answer, ask it and STOP - never "
+        "ask and thank/close in the same reply. Acknowledge what they said, then "
+        "move on. Never invent a value: only record what the caller actually "
+        "said, and never ask them to repeat an answer they already gave.\n"
+        f"{state} {todo}\n"
+        f"Record with record_extracted_field(field_name, value, confidence); "
+        f"finish with end_call(summary). Valid field names: "
+        f"{', '.join(captured + remaining) or 'none'}."
+    )
+
+
 def _build_short_opening(
     version: AgentVersion, contact: dict[str, Any], institution: str
 ) -> str:
@@ -949,6 +991,12 @@ _VALID_REASONING_EFFORT = ("low", "medium", "high")
 #: model (measured: 60 output tokens, 686ms, correct tool call) and must keep
 #: the small cap. Only true reasoning models need the larger budget.
 _REASONING_MODEL_MARKERS = ("gpt-oss", "deepseek-r1", "reasoner", "o1-", "o3-")
+
+#: When the whole chain is rate limited, wait this long and try the identical
+#: request once. The org token bucket refills continuously, so this converts a
+#: user-visible silence into a slightly slower reply instead of making the
+#: caller repeat themselves.
+_QUOTA_RETRY_WAIT_MS = 2500
 _DEFAULT_MAX_TOKENS = 160
 _REASONING_MAX_TOKENS = 500
 
@@ -979,6 +1027,18 @@ def _is_shared_quota_exhausted(text: str) -> bool:
         or "on organization" in lowered
         or "on project" in lowered
     )
+
+
+def _is_hard_quota_exhausted(text: str) -> bool:
+    """True for a *quota* (plan/billing) rejection, not a rate limit.
+
+    Gemini answers "You exceeded your current quota, please check your plan and
+    billing details". Retrying that three times with backoff just burns three
+    round trips (~1.5s of the caller's life) for a certainty. A per-minute rate
+    limit is worth retrying; an exhausted plan is not.
+    """
+    lowered = str(text or "").lower()
+    return "current quota" in lowered or "check your plan" in lowered or "billing" in lowered
 
 
 def _member_body(base: dict[str, Any], model: str) -> dict[str, Any]:
@@ -1085,6 +1145,7 @@ async def _groq_chat(
     messages: list[dict[str, Any]],
     include_tools: bool = True,
     call_id: Optional[int] = None,
+    wait_before_retry_ms: int = _QUOTA_RETRY_WAIT_MS,
 ) -> dict[str, Any]:
     """Chat-completions round trip over the configured provider chain.
 
@@ -1233,6 +1294,18 @@ async def _groq_chat(
                         call_id=call_id,
                     )
                     break
+                if _is_hard_quota_exhausted(getattr(response, "text", "")):
+                    # Plan/quota exhausted: retrying cannot help.
+                    telemetry.record(
+                        "llm_quota_exhausted",
+                        level="error",
+                        provider=name,
+                        model=model,
+                        status=429,
+                        message="provider quota/plan exhausted; not retrying",
+                        call_id=call_id,
+                    )
+                    break
                 if attempt >= _GROQ_MAX_RETRIES:
                     break
                 logger.warning(
@@ -1270,10 +1343,35 @@ async def _groq_chat(
                     )
                     exhausted_providers.add(name)
     if rate_limited:
+        # The org bucket refills continuously (7000 tokens/min). One short wait
+        # and a single retry turns a hard "no response" into a slightly slower
+        # reply, which is what the caller actually experiences: they speak once
+        # and the agent answers. Without this they had to shout two or three
+        # times to get past the rate limit.
+        if wait_before_retry_ms > 0:
+            telemetry.record(
+                "llm_quota_wait",
+                level="warn",
+                message=f"every provider is rate limited; waiting "
+                f"{wait_before_retry_ms}ms and retrying once",
+                call_id=call_id,
+            )
+            logger.warning(
+                "LLM chain rate limited; waiting %sms then retrying once",
+                wait_before_retry_ms,
+            )
+            await asyncio.sleep(wait_before_retry_ms / 1000.0)
+            return await _groq_chat(
+                settings,
+                messages,
+                include_tools=include_tools,
+                call_id=call_id,
+                wait_before_retry_ms=0,
+            )
         telemetry.record(
             "llm_chain_exhausted",
             level="error",
-            message="every provider in the chain is rate limited",
+            message="every provider in the chain is rate limited (after one retry)",
             call_id=call_id,
             last_error=last_error_text[:200],
         )
@@ -1553,7 +1651,6 @@ async def _run_agent_turn(
     contact = (call.context or {}).get("contact") or {}
     org = db.get(Organization, call.org_id) if call.org_id else None
     institution = org.name if org and org.name else ""
-    system_prompt = _render_text_system_prompt(version, contact=contact, institution=institution)
     history_rows = list(
         db.scalars(
             select(Transcript)
@@ -1562,6 +1659,33 @@ async def _run_agent_turn(
         ).all()
     )
     next_index = (history_rows[-1].turn_index + 1) if history_rows else 0
+
+    # Full instructions only for the opening exchanges; after that a compact
+    # continuation prompt (see _render_compact_system_prompt) so the org's
+    # 7000 ITPM budget lasts a real conversation instead of ~4 turns.
+    if len(history_rows) > _FULL_PROMPT_ROWS:
+        schema_fields = getattr(version, "extraction_schema", None) or {}
+        required = [
+            name
+            for name, spec in schema_fields.items()
+            if isinstance(spec, dict)
+            and str(spec.get("validation") or "").lower() == "required"
+        ]
+        already = [
+            row.field_name
+            for row in db.scalars(
+                select(ExtractedField).where(ExtractedField.call_id == call.id)
+            ).all()
+        ]
+        system_prompt = _render_compact_system_prompt(
+            [f for f in already if f in schema_fields],
+            [f for f in required if f not in already],
+            utcnow().strftime("%A %d %B %Y"),
+        )
+    else:
+        system_prompt = _render_text_system_prompt(
+            version, contact=contact, institution=institution
+        )
 
     if start_event:
         # Deterministic opening: no provider round trip, no duplicated
