@@ -370,8 +370,13 @@ def test_history_trimmed_and_llm_leg_recorded(groq_client, session_factory):
         )
         assert resp.status_code == 200, resp.text
     sent = _FakeAsyncClient.requests[-1]["json"]
-    # system + last 14 history rows + new user turn (was: unbounded growth).
-    assert len(sent["messages"]) == 16
+    # system + last 8 history rows + the new user turn. The window was 14 and
+    # is now 8: Groq's TPM is organization-wide, so prompt tokens per turn are
+    # the scarce resource, not the number of keys.
+    from app.routers.playground import _MAX_HISTORY_ROWS
+
+    assert len(sent["messages"]) == 1 + _MAX_HISTORY_ROWS + 1
+    assert _MAX_HISTORY_ROWS == 8
     with session_factory() as db:
         rows = db.scalars(
             select(Transcript)

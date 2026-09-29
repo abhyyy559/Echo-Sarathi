@@ -49,6 +49,13 @@ _GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 # 8s of end-to-end latency (three sequential provider round trips before the
 # caller hears anything).
 _MAX_TOOL_ROUNDS = 2
+
+# Groq's on_demand TPM is ORGANIZATION-wide (all keys in one org share the
+# pool), so prompt tokens are the scarce resource, not key count. 14 history
+# rows plus a long system prompt put a single turn near the ceiling, which is
+# why 3 keys did not triple throughput. 8 rows is enough working context for
+# the flow and roughly halves the per-turn prompt cost.
+_MAX_HISTORY_ROWS = 8
 _GROQ_MAX_RETRIES = 2
 _GROQ_RETRY_DELAYS = (2.0, 5.0)
 
@@ -796,8 +803,26 @@ def _message_or_raise(response: Any) -> dict[str, Any]:
     debugging time.
     """
     try:
-        return response.json()["choices"][0]["message"]
-    except (KeyError, IndexError, ValueError) as exc:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Unexpected response from the language model.",
+        ) from exc
+    try:
+        usage = payload.get("usage") or {}
+        logger.info(
+            "llm_tokens provider=%s prompt=%s completion=%s total=%s",
+            payload.get("model", "?"),
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            usage.get("total_tokens"),
+        )
+    except AttributeError:
+        pass
+    try:
+        return payload["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(
             status_code=502,
             detail="Unexpected response from the language model.",
@@ -1213,7 +1238,7 @@ async def _run_agent_turn(
     # turn ~10 the model re-reads the whole call before every reply (input
     # tokens balloon, TTFT climbs linearly, TPM 429s follow). The last 14
     # rows (~7 exchanges) carry all working context; the DB keeps the rest.
-    for row in history_rows[-14:]:
+    for row in history_rows[-_MAX_HISTORY_ROWS:]:
         messages.append(
             {"role": "assistant" if row.speaker == "agent" else "user", "content": row.text}
         )
@@ -1246,7 +1271,13 @@ async def _run_agent_turn(
 
     for round_no in range(_MAX_TOOL_ROUNDS):
         call_started = time.monotonic()
-        message = await _groq_chat(settings, messages, include_tools=round_no < _MAX_TOOL_ROUNDS - 1)
+        # Tools stay enabled on EVERY round. Disabling them on the last round
+        # is what produced the Groq 400 "Tool choice is none, but model called
+        # a tool": gpt-oss kept emitting tool calls (including hallucinated
+        # ones like container.exec) and a request with tools absent makes any
+        # tool call a server-side error. A legal tool call costs one round
+        # trip; an illegal one costs a 400 plus a wasted key.
+        message = await _groq_chat(settings, messages, include_tools=True)
         groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
@@ -1277,15 +1308,37 @@ async def _run_agent_turn(
                 }
             )
     else:
-        # Tool loop exhausted without plain text - force one final text reply.
+        # The model spent its tool rounds and still owes the caller words.
+        # One more request WITH tools enabled (a tools-less request is what
+        # 400s). If it replies with more tool calls instead of speech, we do
+        # not error and we do not speak markup: we fall through to a
+        # deterministic line so the caller always hears something.
         call_started = time.monotonic()
-        message = await _groq_chat(
-            settings,
-            messages + [{"role": "system", "content": "Reply now in plain words only."}],
-            include_tools=False,
-        )
+        try:
+            message = await _groq_chat(
+                settings,
+                messages
+                + [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Speak to the caller now in one short sentence. "
+                            "Do not call any tool this turn."
+                        ),
+                    }
+                ],
+                include_tools=True,
+            )
+        except HTTPException:
+            message = {}
         groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         assistant_text = str(message.get("content") or "").strip()
+        if not assistant_text:
+            assistant_text = "Thanks - noted."
+            logger.warning(
+                "text_turn call=%s: no speech after tool rounds; using fallback line",
+                call.id,
+            )
 
     # Pseudo tool calls: the model sometimes emits <tool_call> XML as text
     # instead of a real function call (seen live: the field was lost and raw
