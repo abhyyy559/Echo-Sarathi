@@ -44,7 +44,11 @@ _LATENCY_METRICS = ("stt_final_ms", "llm_first_token_ms", "tts_first_audio_ms", 
 
 _GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 # Tool-call rounds per user turn before we force a plain-text reply.
-_MAX_TOOL_ROUNDS = 3
+# One tool round is enough for a spoken turn: record the field, then speak. A
+# third round plus the forced-final-reply fallback is what pushed late turns to
+# 8s of end-to-end latency (three sequential provider round trips before the
+# caller hears anything).
+_MAX_TOOL_ROUNDS = 2
 _GROQ_MAX_RETRIES = 2
 _GROQ_RETRY_DELAYS = (2.0, 5.0)
 
@@ -104,6 +108,44 @@ def _call_metadata(
     return metadata
 
 
+def _proper_name(value: str) -> str:
+    """Title-case a name the caller/contact typed in lower case.
+
+    Contact CSVs and dictated test input often carry "dhanu"/"abhi"; TTS reads
+    an all-lowercase name flatly and the transcript looks like data noise.
+    """
+    parts = [p for p in str(value or "").split() if p]
+    return " ".join(p[0].upper() + p[1:] if p else p for p in parts)
+
+
+def _cap_reply(text: str, max_sentences: int = 2) -> str:
+    """Keep the reply to its first N sentences.
+
+    The model regularly packed a question, a thank-you, a callback offer and a
+    goodbye into ONE reply ("By which date...?Thank you. Would you like...?
+    Sure, I can note that. Have a good day."). Spoken aloud that is a
+    monologue the caller never answers, and it is the run-on shape callers
+    report as "the agent talks over me". A hard server-side cap makes the
+    one-question-one-turn rule true regardless of model compliance.
+    """
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return ""
+    # Split on sentence punctuation, tolerating the missing space that models
+    # emit ("college?Thank you.") - a whitespace-anchored pattern silently
+    # drops the run-on clause it was supposed to keep.
+    sentences = [
+        s.strip()
+        for s in re.findall(r"[^.?!]*[.?!]+|[^.?!]+$", cleaned)
+        if s.strip()
+    ]
+    if len(sentences) <= max_sentences:
+        return cleaned
+    kept = " ".join(sentences[:max_sentences]).strip()
+    logger.warning("reply capped to %d sentences (was %d)", max_sentences, len(sentences))
+    return kept
+
+
 def _build_short_opening(
     version: AgentVersion, contact: dict[str, Any], institution: str
 ) -> str:
@@ -114,7 +156,11 @@ def _build_short_opening(
     is Priya from the front office") — long TTS, high chance the caller hangs
     up, and a full provider round trip of latency before the first word. The
     voice worker already builds this deterministically; text mode now matches
-    it: short disclosure + name + one question.
+    it: short disclosure + name + ONE question.
+
+    Each name is spoken exactly once. Announcing the reason ("quick check on
+    abhi's absence") and then asking a question that repeats both names is
+    what produced the 4-clause opener seen on the second test call.
     """
     tokens = build_token_map(contact, institution)
     disclosure = apply_token_substitution(
@@ -122,31 +168,39 @@ def _build_short_opening(
     ).strip()
     if not disclosure:
         return ""
-    student = tokens.get("[Student Name]", "")
-    parent = tokens.get("[Parent/Guardian Name]", "")
-    who = tokens.get("[Agent Name]", "") or "an AI assistant"
+    student = _proper_name(tokens.get("[Student Name]", ""))
+    parent = _proper_name(tokens.get("[Parent/Guardian Name]", ""))
+    who = _proper_name(tokens.get("[Agent Name]", "")) or "an AI assistant"
     parts = [disclosure]
     # Identity is only re-introduced when it is genuinely new information;
     # the disclosure usually already named the caller and the college.
     if who.lower() not in disclosure.lower():
-        parts.append(f"{who} here." if not parent else f"Hi {parent}, {who} here.")
+        parts.append(f"Hi {parent}, {who} here." if parent else f"{who} here.")
     elif parent:
         parts.append(f"Hi {parent}.")
-    if student:
-        parts.append(f"Quick check on {student}'s absence today.")
+    # One question, one mention of the student. The flow question is only used
+    # when it does not also re-ask for the name we just greeted.
     flow = getattr(version, "question_flow", None) or []
     first_question = ""
-    if isinstance(flow, list):
+    if isinstance(flow, list) and student:
         for item in flow:
-            text_value = apply_token_substitution(str((item or {}).get("question") or ""), tokens)
-            if text_value and ", ," not in text_value and "  " not in text_value:
+            text_value = apply_token_substitution(
+                str((item or {}).get("question") or ""), tokens
+            )
+            if not text_value or ", ," in text_value:
+                continue
+            if parent and parent.lower() in text_value.lower():
+                continue  # would say the parent's name twice in one breath
+            if student.lower() in text_value.lower():
                 first_question = text_value
                 break
-    # No names on the record: any name-bearing flow question would speak
-    # dangling grammar ("Am I speaking with , parent of ,"). Ask plainly.
-    if not student and not parent:
-        first_question = first_question if ", ," not in first_question else ""
+    if not first_question and student:
+        first_question = f"Am I speaking with {student}'s parent?"
     parts.append(first_question or "Am I speaking with the parent?")
+    opening = " ".join(p for p in parts if p)
+    # No unsubstituted [...] may ever be spoken; apply_token_substitution
+    # already stripped them, this is belt-and-braces for merged text.
+    return re.sub(r"\[[^\]]*\]", "", opening).strip()
     opening = " ".join(p for p in parts if p)
     # No unsubstituted [...] may ever be spoken; apply_token_substitution
     # already stripped them, this is belt-and-braces for merged text.
@@ -515,6 +569,9 @@ def _render_text_system_prompt(
     sections.append(
         "HOW TO REPLY (critical):\n"
         "- Keep every reply SHORT: usually 1-2 sentences, never more than 3.\n"
+        "- ONE thing per reply: if you still need an answer, ask it and STOP. "
+        "Never ask a question and also thank, offer a callback, or say goodbye "
+        "in the same reply - the person has not answered yet.\n"
         "- Plain conversational words only. This text is converted to speech:\n"
         "  NO markdown, NO asterisks, NO lists, NO numbering symbols, NO emoji,\n"
         "  NO newlines inside a reply. Sentences and punctuation only.\n"
@@ -1173,6 +1230,7 @@ async def _run_agent_turn(
         if field_record and "summary" not in field_record:
             extracted_now.append(field_record)
     assistant_text = _scrub_tool_markup(assistant_text)
+    assistant_text = _cap_reply(assistant_text)
 
     elapsed_ms = round((time.monotonic() - started_mono) * 1000.0)
 

@@ -196,6 +196,51 @@ def test_invented_value_refused_despite_high_confidence(groq_client, session_fac
         assert [f.field_name for f in rows] == []
 
 
+def test_run_on_reply_is_capped_to_two_sentences(groq_client, session_factory):
+    """Regression: the agent packed a question, a thank-you, a callback offer
+    and a goodbye into one reply, so the caller never got to answer."""
+    from sqlalchemy import select
+
+    from app.models import Transcript
+    from test_playground_text import chat, script, start_session
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        chat(
+            "By which date will he be back in college?Thank you. "
+            "Would you like someone from the college to call you back about "
+            "anything?Sure, I can note that. If you need anything else, just "
+            "let me know. Have a good day."
+        )
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "He has a fever."},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    reply = resp.json()["reply_text"]
+    assert reply == "By which date will he be back in college? Thank you."
+    with session_factory() as db:
+        stored = [
+            t.text
+            for t in db.scalars(
+                select(Transcript).where(Transcript.call_id == call_id, Transcript.speaker == "agent")
+            ).all()
+        ]
+        assert stored == [reply]
+
+
+def test_cap_reply_keeps_short_replies_intact() -> None:
+    from app.routers.playground import _cap_reply
+
+    assert _cap_reply("Hi, happy to help.") == "Hi, happy to help."
+    assert _cap_reply("A? B? C? D?") == "A? B?"
+    assert _cap_reply("   ") == ""
+
+
 def test_never_stated_date_is_refused(groq_client, session_factory):
     """Regression from the first live test call: caller answered 'hlooo' and
     the agent recorded expected_return_date='tomorrow at 8am' at 95%."""
