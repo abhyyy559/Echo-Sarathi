@@ -50,11 +50,29 @@ def test_fallback_stream_uses_real_api_connect_options() -> None:
         assert len(primary.connect_options) == 1
         options = primary.connect_options[0]
         assert isinstance(options, APIConnectOptions)
+        # Every member fails fast (one quick attempt): the session retry,
+        # not the SDK loop, advances the chain — a dead final key costs ~1s,
+        # not ~13s of dead air.
         assert options.max_retry == 1
         assert options.retry_interval == 0.5
         assert options.timeout == 15.0
 
         await llm.LLMStream.aclose(stream)
         await stream._active.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_final_member_also_fails_fast() -> None:
+    async def scenario() -> None:
+        first = _RecordingLLM()
+        last = _RecordingLLM()
+        owner = FallbackLLM([first, last])
+        owner._mark_down(0)  # force serving the final member
+        stream = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
+        assert isinstance(stream, _FallbackStream)
+        assert stream._member_index == 1
+        assert last.connect_options[0].max_retry == 1
+        await llm.LLMStream.aclose(stream)
 
     asyncio.run(scenario())

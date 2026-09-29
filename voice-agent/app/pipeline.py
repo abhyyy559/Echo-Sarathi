@@ -248,15 +248,13 @@ class FallbackLLM(llm.LLM):
                 "LLM chain serving member %d/%d", index + 1, len(self._chain)
             )
         member = self._chain[index]
-        if index < len(self._chain) - 1:
-            # Fail FAST on non-final members: their own 3x2s retry loop burns
-            # TPM/quota and minutes while the caller waits in silence. One
-            # attempt; on 429/5xx the proxy marks it down and the session
-            # retry moves to the next key/provider. The FINAL member keeps
-            # the session's own retry policy (last resort).
-            conn_options = APIConnectOptions(
-                max_retry=1, retry_interval=0.5, timeout=15.0
-            )
+        # Fail FAST on every member (max 1 quick attempt): the session calls
+        # chat() again on failure and the chain advances to the next key. The
+        # SDK default (3 retries x 2s + gateway retries) turned one Groq 429
+        # into ~13s of dead air before the fallback was even tried.
+        conn_options = APIConnectOptions(
+            max_retry=1, retry_interval=0.5, timeout=15.0
+        )
         member_stream = member.chat(
             **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
         )

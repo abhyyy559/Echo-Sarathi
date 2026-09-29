@@ -186,6 +186,19 @@ def _card_value(card: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _norm_institution(text: str) -> str:
+    """Normalize institution names for duplicate detection.
+
+    Token maps carry 'A & B' while disclosures write 'A and B' (or differ
+    in case/punctuation) — a raw substring check then misses the duplicate
+    and the opening repeats the college name twice (~8 wasted seconds).
+    """
+    out = str(text or "").lower()
+    out = out.replace("&", "and")
+    out = re.sub(r"[^a-z0-9 ]+", " ", out)
+    return _DOUBLE_SPACE_RE.sub(" ", out).strip()
+
+
 def build_opening_line(
     config: Mapping[str, Any],
     tokens: Optional[Mapping[str, str]] = None,
@@ -207,7 +220,9 @@ def build_opening_line(
     institution = tok.get("[Institution Name]", "") or tok.get("[Company Name]", "")
     # The disclosure script usually names the institution already — repeating
     # it in the greeting doubles ~15 words of TTS (~4s) for zero information.
-    if institution and institution.lower() in disclosure.lower():
+    # Compare normalized (see _norm_institution): '&' vs 'and' must not hide
+    # the duplicate.
+    if institution and _norm_institution(institution) in _norm_institution(disclosure):
         institution = ""
     who = tok.get("[Agent Name]", "") or "an AI assistant"
     # Redundancy elimination: the disclosure usually already says who is

@@ -29,8 +29,7 @@ def test_settings_from_env_combines_groq_keys(monkeypatch) -> None:
     assert settings.groq_api_keys == ("k1", "k2", "k3")
 
 
-def test_settings_from_env_extra_keys_only(monkeypatch) -> None:
-    # Blank (not delete): from_env() loads the repo .env, which may carry a
+def test_settings_from_env_extra_keys_only(monkeypatch) -> None:    # Blank (not delete): from_env() loads the repo .env, which may carry a
     # real GROQ_API_KEY — load_dotenv never overrides an existing var, so an
     # explicit blank wins and _get() treats "" as unset.
     monkeypatch.setenv("GROQ_API_KEY", "")
@@ -152,3 +151,37 @@ def test_build_providers_builds_one_groq_client_per_key(monkeypatch) -> None:
     assert isinstance(bundle.llm, FallbackLLM)
     assert bundle.llm.chain_size == 3  # k1, k2, then OpenAI
     assert [m["api_key"] for m in made] == ["k1", "k2", "ok"]
+
+
+def test_placeholder_keys_raise_startup_warning(monkeypatch) -> None:
+    from app.config import _looks_like_placeholder, get_settings, reset_settings_cache
+
+    assert _looks_like_placeholder("your_openai_key_here") is True
+    assert _looks_like_placeholder("gsk_real_looking_key") is False
+    monkeypatch.setenv("OPENAI_API_KEY", "your_openai_key")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_x")
+    reset_settings_cache()
+    try:
+        problems = get_settings(refresh=True).provider_problems()
+    finally:
+        reset_settings_cache()
+    assert any("OPENAI_API_KEY" in p and "template" in p for p in problems)
+
+
+def test_norm_institution_ignores_ampersand_variant() -> None:
+    from app.prompting import _norm_institution, apply_token_substitution, build_opening_line
+
+    assert _norm_institution("CMR College of Engineering & Technology") == _norm_institution(
+        "CMR College of Engineering and Technology"
+    )
+    # End to end: disclosure names the college with "and", token uses "&".
+    config = {
+        "mandatory_disclosure": (
+            "Hello, this is an AI assistant calling from CMR College of "
+            "Engineering and Technology. This call is being recorded."
+        ),
+        "question_flow": [{"step": 1, "question": "Why was the student absent?"}],
+    }
+    tokens = {"[Institution Name]": "CMR College of Engineering & Technology"}
+    opening = build_opening_line(config, tokens, {})
+    assert opening.count("CMR College") == 1, f"college repeated: {opening}"

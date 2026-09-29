@@ -42,6 +42,10 @@ ITEMS = [
     ("Meera", "MEE-raa"),
     ("Arjun", "UR-joon"),
     ("Karan", "kuh-RUN"),
+    ("Dhanu", "DHAN-oo"),
+    ("Srinivas", "sree-nee-VAAS"),
+    ("Lakshmi", "LUK-shmee"),
+    ("Venkata", "ven-KUH-tuh"),
 ]
 
 payload = json.dumps({

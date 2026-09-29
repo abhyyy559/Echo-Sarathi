@@ -41,6 +41,15 @@ def _load_env_file() -> None:
             return
 
 
+_PLACEHOLDER_KEY_HINTS = ("your_", "change_me", "example", "test-test", "xxx", "placeholder")
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    """Detect unfilled template keys (e.g. your_openai_key) without logging values."""
+    lowered = str(value or "").strip().lower()
+    return any(hint in lowered for hint in _PLACEHOLDER_KEY_HINTS)
+
+
 def _parse_key_list(*values: Optional[str]) -> tuple[str, ...]:
     """Combine comma-separated key env vars into a de-duplicated key tuple.
 
@@ -138,6 +147,15 @@ class Settings:
             problems.append(
                 "GROQ_API_KEY/GROQ_API_KEYS and OPENAI_API_KEY all missing - LLM disabled"
             )
+        for label, key in (
+            ("OPENAI_API_KEY", self.openai_api_key),
+            ("GROQ_API_KEY", self.groq_api_key),
+        ):
+            if key and _looks_like_placeholder(key):
+                problems.append(
+                    f"{label} looks like an unfilled template value - "
+                    f"failover to it will 401; paste a real key"
+                )
         return problems
 
 
