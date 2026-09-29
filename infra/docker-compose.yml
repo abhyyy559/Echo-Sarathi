@@ -11,8 +11,9 @@
 # THIS PHASE PLACES NO TELEPHONY CALLS. The Twilio adapter is dormant; only
 # browser playground rooms (`playground-*`) are handled.
 #
-# Port map (host): frontend :3000 | backend :8000 | LiveKit signaling :7880
-#                  LiveKit RTC media :7881/tcp+udp | postgres :5432 | redis :6379
+# Port map (host): frontend :3000 | backend :8000 | postgres :5432 | redis :6379
+# LiveKit rooms live on LiveKit Cloud (wss:// URL in ../.env) — no local
+# LiveKit ports anymore (7880/7881 retired with the self-hosted service).
 
 services:
   # --- PostgreSQL -----------------------------------------------------------
@@ -65,8 +66,10 @@ services:
       LOG_LEVEL: info
       # Compose-internal mount path for domain configs (seed script + router).
       DOMAIN_CONFIGS_DIR: /domain-configs
-      # Container-facing LiveKit URL for the /twilio/media server-side bridge.
-      LIVEKIT_URL_INTERNAL: ws://livekit:7880
+      # NOTE: LIVEKIT_URL_INTERNAL is NOT set here on purpose — it comes from
+      # ../.env via env_file (cloud wss:// URL). A literal here would override
+      # the cloud URL with the old self-hosted address. (See the ${} trap
+      # note below: keep literals only for true constants.)
       # Everything else (DATABASE_URL, REDIS_URL, JWT_SECRET,
       # INTERNAL_API_TOKEN, CORS_ORIGINS, LIVEKIT_*, provider keys) comes from
       # ../.env via env_file above. Do NOT re-add ${VAR:-default}
@@ -100,32 +103,29 @@ services:
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
   # --- LiveKit (self-hosted dev server) ---------------------------------------
-  # Included UNCONDITIONALLY (not behind a profile) because browser playground
-  # testing is this phase's goal and it needs a reachable LiveKit at ws://localhost:7880.
-  # `--dev` mode = no cloud account required.
-  livekit:
-    image: livekit/livekit-server:latest
-    container_name: voice-agent-livekit
-    env_file:
-      - ../.env
-    # Build LIVEKIT_KEYS from the SAME .env the backend/worker use, INSIDE the
-    # container. A host-side ${LIVEKIT_API_SECRET} interpolation silently fell
-    # back to a placeholder whenever compose ran without --env-file, so tokens
-    # were signed with one secret and validated with another ("signature is
-    # invalid" on every rejoin). Reading the file directly removes that trap.
-    # ($$ escapes compose interpolation; the container shell expands it.)
-    entrypoint: []
-    command:
-      [
-        "sh",
-        "-c",
-        "export LIVEKIT_KEYS=\"devkey: $${LIVEKIT_API_SECRET:-secret_for_local_dev_only}\" && exec /livekit-server --dev --bind 0.0.0.0",
-      ]
-    ports:
-      - "7880:7880"       # HTTP/WebSocket signaling
-      - "7881:7881"       # RTC over TCP fallback
-      - "7881:7881/udp"   # RTC media (UDP)
-    restart: unless-stopped
+  # RETIRED 2026-09-29: LiveKit Cloud is now the single room server
+  # (wss://echo-sarathi-2hya0f27.livekit.cloud via ../.env). This service is
+  # kept as a commented fallback for fully-offline work: uncomment to revive
+  # it, and set LIVEKIT_URL=ws://localhost:7880,
+  # LIVEKIT_URL_INTERNAL=ws://livekit:7880, LIVEKIT_API_KEY=devkey,
+  # LIVEKIT_API_SECRET=secret_for_local_dev_only in ../.env.
+  # livekit:
+  #   image: livekit/livekit-server:latest
+  #   container_name: voice-agent-livekit
+  #   env_file:
+  #     - ../.env
+  #   entrypoint: []
+  #   command:
+  #     [
+  #       "sh",
+  #       "-c",
+  #       "export LIVEKIT_KEYS=\"devkey: $${LIVEKIT_API_SECRET:-secret_for_local_dev_only}\" && exec /livekit-server --dev --bind 0.0.0.0",
+  #     ]
+  #   ports:
+  #     - "7880:7880"       # HTTP/WebSocket signaling
+  #     - "7881:7881"       # RTC over TCP fallback
+  #     - "7881:7881/udp"   # RTC media (UDP)
+  #   restart: unless-stopped
 
   # --- Voice agent worker (LiveKit Agents runtime) -----------------------------
   # Joins playground-* rooms; STT=Deepgram, TTS=Cartesia, LLM=Groq (OpenAI
@@ -138,24 +138,15 @@ services:
     env_file:
       - ../.env
     environment:
-      # Worker lives INSIDE the compose network -> use the service DNS name.
-      # Provider keys (DEEPGRAM/CARTESIA/GROQ/GROQ_MODEL) come from ../.env
-      # via env_file — do NOT redeclare them here with ${} defaults, an empty
-      # string would override the real value. Same trap applied to
-      # LIVEKIT_API_KEY/SECRET and INTERNAL_API_TOKEN: host-side ${}
-      # interpolation silently fell back to placeholders whenever compose ran
-      # without --env-file, desyncing the worker from the LiveKit server
-      # (401 signature-invalid on every connect) and from the backend
-      # internal API (401 on /internal/*). env_file is the single source.
-      LIVEKIT_URL: ws://livekit:7880
+      # All LiveKit + provider credentials come from ../.env via env_file
+      # (cloud URL + API key/secret). No literals here: a literal LIVEKIT_URL
+      # would override the cloud URL with the retired self-hosted address.
       BACKEND_INTERNAL_URL: http://backend:8000
       ENVIRONMENT: development
       LOG_LEVEL: info
     depends_on:
       backend:
         condition: service_healthy
-      livekit:
-        condition: service_started
     # No ports: the worker dials out to LiveKit/backend; nothing listens.
     # No healthcheck: the worker serves no HTTP endpoint to probe.
     command: ["python", "agent.py"]

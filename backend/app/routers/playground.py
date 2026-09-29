@@ -790,7 +790,11 @@ async def _run_agent_turn(
     next_index = (history_rows[-1].turn_index + 1) if history_rows else 0
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-    for row in history_rows:
+    # Bounded history: full transcripts grow a turn per exchange, and by
+    # turn ~10 the model re-reads the whole call before every reply (input
+    # tokens balloon, TTFT climbs linearly, TPM 429s follow). The last 14
+    # rows (~7 exchanges) carry all working context; the DB keeps the rest.
+    for row in history_rows[-14:]:
         messages.append(
             {"role": "assistant" if row.speaker == "agent" else "user", "content": row.text}
         )
@@ -819,9 +823,12 @@ async def _run_agent_turn(
     done = False
     started_mono = time.monotonic()
     assistant_text = ""
+    groq_call_ms: list[float] = []
 
     for round_no in range(_MAX_TOOL_ROUNDS):
+        call_started = time.monotonic()
         message = await _groq_chat(settings, messages, include_tools=round_no < _MAX_TOOL_ROUNDS - 1)
+        groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
         if not tool_calls:
@@ -851,11 +858,13 @@ async def _run_agent_turn(
             )
     else:
         # Tool loop exhausted without plain text - force one final text reply.
+        call_started = time.monotonic()
         message = await _groq_chat(
             settings,
             messages + [{"role": "system", "content": "Reply now in plain words only."}],
             include_tools=False,
         )
+        groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         assistant_text = str(message.get("content") or "").strip()
 
     # Pseudo tool calls: the model sometimes emits <tool_call> XML as text
@@ -896,6 +905,9 @@ async def _run_agent_turn(
                 speaker="agent",
                 text=assistant_text,
                 timestamp=utcnow(),
+                # First Groq round-trip time as the LLM leg proxy (text mode
+                # has no STT/TTS legs, so e2e ≈ LLM + tool overhead).
+                llm_first_token_ms=round(groq_call_ms[0], 1) if groq_call_ms else None,
                 e2e_ms=float(elapsed_ms),  # text-mode wall clock (no STT/TTS legs)
             )
         )

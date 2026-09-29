@@ -338,3 +338,32 @@ def test_session_contact_persisted_and_injected_into_start_prompt(groq_client, s
     kickoff_msg = sent["messages"][-1]["content"]
     assert "Aarav" in system_msg and "Suresh" in system_msg
     assert "Aarav" in kickoff_msg
+
+
+def test_history_trimmed_and_llm_leg_recorded(groq_client, session_factory):
+    """10 exchanges keep the Groq payload bounded; the LLM leg is measured."""
+    from sqlalchemy import select
+
+    from app.models import Transcript
+
+    token, _ = register(groq_client)
+    call_id = start_session(groq_client, token)
+    for i in range(10):
+        script(chat(f"reply {i}"))
+        resp = groq_client.post(
+            f"/api/playground/sessions/{call_id}/turns",
+            json={"text": f"caller says {i}"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200, resp.text
+    sent = _FakeAsyncClient.requests[-1]["json"]
+    # system + last 14 history rows + new user turn (was: unbounded growth).
+    assert len(sent["messages"]) == 16
+    with session_factory() as db:
+        rows = db.scalars(
+            select(Transcript)
+            .where(Transcript.call_id == call_id, Transcript.speaker == "agent")
+            .order_by(Transcript.turn_index)
+        ).all()
+        assert len(rows) == 10
+        assert all(r.llm_first_token_ms is not None for r in rows)

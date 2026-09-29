@@ -616,6 +616,14 @@ def render_system_prompt(
         "If busy, offer the callback first.\n"
         "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
         "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
+        "\n"
+        "- TWO-ASK LIMIT: any single goal gets asked at most TWICE. No usable "
+        "answer twice → acknowledge what they DID say, note the gap, move to "
+        "the next goal. Never a third identical question — repetition is how "
+        "callers know you're a bot.\n"
+        "- MISMATCH: if the answer fits a DIFFERENT goal (they answer the "
+        "previous question), capture it there, say so in half a line, then "
+        "ask the current goal once."
     )
 
     # 4c. Call budget — every minute costs money. Terse by design.
