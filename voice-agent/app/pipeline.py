@@ -406,29 +406,52 @@ def build_providers(
             )
     if groq_llms:
         chain: list[Any] = list(groq_llms)
-        if settings.openai_api_key:
-            # Same-tier fallback, different provider: Groq on_demand caps
-            # (~8000 TPM shared with retries) wedging calls after ~3 turns.
-            # The wrapper re-issues the identical request once on OpenAI.
-            chain.append(
-                openai.LLM(
-                    model=settings.openai_model,
-                    api_key=settings.openai_api_key,
-                    base_url=settings.openai_base_url,
-                    max_completion_tokens=300,
+        # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN, Cerebras,
+        # OpenRouter). Same-tier, different provider: Groq's free tier caps
+        # out mid-call, and the wrapper re-issues the identical request on the
+        # next member instead of leaving the caller in silence.
+        for name, base_url, api_key, model in settings.llm_fallback_chain:
+            if not base_url:
+                continue
+            try:
+                chain.append(
+                    openai.LLM(
+                        model=model,
+                        api_key=api_key,
+                        base_url=base_url,
+                        max_completion_tokens=300,
+                    )
                 )
-            )
+                logger.info("LLM chain member armed: %s (%s)", name, model)
+            except Exception as exc:  # noqa: BLE001 — never block the chain
+                logger.warning("LLM chain member %s rejected: %s", name, exc)
         if len(chain) > 1:
             logger.info(
-                "LLM chain armed (%d members): %s (Groq x%d)%s",
+                "LLM chain armed (%d members): %s (Groq x%d) + %s",
                 len(chain),
                 groq_model,
                 len(groq_llms),
-                f" -> {settings.openai_model} (OpenAI)" if settings.openai_api_key else "",
+                ", ".join(
+                    f"{name}:{model}" for name, _u, _k, model in settings.llm_fallback_chain
+                )
+                or "no extra members",
             )
             bundle.llm = FallbackLLM(chain)
         else:
             bundle.llm = groq_llms[0]
+    elif settings.llm_fallback_chain:
+        # No Groq at all, but extra providers are configured: serve the call
+        # rather than degrading to an apology.
+        for name, base_url, api_key, model in settings.llm_fallback_chain:
+            if not base_url:
+                continue
+            bundle.llm = openai.LLM(
+                model=model, api_key=api_key, base_url=base_url
+            )
+            logger.info("GROQ_API_KEY missing - using %s (%s)", name, model)
+            break
+        if bundle.llm is None:
+            bundle.problems.append("No usable LLM chain member (bad LLM_FALLBACK_CHAIN)")
     elif settings.openai_api_key:
         logger.info(
             "GROQ_API_KEY missing - falling back to OpenAI %s",

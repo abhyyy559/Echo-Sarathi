@@ -95,6 +95,78 @@ class Settings:
     # last so positional construction in older tests keeps working.
     groq_api_keys: tuple[str, ...] = ()
     groq_base_url: str = DEFAULT_GROQ_BASE_URL
+    # Extra OpenAI-compatible providers, shared with the backend so one .env
+    # line arms the fallback for BOTH text and voice mode. Parsed into
+    # (name, base_url, api_key, model) tuples by ``llm_fallback_chain``.
+    llm_fallback_chain_raw: str = ""
+    cerebras_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
+
+    @property
+    def llm_fallback_chain(self) -> tuple[tuple[str, str, str, str], ...]:
+        """``(name, base_url, api_key, model)`` members after the Groq keys.
+
+        Same format the backend reads, so a key pasted once covers text and
+        voice. Entries are ``name|base_url|key|model``; a legacy
+        ``name:base_url:key:model`` is still accepted, but ``|`` is preferred
+        because OpenRouter model ids carry a colon suffix (``:free``) that the
+        colon form cannot represent. Malformed entries are skipped rather than
+        crashing the worker at boot.
+        """
+        members: list[tuple[str, str, str, str]] = []
+        for entry in (self.llm_fallback_chain_raw or "").split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            fields = [f.strip() for f in entry.split("|")]
+            if len(fields) != 4:
+                # Legacy colon form: base_url contains "://" so the fields are
+                # peeled from both ends.
+                name, _, rest = entry.partition(":")
+                head, _, model = rest.rpartition(":")
+                base_url, _, api_key = head.rpartition(":")
+                fields = [name, base_url, api_key, model]
+            name, base_url, api_key, model = (f.strip() for f in fields)
+            if not all((name, base_url, api_key, model)):
+                continue
+            if not base_url.startswith("http"):
+                continue
+            # A template value left in .env must never occupy a chain slot: it
+            # would 401 on every turn and mask the real failure.
+            if _looks_like_placeholder(api_key):
+                continue
+            if name == "groq" and api_key in self.groq_api_keys:
+                continue  # already armed from GROQ_API_KEY(S)
+            members.append((name, base_url, api_key, model))
+        if self.openai_api_key and not any(m[0] == "openai" for m in members):
+            if self.openai_base_url and not _looks_like_placeholder(self.openai_api_key):
+                members.append(
+                    (
+                        "openai",
+                        self.openai_base_url,
+                        self.openai_api_key,
+                        self.openai_model,
+                    )
+                )
+        if self.cerebras_api_key:
+            members.append(
+                (
+                    "cerebras",
+                    "https://api.cerebras.ai/v1",
+                    self.cerebras_api_key,
+                    "llama-3.3-70b",
+                )
+            )
+        if self.openrouter_api_key:
+            members.append(
+                (
+                    "openrouter",
+                    "https://openrouter.ai/api/v1",
+                    self.openrouter_api_key,
+                    "meta-llama/llama-3.3-70b-instruct:free",
+                )
+            )
+        return tuple(members)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -125,6 +197,9 @@ class Settings:
             groq_model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL),
             groq_base_url=os.getenv("GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL),
             openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+            llm_fallback_chain_raw=_get("LLM_FALLBACK_CHAIN") or "",
+            cerebras_api_key=_get("CEREBRAS_API_KEY"),
+            openrouter_api_key=_get("OPENROUTER_API_KEY"),
             log_level=os.getenv("LOG_LEVEL", "info").lower(),
         )
 

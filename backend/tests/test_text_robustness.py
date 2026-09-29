@@ -323,7 +323,7 @@ def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_fact
     fresh = create_app(
         make_settings(
             groq_api_key="k1",
-            llm_fallback_chain="cerebras:https://api.cerebras.ai/v1:ck1:llama-3.3-70b",
+            llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
         )
     )
     fresh.state.session_factory = session_factory
@@ -364,7 +364,7 @@ def test_exhausted_chain_reports_rate_limit(session_factory, monkeypatch):
     fresh = create_app(
         make_settings(
             groq_api_key="k1",
-            llm_fallback_chain="cerebras:https://api.cerebras.ai/v1:ck1:llama-3.3-70b",
+            llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
         )
     )
     fresh.state.session_factory = session_factory
@@ -414,3 +414,4 @@ def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monke
         assert bearers == ["Bearer k1"] * 3 + ["Bearer k2"]
     _FlakyAsyncClient.planned = []
     _FlakyAsyncClient.requests = []
+

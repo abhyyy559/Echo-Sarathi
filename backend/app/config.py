@@ -11,6 +11,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _logger = logging.getLogger(__name__)
 
+#: Values that are obviously template leftovers, not real credentials. A
+#: placeholder key in the LLM chain would 401 on every turn and mask the real
+#: provider failure, so it never occupies a chain slot.
+_TEMPLATE_MARKERS = (
+    "your_",
+    "paste-",
+    "paste_",
+    "changeme",
+    "change-me",
+    "placeholder",
+    "example",
+    "xxx",
+    "<",
+    "todo",
+)
+
+
+def _looks_like_template(value: str) -> bool:
+    lowered = str(value or "").strip().lower()
+    if not lowered:
+        return True
+    return any(marker in lowered for marker in _TEMPLATE_MARKERS)
+
 
 class Settings(BaseSettings):
     """Runtime configuration, loaded from environment / .env file."""
@@ -123,9 +146,10 @@ class Settings(BaseSettings):
     # A single Groq key hits 429 after a handful of turns, which is what makes
     # the agent go silent mid-conversation. Each entry below is one
     # OpenAI-compatible endpoint; the chain is tried in order and a member is
-    # skipped on 429/5xx/timeouts. Format: NAME:base_url:key:model, comma
-    # separated. Blank entries are ignored, so leaving this unset keeps the
-    # historical Groq-only behaviour.
+    # skipped on 429/5xx/timeouts. Format: name|base_url|key|model, comma
+    # separated (use "|", not ":", because OpenRouter model ids end in ":free").
+    # Blank entries are ignored, so leaving this unset keeps the historical
+    # Groq-only behaviour.
     llm_fallback_chain: str = ""
     openrouter_api_key: str = ""
     cerebras_api_key: str = ""
@@ -143,19 +167,20 @@ class Settings(BaseSettings):
             entry = entry.strip()
             if not entry:
                 continue
-            # name:base_url:key:model - base_url itself contains "://" so the
-            # fields are peeled from both ends instead of a naive split.
-            name, _, rest = entry.partition(":")
-            head, _, model = rest.rpartition(":")
-            base_url, _, api_key = head.rpartition(":")
-            name, base_url, api_key, model = (
-                name.strip(),
-                base_url.strip(),
-                api_key.strip(),
-                model.strip(),
-            )
+            fields = [f.strip() for f in entry.split("|")]
+            if len(fields) != 4:
+                # Legacy colon form: base_url contains "://" so the fields are
+                # peeled from both ends.
+                name, _, rest = entry.partition(":")
+                head, _, model = rest.rpartition(":")
+                base_url, _, api_key = head.rpartition(":")
+                fields = [name, base_url, api_key, model]
+            name, base_url, api_key, model = fields
             if not all((name, base_url, api_key, model)) or not base_url.startswith("http"):
                 _logger.warning("ignoring malformed LLM_FALLBACK_CHAIN entry: %r", entry)
+                continue
+            if _looks_like_template(api_key):
+                _logger.warning("ignoring template LLM_FALLBACK_CHAIN key for %s", name)
                 continue
             if name == "groq" and api_key in self.groq_api_key_list:
                 continue  # already added from GROQ_API_KEY(S)

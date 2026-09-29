@@ -153,6 +153,105 @@ def test_build_providers_builds_one_groq_client_per_key(monkeypatch) -> None:
     assert [m["api_key"] for m in made] == ["k1", "k2", "ok"]
 
 
+def test_llm_fallback_chain_parses_pasted_providers(monkeypatch) -> None:
+    """A key pasted once into LLM_FALLBACK_CHAIN must arm voice mode too."""
+    monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b")
+    settings = Settings.from_env()
+    assert settings.llm_fallback_chain == (
+        ("cerebras", "https://api.cerebras.ai/v1", "ck1", "llama-3.3-70b"),
+    )
+
+
+def test_llm_fallback_chain_ignores_placeholder_keys(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv(
+        "LLM_FALLBACK_CHAIN", "cerebras|https://api.cerebras.ai/v1|your_cerebras_key_here|llama-3.3-70b"
+    )
+    settings = Settings.from_env()
+    assert settings.llm_fallback_chain == ()
+
+
+def test_llm_fallback_chain_skips_malformed_entries() -> None:
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key=None,
+        cartesia_api_key=None,
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        internal_api_token="t",
+        backend_internal_url="http://b",
+        groq_model="m",
+        openai_model="o",
+        log_level="info",
+        llm_fallback_chain_raw=("nonsense,only|two, : , real|https://x/v1|rk|rm"),
+    )
+    assert settings.llm_fallback_chain == (("real", "https://x/v1", "rk", "rm"),)
+
+
+def test_duplicate_groq_key_in_chain_is_not_duplicated() -> None:
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key=None,
+        cartesia_api_key=None,
+        groq_api_key="k1",
+        groq_api_keys=("k1", "k2"),
+        openai_api_key=None,
+        openai_base_url=None,
+        internal_api_token="t",
+        backend_internal_url="http://b",
+        groq_model="m",
+        openai_model="o",
+        log_level="info",
+        llm_fallback_chain_raw="groq:https://api.groq.com/openai/v1:k1:openai/gpt-oss-20b",
+    )
+    assert settings.llm_fallback_chain == ()
+
+
+def test_build_providers_adds_chain_members_to_voice_llm(monkeypatch) -> None:
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://localhost:7880",
+        livekit_api_key="devkey",
+        livekit_api_secret="secret",
+        deepgram_api_key="dg",
+        cartesia_api_key="cartesia",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="test-model",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="tok",
+        llm_fallback_chain_raw=(
+            "cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b,"
+            "openrouter|https://openrouter.ai/api/v1|rk1|meta-llama/llama-3.3-70b-instruct:free"
+        ),
+    )
+    bundle = build_providers(settings)
+    assert isinstance(bundle.llm, FallbackLLM)
+    assert bundle.llm.chain_size == 3
+    assert [m["api_key"] for m in made] == ["k1", "ck1", "rk1"]
+    assert made[1]["base_url"] == "https://api.cerebras.ai/v1"
+    # The OpenRouter ":free" suffix must survive parsing intact.
+    assert made[2]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+
+
 def test_placeholder_keys_raise_startup_warning(monkeypatch) -> None:
     from app.config import _looks_like_placeholder, get_settings, reset_settings_cache
 
