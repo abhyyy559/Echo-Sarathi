@@ -223,3 +223,54 @@ def test_no_barge_in_when_agent_silent() -> None:
 
     asyncio.run(scenario())
     assert published == []
+
+
+def test_backchannel_controller_timing() -> None:
+    import asyncio
+
+    from app.pipeline import BackchannelController
+
+    spoken: list[str] = []
+    now = [0.0]
+
+    async def say(text: str) -> None:
+        spoken.append(text)
+
+    async def scenario() -> None:
+        ctl = BackchannelController(say, clock=lambda: now[0])
+        ctl.on_user_speaking(True)
+        now[0] = 1.0
+        assert await ctl.tick() is False  # under 2.5s threshold
+        now[0] = 3.0
+        assert await ctl.tick() is True  # first cue earned
+        assert spoken == ["mm-hmm"]
+        now[0] = 4.0
+        assert await ctl.tick() is False  # 6s cooldown
+        now[0] = 10.0
+        assert await ctl.tick() is True
+        assert spoken == ["mm-hmm", "right"]
+        ctl.on_user_speaking(False)
+        now[0] = 20.0
+        assert await ctl.tick() is False  # floor yielded, stays silent
+
+    asyncio.run(scenario())
+
+
+def test_smart_turn_preferred_with_fallback(monkeypatch) -> None:
+    import app.pipeline as pipeline_module
+
+    assert pipeline_module._turn_detection() is not None
+    # Forced failure inside the detector factory falls back, never raises.
+    monkeypatch.setattr(pipeline_module, "_get_smart_turn", lambda: (_ for _ in ()).throw(RuntimeError("no weights")))
+    detector = pipeline_module._turn_detection()
+    assert detector is not None
+
+
+def test_room_options_none_without_hush() -> None:
+    import sys
+
+    import app.pipeline as pipeline_module
+
+    assert "livekit.plugins.hush" not in sys.modules
+    # Local test venvs don't install hush: plain start, no crash.
+    assert pipeline_module._room_options() is None

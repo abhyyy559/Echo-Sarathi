@@ -67,6 +67,11 @@ try:
 except ImportError:  # very old SDKs without the inference module
     _inference = None  # type: ignore[assignment]
 
+try:
+    from smart_turn_livekit import SmartTurnDetector as _SmartTurnDetector
+except ImportError:  # offline tests / minimal installs: v1-mini fallback below
+    _SmartTurnDetector = None  # type: ignore[assignment]
+
 PLAYGROUND_PREFIX = "playground-"
 PHONE_PREFIX = "phone-"
 APOLOGY_TEXT = (
@@ -459,6 +464,57 @@ def _spawn_task(coro: Coroutine[Any, Any, Any]) -> "asyncio.Task[Any]":
     return task
 
 
+#: Backchannel utterances: brief "I'm listening" cues that take no turn.
+BACKCHANNEL_PHRASES: tuple[str, ...] = ("mm-hmm", "right", "got it")
+#: Minimum gap between cues — more frequent sounds mechanical, not human.
+BACKCHANNEL_MIN_GAP_S = 6.0
+#: Caller must hold the floor this long before the first cue is earned.
+BACKCHANNEL_SPEAK_THRESHOLD_S = 2.5
+
+
+class BackchannelController:
+    """Injects listener cues ("mm-hmm") while the caller holds the floor.
+
+    Pure timing logic over an injectable clock and say-callable, so it unit
+    tests without LiveKit. Takes no turn: cues are short, interruptible, and
+    never enter the LLM context — the model never knows they happened.
+    """
+
+    def __init__(self, say: Any, clock: Any = None) -> None:
+        self._say = say
+        self._clock = clock or time.monotonic
+        self._speaking_since: Optional[float] = None
+        self._last_at = float("-inf")
+        self._idx = 0
+
+    def on_user_speaking(self, speaking: bool) -> None:
+        """Feed user-speech transitions from the session state events."""
+        if speaking:
+            if self._speaking_since is None:
+                self._speaking_since = self._clock()
+        else:
+            self._speaking_since = None
+
+    async def tick(self) -> bool:
+        """Speak one cue if earned. Returns True when spoken."""
+        now = self._clock()
+        if self._speaking_since is None:
+            return False
+        if now - self._last_at < BACKCHANNEL_MIN_GAP_S:
+            return False
+        if now - self._speaking_since < BACKCHANNEL_SPEAK_THRESHOLD_S:
+            return False
+        phrase = BACKCHANNEL_PHRASES[self._idx % len(BACKCHANNEL_PHRASES)]
+        self._idx += 1
+        self._last_at = now
+        try:
+            await self._say(phrase)
+        except Exception:  # noqa: BLE001 — a missed cue is harmless
+            logger.debug("Backchannel cue failed", exc_info=True)
+            return False
+        return True
+
+
 class TurnTelemetry:
     """Accumulates one exchange (user utterance + agent reply), posts it.
 
@@ -492,12 +548,14 @@ class TurnTelemetry:
         call_id: str,
         room: Any = None,
         on_final_user: Any = None,
+        backchannel: Optional[BackchannelController] = None,
     ) -> None:
         self._session = session
         self._backend = backend
         self._call_id = call_id
         self._room = room
         self._on_final_user = on_final_user
+        self._backchannel = backchannel
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
         self._activity_sequence = 1
@@ -687,6 +745,11 @@ class TurnTelemetry:
     def _on_user_state_changed(self, ev: Any) -> None:
         old_state = self._event_state(ev, "old_state")
         new_state = self._event_state(ev, "new_state")
+        if self._backchannel is not None and new_state is not None:
+            try:
+                self._backchannel.on_user_speaking(new_state == "speaking")
+            except Exception:  # noqa: BLE001 — cues must never break turns
+                logger.debug("Backchannel feed failed", exc_info=True)
         if new_state == "speaking" and old_state != "speaking":
             if self._agent_speaking:
                 # Genuine barge-in: tell the phone bridge to drop stale
@@ -1034,6 +1097,61 @@ def _reset_vad_cache() -> None:
     _VAD_INSTANCE = None
 
 
+#: Process-wide Smart Turn detector. Weights (~9MB) download once, then run
+#: from cache; constructing per session would re-warm the model every call.
+_SMART_TURN_INSTANCE: Any = None
+
+
+def _get_smart_turn() -> Any:
+    """Return the shared Smart Turn detector (None when uninstallable)."""
+    global _SMART_TURN_INSTANCE
+    if _SMART_TURN_INSTANCE is None:
+        if _SmartTurnDetector is None:
+            return None
+        _SMART_TURN_INSTANCE = _SmartTurnDetector()
+    return _SMART_TURN_INSTANCE
+
+
+def _reset_smart_turn_cache() -> None:
+    """Drop the shared detector (tests)."""
+    global _SMART_TURN_INSTANCE
+    _SMART_TURN_INSTANCE = None
+
+
+def _get_noise_cancellation() -> Any:
+    """Hush voice-focus processor, or None when the plugin is missing.
+
+    Runs before turn detection/STT: isolates the foreground speaker and
+    suppresses competing voices (TV, car passengers) that plain noise
+    cancellation hears as speech. Never raises.
+    """
+    try:
+        from livekit.plugins import hush as _hush
+    except ImportError:
+        return None
+    try:
+        return _hush.noise_suppression()
+    except Exception:
+        logger.warning("Hush unavailable, continuing without it", exc_info=True)
+        return None
+
+
+def _room_options() -> Any:
+    """RoomOptions with voice-focus audio input, or None for a plain start."""
+    nc = _get_noise_cancellation()
+    if nc is None:
+        return None
+    try:
+        from livekit.agents import room_io
+
+        return room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(noise_cancellation=nc)
+        )
+    except Exception:
+        logger.warning("RoomOptions unsupported here, plain start", exc_info=True)
+        return None
+
+
 def _preemptive_kwargs(enabled: bool) -> dict[str, Any]:
     """Version-tolerant preemptive-generation option.
 
@@ -1143,14 +1261,20 @@ def _opts(cls: Any, **kwargs: Any) -> Any:
 
 
 def _turn_detection() -> Any:
-    """Model-based end-of-turn detector, pinned to the local mini model.
+    """End-of-turn detector: Smart Turn v3 first, local mini fallback.
 
-    The audio turn detector beats VAD-only endpointing on hesitant speech,
-    but the full cloud model is unreachable from self-hosted workers (401s
-    in our logs, then a slow fallback). Pinning ``v1-mini`` skips the doomed
-    cloud attempt and runs the ONNX model on local CPU. Falls back to plain
-    ``"vad"`` on SDKs without the inference module.
+    Smart Turn reads prosody (not just silence) to tell "paused to think"
+    from "finished speaking" — the core fix for waits-after-user-speaks and
+    mid-thought interruptions. It runs on CPU via ONNX with weights cached
+    at image build time. Any failure (missing dep, no weights, offline box)
+    falls back to the pinned v1-mini cloud detector, then plain "vad".
+    Nothing here may ever raise into the session path.
     """
+    if _SmartTurnDetector is not None:
+        try:
+            return _get_smart_turn()
+        except Exception:
+            logger.warning("Smart Turn unavailable, trying v1-mini", exc_info=True)
     detector_cls = getattr(_inference, "TurnDetector", None) if _inference else None
     if detector_cls is None:
         return "vad"
@@ -1228,9 +1352,13 @@ async def _start_agent_session(
     telemetry: TurnTelemetry,
     room: Any,
     agent: Any,
+    room_options: Any = None,
 ) -> None:
     telemetry.queue_agent_connecting()
-    await session.start(room=room, agent=agent)
+    if room_options is None:
+        await session.start(room=room, agent=agent)
+    else:
+        await session.start(room=room, agent=agent, room_options=room_options)
 
 
 async def run_session(ctx: JobContext, settings: Settings) -> None:
@@ -1322,20 +1450,41 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         session = _build_agent_session(
             bundle, preemptive_generation=not is_phone_room
         )
+
+        async def _say_cue(text: str) -> None:
+            await session.say(text, allow_interruptions=True)
+
+        backchannel = BackchannelController(_say_cue)
         telemetry = TurnTelemetry(
             session=session,
             backend=backend,
             call_id=call_id,
             room=ctx.room,
             on_final_user=tools_impl.heuristic_extract,
+            backchannel=backchannel,
         )
         telemetry.attach()
+
+        async def _backchannel_loop() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(0.5)
+                    await backchannel.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — cues never kill sessions
+                logger.exception("Backchannel loop failed")
+
+        backchannel_task = asyncio.ensure_future(_backchannel_loop())
 
         if not await _is_connected(ctx):
             await ctx.connect()
 
         agent = DomainCallAgent(instructions=instructions, tools_impl=tools_impl)
-        await _start_agent_session(session, telemetry, ctx.room, agent)
+        await _start_agent_session(
+            session, telemetry, ctx.room, agent,
+            room_options=_room_options(),
+        )
         # Agent speaks first: the composed opening remains token-substituted,
         # and the caller can barge in while it is being delivered.
         await _speak_opening(session, config, tokens, parsed.contact)
@@ -1348,6 +1497,9 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         except Exception:  # pragma: no cover - last resort
             logger.exception("Degradation path also failed (room=%s)", room_name)
     finally:
+        task = locals().get("backchannel_task")
+        if task is not None:
+            task.cancel()
         if telemetry is not None:
             try:
                 await telemetry.flush_pending()
