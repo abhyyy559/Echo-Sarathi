@@ -1,6 +1,7 @@
 """Text-path robustness: pseudo tool-call markup + Groq 429 retry."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -90,7 +91,10 @@ class _FlakyResponse:
         self.status_code = status_code
         self._payload = payload or {}
         self.headers = headers or {}
-        self.text = "rate limited" if status_code == 429 else ""
+        # Mirror httpx: the real response body is what error classification
+        # reads, so the fake must expose it too (a fake without .text made a
+        # provider 400 indistinguishable from a 429).
+        self.text = json.dumps(self._payload) if self._payload else "rate limited"
 
     def json(self) -> dict[str, Any]:
         return self._payload
@@ -239,6 +243,82 @@ def test_cap_reply_keeps_short_replies_intact() -> None:
     assert _cap_reply("Hi, happy to help.") == "Hi, happy to help."
     assert _cap_reply("A? B? C? D?") == "A? B?"
     assert _cap_reply("   ") == ""
+
+
+def test_tool_choice_conflict_strips_history_instead_of_resending() -> None:
+    """The 400 loop, reproduced: the model calls a tool while tools are
+    disabled. The recovery used to resend the IDENTICAL payload, reproducing
+    the same 400 while spending a rate-limited key."""
+    from app.routers.playground import _strip_tool_traffic
+
+    history = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "he had fever"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "1", "function": {}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "Recorded reason_for_absence='fever'"},
+        {"role": "assistant", "content": "Noted. When is he back?", "tool_calls": [{"id": "2"}]},
+        {"role": "tool", "tool_call_id": "2", "content": "NOT RECORDED: never stated"},
+    ]
+    cleaned = _strip_tool_traffic(history)
+    assert [m["role"] for m in cleaned] == ["system", "user", "assistant"]
+    # The tool-call-only assistant turn is dropped entirely (no empty content),
+    # the assistant turn that also spoke survives without its tool_calls.
+    assert cleaned[2]["content"] == "Noted. When is he back?"
+    assert not any("tool_calls" in m for m in cleaned)
+    assert not any(m["role"] == "tool" for m in cleaned)
+
+
+def test_member_body_drops_unsupported_reasoning_effort() -> None:
+    """Gemini 400s on reasoning_effort, and Groq rejects the value 'none'."""
+    from app.routers.playground import _member_body
+
+    base = {"messages": [], "max_tokens": 160, "reasoning_effort": "low"}
+    groq = _member_body(base, "openai/gpt-oss-20b")
+    assert groq["reasoning_effort"] == "low"
+    # Not a gpt-oss model: the Groq-only knob must not be forwarded.
+    assert "reasoning_effort" not in _member_body(base, "gemini-flash-latest")
+    # Invalid value for Groq: drop it rather than 400.
+    assert "reasoning_effort" not in _member_body(
+        {**base, "reasoning_effort": "none"}, "openai/gpt-oss-20b"
+    )
+    # No-op when absent.
+    assert "reasoning_effort" not in _member_body({"messages": []}, "gemini-flash-latest")
+
+
+def test_tool_choice_conflict_retries_with_clean_history(flaky_client, monkeypatch):
+    """End to end through _groq_chat: 400 tool_use_failed, then 200 - and the
+    second request must not carry the tool traffic that caused it."""
+    from app.routers.playground import _message_or_raise  # noqa: F401 - import guard
+
+    client = flaky_client
+    _FlakyAsyncClient.planned = [
+        _FlakyResponse(400, {"error": {"code": "tool_use_failed", "message": "Tool choice is none, but model called a tool"}}),
+        _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "sure, noted"}}]}),
+    ]
+    _FlakyAsyncClient.requests = []
+    import asyncio as _asyncio
+
+    from app.config import Settings as _S
+
+    settings = _S(groq_api_key="k1", database_url="sqlite://", _env_file=None)
+    settings.livekit_url = "ws://x"  # unused here
+    result = _asyncio.run(
+        __import__("app.routers.playground", fromlist=["_groq_chat"])._groq_chat(
+            settings,
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "he had fever"},
+                {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+                {"role": "tool", "tool_call_id": "1", "content": "ok"},
+            ],
+            include_tools=False,
+        )
+    )
+    assert result["content"] == "sure, noted"
+    assert len(_FlakyAsyncClient.requests) == 2
+    retry_messages = _FlakyAsyncClient.requests[1]["json"]["messages"]
+    assert [m["role"] for m in retry_messages] == ["system", "user"]
+    assert "tools" not in _FlakyAsyncClient.requests[1]["json"]
 
 
 def test_placeholder_key_never_occupies_a_chain_slot() -> None:

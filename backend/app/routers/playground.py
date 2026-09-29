@@ -716,27 +716,92 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
     }
     if "qwen" in settings.groq_model.lower():
         # Qwen is a hybrid reasoning model - thinking tokens add latency.
+        # NOTE: "none" is NOT a valid value on Groq ("must be one of low,
+        # medium, high"), so it is filtered out by _member_body below and the
+        # model simply runs without the parameter.
         body["reasoning_effort"] = "none"
     elif "gpt-oss" in settings.groq_model.lower():
         # Parity with the voice worker: gpt-oss burns thinking tokens against
-        # the same 300-token budget as the reply (truncated/empty replies that
-        # trigger more tool rounds, more tokens, more 429s — the doom loop).
+        # the same budget as the reply (truncated/empty replies that trigger
+        # more tool rounds, more tokens, more 429s - the doom loop).
         body["reasoning_effort"] = "low"
     return body
 
 
-def _is_tool_choice_conflict(status_code: int, text: str) -> bool:
-    """True when Groq rejected the payload because the model called a tool
-    while tool use was disabled (``tool_use_failed``).
+#: Groq accepts only these values; anything else is a hard 400.
+_VALID_REASONING_EFFORT = ("low", "medium", "high")
 
-    gpt-oss models occasionally emit tool-call syntax even with ``tools``
-    removed. The correct recovery is to retry the identical conversation with
-    tools stripped and let the model answer in plain text, rather than
-    surfacing a 502 to the caller.
+
+def _member_body(base: dict[str, Any], model: str) -> dict[str, Any]:
+    """Per-provider payload: only send knobs the target model understands.
+
+    ``reasoning_effort`` is a Groq/gpt-oss parameter. Forwarding it to another
+    provider in the chain (Gemini) returns 400, and an invalid value returns
+    400 even on Groq ("none"). Dropping it is always safe: it only caps
+    thinking tokens.
+    """
+    member = {**base, "model": model}
+    effort = member.get("reasoning_effort")
+    if effort is not None:
+        if effort not in _VALID_REASONING_EFFORT or "gpt-oss" not in model.lower():
+            member.pop("reasoning_effort", None)
+    return member
+
+
+def _strip_tool_traffic(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop assistant tool_calls and their tool results from the history.
+
+    THE CAUSE OF THE 400s: the final round of a turn is sent WITHOUT tools
+    (the loop is over), but the history still contains the previous
+    assistant/tool exchange. gpt-oss reads that pattern, emits another
+    tool call, and Groq rejects the generation with 400
+    ``tool_use_failed: Tool choice is none, but model called a tool``.
+    Resending the identical payload (the previous recovery) reproduced the
+    same 400, then burned a rate-limited key. Removing the tool traffic
+    de-primes the model so the retry is actually a plain-text turn.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "tool":
+            continue
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            kept = {k: v for k, v in message.items() if k != "tool_calls"}
+            if kept.get("content"):
+                cleaned.append(kept)
+            continue
+        cleaned.append(message)
+    return cleaned
+
+
+def _is_tool_choice_conflict(status_code: int, text: str) -> bool:
+    """True when the provider rejected the payload because the model called a
+    tool while tool use was disabled (``tool_use_failed``).
+
+    Recovery is to strip the tool traffic from the history and retry as a
+    plain-text turn - resending the identical payload just reproduced the
+    same 400 while spending a rate-limited key.
     """
     if status_code != 400:
         return False
     return "tool_use_failed" in text or "Tool choice is none" in text
+
+
+def _message_or_raise(response: Any) -> dict[str, Any]:
+    """Extract ``choices[0].message`` or fail loudly with the provider body.
+
+    The body used to be dropped, which made every provider 4xx/5xx look
+    identical in the logs ("LLM provider X failed (400)") and cost real
+    debugging time.
+    """
+    try:
+        return response.json()["choices"][0]["message"]
+    except (KeyError, IndexError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Unexpected response from the language model.",
+        ) from exc
 
 
 async def _groq_chat(
@@ -765,7 +830,7 @@ async def _groq_chat(
     rate_limited = False
     async with httpx.AsyncClient(timeout=45.0) as client:
         for member_index, (name, base_url, api_key, model) in enumerate(members):
-            member_body = {**body, "model": model}
+            member_body = _member_body(body, model)
             headers = {"Authorization": f"Bearer {api_key}"}
             if name == "openrouter":
                 headers["HTTP-Referer"] = "https://echosarathi.local"
@@ -790,10 +855,20 @@ async def _groq_chat(
                 if _is_tool_choice_conflict(
                     response.status_code, getattr(response, "text", "")
                 ):
-                    # Model called a tool while tools were disabled: drop them
-                    # and retry once as a plain text turn.
-                    logger.warning("LLM tool-choice conflict on %s; retrying without tools", name)
-                    member_body = dict(member_body)
+                    # The model called a tool while tool use was disabled.
+                    # De-prime the history (see _strip_tool_traffic) and retry
+                    # ONCE as a genuine plain-text turn. Resending the same
+                    # payload reproduced the same 400 while spending a key
+                    # that is often already rate-limited.
+                    logger.warning(
+                        "LLM tool-choice conflict on %s; retrying with tool "
+                        "traffic stripped from history",
+                        name,
+                    )
+                    member_body = {
+                        **member_body,
+                        "messages": _strip_tool_traffic(member_body["messages"]),
+                    }
                     member_body.pop("tools", None)
                     member_body.pop("tool_choice", None)
                     response = await client.post(
@@ -801,6 +876,8 @@ async def _groq_chat(
                         json=member_body,
                         headers=headers,
                     )
+                    if response.status_code == 200:
+                        return _message_or_raise(response)
                 if response.status_code != 429:
                     break
                 if attempt >= _GROQ_MAX_RETRIES:
@@ -814,22 +891,15 @@ async def _groq_chat(
             if response is None:
                 continue
             if response.status_code == 200:
-                try:
-                    return response.json()["choices"][0]["message"]
-                except (KeyError, IndexError, ValueError) as exc:
-                    last_error_text = "malformed completion payload"
-                    logger.error("LLM %s returned an unexpected payload", name)
-                    raise HTTPException(
-                        status_code=502,
-                        detail="Unexpected response from the language model.",
-                    ) from exc
+                return _message_or_raise(response)
             last_error_text = response.text[:300]
             rate_limited = rate_limited or response.status_code == 429
             logger.warning(
-                "LLM provider %s failed (%s); %d member(s) left",
+                "LLM provider %s failed (%s); %d member(s) left: %s",
                 name,
                 response.status_code,
                 len(members) - member_index - 1,
+                last_error_text[:180],
             )
     if rate_limited:
         raise HTTPException(
