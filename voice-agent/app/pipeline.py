@@ -315,6 +315,26 @@ class _FallbackStream(llm.LLMStream):
             pass
 
 
+#: Output caps. A REASONING model (gpt-oss) spends its output budget thinking
+#: before it emits anything; measured with the real system prompt and the tool
+#: schema, gpt-oss-20b truncated at 160 returned completion=160 with EMPTY
+#: content and no tool call, which is the "agent goes silent mid-call" symptom.
+#: Non-reasoning models (qwen3.8-27b: 60 tokens, 686ms) need far less, which
+#: also matters because Groq caps output tokens per minute per organization.
+#: NOTE: qwen3 is deliberately NOT listed - it does not think out loud.
+_REASONING_MODEL_MARKERS = ("gpt-oss", "deepseek-r1", "reasoner", "o1-", "o3-")
+_DEFAULT_MAX_COMPLETION_TOKENS = 300
+_REASONING_MAX_COMPLETION_TOKENS = 500
+
+
+def _max_completion_tokens_for(model: str) -> int:
+    """Output budget that lets the model finish instead of truncating."""
+    lowered = str(model or "").lower()
+    if any(marker in lowered for marker in _REASONING_MODEL_MARKERS):
+        return _REASONING_MAX_COMPLETION_TOKENS
+    return _DEFAULT_MAX_COMPLETION_TOKENS
+
+
 def build_providers(
     settings: Settings,
     voice_settings: Optional[Mapping[str, Any]] = None,
@@ -382,19 +402,17 @@ def build_providers(
         # Groq is an OpenAI-compatible endpoint, so construct it explicitly.
         # GROQ_BASE_URL can point at any compatible provider (Cerebras).
         kwargs: dict[str, Any] = {}
-        if "qwen" in groq_model.lower():
-            # Qwen3 is a hybrid reasoning model — thinking tokens add seconds
-            # of voice latency. Disable reasoning entirely (NFR-1).
-            kwargs["reasoning_effort"] = "none"
-        elif "gpt-oss" in groq_model.lower():
+        if "gpt-oss" in groq_model.lower():
             # GPT-OSS rejects "none" (400: must be low/medium/high) — use the
-            # minimum. Combined with max_completion_tokens=300, thinking
+            # minimum. Combined with a large-enough output budget, thinking
             # stays a short prefix before the spoken reply.
             kwargs["reasoning_effort"] = "low"
-        # Voice turns are 1-3 sentences: cap output well under Groq's
-        # on_demand 1000 output-tokens/min tier (an uncapped request asks for
-        # ~1215 and gets 429 rate_limited, which wedges the whole call).
-        kwargs["max_completion_tokens"] = 300
+        # Voice turns are 1-3 sentences. The cap must be big enough for the
+        # model to actually finish: a REASONING model spends its output budget
+        # thinking first, and truncation at 160 returned an empty reply (that
+        # is the "agent goes silent mid-call" symptom), while it also has to
+        # stay under Groq's on_demand output-tokens/min tier or the call 429s.
+        kwargs["max_completion_tokens"] = _max_completion_tokens_for(groq_model)
         for key in groq_keys:
             groq_llms.append(
                 openai.LLM(
@@ -419,7 +437,7 @@ def build_providers(
                         model=model,
                         api_key=api_key,
                         base_url=base_url,
-                        max_completion_tokens=300,
+                        max_completion_tokens=_max_completion_tokens_for(model),
                     )
                 )
                 logger.info("LLM chain member armed: %s (%s)", name, model)

@@ -252,6 +252,85 @@ def test_build_providers_adds_chain_members_to_voice_llm(monkeypatch) -> None:
     assert made[2]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
 
 
+def test_output_cap_is_model_aware() -> None:
+    """Regression for the silence: a reasoning model truncated at the small cap
+    returns an empty reply. qwen3 is NOT a reasoning model."""
+    from app.pipeline import (
+        _DEFAULT_MAX_COMPLETION_TOKENS,
+        _REASONING_MAX_COMPLETION_TOKENS,
+        _max_completion_tokens_for,
+    )
+
+    assert _max_completion_tokens_for("openai/gpt-oss-20b") == _REASONING_MAX_COMPLETION_TOKENS
+    assert _max_completion_tokens_for("qwen/qwen3.8-27b") == _DEFAULT_MAX_COMPLETION_TOKENS
+    assert _REASONING_MAX_COMPLETION_TOKENS > _DEFAULT_MAX_COMPLETION_TOKENS
+
+
+def test_voice_chain_uses_per_model_output_caps(monkeypatch) -> None:
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="c",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="openai/gpt-oss-20b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+        llm_fallback_chain_raw="extra|https://x/v1|rk|qwen/qwen3.8-27b",
+    )
+    build_providers(settings)
+    caps = {m["model"]: m["max_completion_tokens"] for m in made}
+    assert caps["openai/gpt-oss-20b"] == 500
+    assert caps["qwen/qwen3.8-27b"] == 300
+
+
+def test_qwen_model_sends_no_reasoning_effort(monkeypatch) -> None:
+    """Groq rejects reasoning_effort='none' (must be low/medium/high), and
+    qwen3.8-27b does not think out loud, so the knob is simply omitted."""
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="c",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+    )
+    build_providers(settings)
+    assert "reasoning_effort" not in made[0]
+
+
 def test_placeholder_keys_raise_startup_warning(monkeypatch) -> None:
     from app.config import _looks_like_placeholder, get_settings, reset_settings_cache
 

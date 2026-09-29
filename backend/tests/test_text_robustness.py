@@ -321,6 +321,66 @@ def test_tool_choice_conflict_retries_with_clean_history(flaky_client, monkeypat
     assert "tools" not in _FlakyAsyncClient.requests[1]["json"]
 
 
+def test_reasoning_models_get_a_larger_output_cap() -> None:
+    """Measured: gpt-oss-20b at max_tokens=160 returned completion=160 with
+    EMPTY content and no tool call - the agent's silence. qwen3.8-27b answers
+    in 60 tokens at the same cap."""
+    from app.routers.playground import (
+        _DEFAULT_MAX_TOKENS,
+        _REASONING_MAX_TOKENS,
+        _max_tokens_for,
+        _member_body,
+    )
+
+    assert _max_tokens_for("qwen/qwen3.8-27b") == _DEFAULT_MAX_TOKENS
+    assert _max_tokens_for("openai/gpt-oss-20b") == _REASONING_MAX_TOKENS
+    assert _REASONING_MAX_TOKENS > _DEFAULT_MAX_TOKENS
+    assert _member_body({"max_tokens": 160}, "openai/gpt-oss-20b")["max_tokens"] == _REASONING_MAX_TOKENS
+    assert _member_body({"max_tokens": 160}, "qwen/qwen3.8-27b")["max_tokens"] == 160
+
+
+def test_shared_quota_error_is_detected() -> None:
+    """Groq's TPM bucket is per organization, so remaining keys of the same
+    provider cannot help and must be skipped."""
+    from app.routers.playground import _is_shared_quota_exhausted
+
+    org_tpm = (
+        '{"error":{"message":"Rate limit reached for model `openai/gpt-oss-20b` in '
+        'organization `org_01ky4xmtzjfe3aqq78hh4jw7sd` service tier `on_demand` '
+        'on tokens per minute (TPM): Limit 8000, Requested 9210"}}'
+    )
+    assert _is_shared_quota_exhausted(org_tpm) is True
+    assert _is_shared_quota_exhausted("rate_limited") is False
+    assert _is_shared_quota_exhausted("model_decommissioned") is False
+
+
+def test_shared_quota_skips_the_rest_of_that_provider(flaky_client, monkeypatch):
+    """Two Groq keys, one other provider: an org-level TPM rejection must move
+    to the other provider instead of re-trying the second key."""
+    import asyncio as _asyncio
+
+    from app.config import Settings as _S
+    from app.routers.playground import _groq_chat
+
+    _FlakyAsyncClient.planned = [
+        _FlakyResponse(429, {"error": {"message": "Rate limit reached ... on tokens per minute (TPM): Limit 8000"}}),
+        _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "served by fallback"}}]}),
+    ]
+    _FlakyAsyncClient.requests = []
+    settings = _S(
+        groq_api_key="k1",
+        groq_api_keys="k1,k2",
+        llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
+        database_url="sqlite://",
+        _env_file=None,
+    )
+    result = _asyncio.run(_groq_chat(settings, [{"role": "user", "content": "hi"}]))
+    assert result["content"] == "served by fallback"
+    bearers = [r["headers"]["Authorization"] for r in _FlakyAsyncClient.requests]
+    # key 1 fails on the shared bucket -> key 2 is skipped -> cerebras answers.
+    assert bearers == ["Bearer k1", "Bearer ck1"]
+
+
 def test_placeholder_key_never_occupies_a_chain_slot() -> None:
     """The shipped OPENAI_API_KEY=your_openai_api_key must not be armed: a
     template key 401s on every turn and reads like a provider outage."""

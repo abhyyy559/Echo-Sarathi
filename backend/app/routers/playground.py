@@ -541,24 +541,20 @@ def _render_text_system_prompt(
             f"MANDATORY DISCLOSURE - your VERY FIRST utterance, word-for-word:\n{disclosure}"
         )
 
-    # 2. Persona / mission.
-    role_lines = [
-        "You are a friendly human-sounding outbound phone agent; this is a TEXT test of that call.",
-        "Every reply you type is read aloud by a speech engine exactly as written.",
-        "Have a short natural conversation and complete the goals below.",
-    ]
+    # 2. Persona / mission. Kept to two lines: the creator's role definition
+    # below already carries the character, and repeating generic framing in
+    # three places only spent TPM.
     persona = apply_token_substitution(str(config.system_prompt or "").strip(), tokens)
     sections.append(
-        "WHO YOU ARE:\n" + "\n".join(f"- {line}" for line in role_lines)
+        "WHO YOU ARE:\n"
+        "- You are a friendly human-sounding outbound phone agent. Every reply "
+        "you type is read aloud by a speech engine exactly as written."
     )
     # 2b. Creator's role definition - authoritative, verbatim (not a bullet).
     if persona:
         sections.append(
-            "ROLE & MISSION - defined by the agent creator (AUTHORITATIVE):\n"
-            f"{persona}\n"
-            "This role definition is authoritative for WHO you are and HOW you "
-            "behave: where it differs from generic examples, follow the role "
-            "definition."
+            "ROLE & MISSION - defined by the agent creator (AUTHORITATIVE, and it "
+            "wins any conflict with the rules below):\n" + persona
         )
 
     # 3. Company context.
@@ -573,71 +569,48 @@ def _render_text_system_prompt(
     sections.append(_render_caller_context(card, institution))
 
     # 4. TTS-safe speaking style (kept identical in spirit to the voice agent).
+    # Prompt tokens are the scarce resource (Groq's TPM is org-wide), so the
+    # rules are stated once, tightly. A previous version carried two
+    # overlapping style blocks plus a six-bulets persona block and cost ~1.8k
+    # prompt tokens per turn - the single largest TPM cost in the system.
     sections.append(
         "HOW TO REPLY (critical):\n"
-        "- Keep every reply SHORT: usually 1-2 sentences, never more than 3.\n"
+        "- 1-2 short sentences, never more than 3. Plain spoken words only: NO "
+        "markdown, NO lists, NO emoji, NO newlines inside a reply.\n"
         "- ONE thing per reply: if you still need an answer, ask it and STOP. "
         "Never ask a question and also thank, offer a callback, or say goodbye "
         "in the same reply - the person has not answered yet.\n"
-        "- Plain conversational words only. This text is converted to speech:\n"
-        "  NO markdown, NO asterisks, NO lists, NO numbering symbols, NO emoji,\n"
-        "  NO newlines inside a reply. Sentences and punctuation only.\n"
-        "- Respond to what the person ACTUALLY said before moving on; ask ONE thing per turn.\n"
-        "- Never repeat a question they already answered. Stay polite even if they are upset."
-    )
-
-    # 4b. Conversation, not interview. The agent read as a form-filler on the
-    # first test call (mechanical goal-chasing, no acknowledgement of what the
-    # parent actually said). These are the behavioural rules that fix that.
-    sections.append(
-        "BE A PERSON, NOT A FORM:\n"
-        "- You are a warm colleague having a real conversation, not an operator "
-        "filling a form. Never read goals out in order like a questionnaire.\n"
-        "- React before you move on: acknowledge what they just said in a few "
-        "words, then ask the next thing. 'Oh no, hope he feels better soon - "
-        "and when do you expect him back?' is the target shape.\n"
-        "- Vary your wording. If you have already said a phrase this call, say "
-        "it differently.\n"
-        "- Never stack two questions in one reply, and never open with the "
-        "caller's own words parroted back.\n"
-        "- If they answer something you did not ask about, follow their lead for "
-        "one line, then steer back gently.\n"
-        "- If you did not understand them, say so plainly and move on after one "
-        "retry. Never stall the call with repeated clarification."
+        "- Be a person, not a form: acknowledge what they just said in a few "
+        "words, then ask the next thing. Vary your wording; never read the "
+        "goals out in order like a questionnaire; never stack two questions.\n"
+        "- Answer what they ACTUALLY said first. If you did not catch it, say "
+        "so plainly and move on after one retry. Stay polite even if upset."
     )
 
     # 5. Question flow as goals to weave in naturally.
     goals: list[str] = []
-    number = 0
     for item in config.question_flow or []:
         text_value = apply_token_substitution(_question_text(item), tokens)
-        if not text_value:
-            continue
-        number += 1
-        goals.append(f"{number}. {text_value}")
+        if text_value:
+            goals.append(f"- {text_value}")
     if not goals:
-        goals.append("No fixed goals were configured; have a natural conversation about why you are calling.")
+        goals.append("- Have a natural conversation about why you are calling.")
     sections.append(
-        "YOUR GOALS - information to collect during the call:\n"
-        + "\n".join(goals)
-        + "\nCover ALL of these by the end, weaving each into the conversation naturally."
+        "YOUR GOALS (weave in naturally, in no fixed order):\n" + "\n".join(goals)
     )
 
     # 6. Extraction discipline with the exact field list.
     extraction_lines = [
-        "RECORDING ANSWERS - extraction discipline:",
-        "- The moment the caller states something that answers a goal above, IMMEDIATELY call "
+        "RECORDING ANSWERS:",
+        "- The moment the caller states something that answers a goal, call "
         "`record_extracted_field(field_name, value, confidence)` in that same turn.",
-        "- Use the EXACT field names below. Quote values exactly as the caller said them.",
-        "- Give an honest confidence 0.0-1.0. NEVER fabricate or guess a value - "
-        "if unsure, ask a short clarifying question instead of recording.",
-        "- A value the caller never said does not exist. High confidence is not "
-        "permission to invent: if they never gave a date, do not record any date, "
-        "not even a likely one like 'tomorrow'. Silences, greetings, 'hlooo' and "
-        "off-topic answers contain no answers.",
-        "- When everything is captured (or the caller wants to stop), call `end_call(summary)` "
-        "with a factual summary including any unfilled required fields.",
-        "Fields to capture:",
+        "- Use the EXACT field names below; quote values as the caller said them.",
+        "- NEVER invent a value. A value the caller never said does not exist - "
+        "no guessed date, not even a likely one. Silences, greetings and "
+        "off-topic answers contain no answers. If unsure, ask instead.",
+        "- When everything is captured (or they want to stop), call "
+        "`end_call(summary)` including any unfilled required fields.",
+        "Fields:",
     ]
     schema = config.extraction_schema or {}
     if isinstance(schema, dict):
@@ -721,16 +694,13 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
         # what pushed turn 8+ to 12s before the caller gave up.
         "max_tokens": 160,
     }
-    if "qwen" in settings.groq_model.lower():
-        # Qwen is a hybrid reasoning model - thinking tokens add latency.
-        # NOTE: "none" is NOT a valid value on Groq ("must be one of low,
-        # medium, high"), so it is filtered out by _member_body below and the
-        # model simply runs without the parameter.
-        body["reasoning_effort"] = "none"
-    elif "gpt-oss" in settings.groq_model.lower():
+    if "gpt-oss" in settings.groq_model.lower():
         # Parity with the voice worker: gpt-oss burns thinking tokens against
-        # the same budget as the reply (truncated/empty replies that trigger
-        # more tool rounds, more tokens, more 429s - the doom loop).
+        # the output budget (truncated/empty replies that trigger more tool
+        # rounds, more tokens, more 429s - the doom loop). NOTE: no qwen branch
+        # any more. "reasoning_effort=none" is not a valid value on Groq at all
+        # ("must be one of low, medium, high"), and qwen3.8-27b does not think
+        # out loud anyway, so the parameter is simply omitted for it.
         body["reasoning_effort"] = "low"
     return body
 
@@ -738,20 +708,66 @@ def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> di
 #: Groq accepts only these values; anything else is a hard 400.
 _VALID_REASONING_EFFORT = ("low", "medium", "high")
 
+#: A REASONING model (gpt-oss) spends its output budget on thinking before it
+#: emits anything. Measured with the real system prompt and a tool schema:
+#:   gpt-oss-20b  max_tokens=160 -> completion 160, content "", no tool call
+#:   gpt-oss-20b  max_tokens=500 -> completion 83, correct tool call
+#:   qwen3.8-27b  max_tokens=160 -> completion 60,  correct tool call (686ms)
+#: So a single 160-token cap is the direct cause of "the agent goes silent",
+#: and reasoning models cost ~3-4x the output tokens for the same reply.
+#: Per-model caps fix the silence AND cut TPM for the non-reasoning tier.
+#: Deliberately NOT including qwen3: qwen/qwen3.8-27b is a plain instruct
+#: model (measured: 60 output tokens, 686ms, correct tool call) and must keep
+#: the small cap. Only true reasoning models need the larger budget.
+_REASONING_MODEL_MARKERS = ("gpt-oss", "deepseek-r1", "reasoner", "o1-", "o3-")
+_DEFAULT_MAX_TOKENS = 160
+_REASONING_MAX_TOKENS = 500
+
+
+def _is_reasoning_model(model: str) -> bool:
+    lowered = str(model or "").lower()
+    return any(marker in lowered for marker in _REASONING_MODEL_MARKERS)
+
+
+def _max_tokens_for(model: str, default: int = _DEFAULT_MAX_TOKENS) -> int:
+    """Output cap that leaves a reasoning model room to actually answer."""
+    return _REASONING_MAX_TOKENS if _is_reasoning_model(model) else default
+
+
+def _is_shared_quota_exhausted(text: str) -> bool:
+    """True when the rejection is an ORGANIZATION/PROJECT token bucket.
+
+    Groq's TPM limit is per org/project, not per key: every key in
+    ``org_...`` draws on one pool. When that pool is empty, retrying the
+    remaining keys of the same provider cannot succeed - it just spends six
+    more requests to reach the same wall. Detect it and move to a different
+    provider instead.
+    """
+    lowered = text.lower()
+    return (
+        "tokens per minute" in lowered
+        or "requests per minute" in lowered
+        or "on organization" in lowered
+        or "on project" in lowered
+    )
+
 
 def _member_body(base: dict[str, Any], model: str) -> dict[str, Any]:
     """Per-provider payload: only send knobs the target model understands.
 
     ``reasoning_effort`` is a Groq/gpt-oss parameter. Forwarding it to another
     provider in the chain (Gemini) returns 400, and an invalid value returns
-    400 even on Groq ("none"). Dropping it is always safe: it only caps
-    thinking tokens.
+    400 even on Groq ("none"). The output cap is raised for reasoning models so
+    they are not truncated into silence. Dropping reasoning_effort is always
+    safe: it only caps thinking tokens.
     """
     member = {**base, "model": model}
     effort = member.get("reasoning_effort")
-    if effort is not None:
-        if effort not in _VALID_REASONING_EFFORT or "gpt-oss" not in model.lower():
-            member.pop("reasoning_effort", None)
+    if effort is not None and (
+        effort not in _VALID_REASONING_EFFORT or "gpt-oss" not in model.lower()
+    ):
+        member.pop("reasoning_effort", None)
+    member["max_tokens"] = _max_tokens_for(model, int(member.get("max_tokens", _DEFAULT_MAX_TOKENS)))
     return member
 
 
@@ -853,8 +869,11 @@ async def _groq_chat(
         )
     last_error_text = ""
     rate_limited = False
+    exhausted_providers: set[str] = set()
     async with httpx.AsyncClient(timeout=45.0) as client:
         for member_index, (name, base_url, api_key, model) in enumerate(members):
+            if name in exhausted_providers:
+                continue
             member_body = _member_body(body, model)
             headers = {"Authorization": f"Bearer {api_key}"}
             if name == "openrouter":
@@ -905,6 +924,15 @@ async def _groq_chat(
                         return _message_or_raise(response)
                 if response.status_code != 429:
                     break
+                if _is_shared_quota_exhausted(getattr(response, "text", "")):
+                    # Org/project bucket is empty: the other keys of THIS
+                    # provider draw on the same pool, so stop burning them.
+                    logger.warning(
+                        "LLM %s hit a shared TPM/RPM bucket; skipping its "
+                        "remaining keys",
+                        name,
+                    )
+                    break
                 if attempt >= _GROQ_MAX_RETRIES:
                     break
                 logger.warning(
@@ -926,6 +954,21 @@ async def _groq_chat(
                 len(members) - member_index - 1,
                 last_error_text[:180],
             )
+            if _is_shared_quota_exhausted(last_error_text):
+                # Every remaining member of this provider draws on the same
+                # exhausted bucket. Skip straight to the next PROVIDER.
+                remaining_same = [
+                    m
+                    for m in members[member_index + 1 :]
+                    if m[0] == name
+                ]
+                if remaining_same:
+                    logger.warning(
+                        "skipping %d further %s member(s) on the exhausted bucket",
+                        len(remaining_same),
+                        name,
+                    )
+                    exhausted_providers.add(name)
     if rate_limited:
         raise HTTPException(
             status_code=429,
