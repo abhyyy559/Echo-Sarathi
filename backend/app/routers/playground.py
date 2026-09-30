@@ -13,6 +13,7 @@ two services are deliberately decoupled.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import re
@@ -1097,7 +1098,7 @@ _REASONING_MODEL_MARKERS = ("gpt-oss", "deepseek-r1", "reasoner", "o1-", "o3-")
 #: user-visible silence into a slightly slower reply instead of making the
 #: caller repeat themselves.
 _QUOTA_RETRY_WAIT_MS = 2500
-_DEFAULT_MAX_TOKENS = 160
+_DEFAULT_MAX_TOKENS = 250
 _REASONING_MAX_TOKENS = 500
 
 
@@ -1623,33 +1624,48 @@ _EXPLICIT_DAY_MONTH_RE = re.compile(
     r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b",
     re.IGNORECASE,
 )
+_RELATIVE_DAYS_RE = re.compile(
+    r"\b(?:after|in|within|next)\s+(\d{1,3})\s+days?\b|\b(\d{1,3})\s+days?\s+(?:later|from\s+now|hence)\b",
+    re.IGNORECASE,
+)
+_TOMORROW_RE = re.compile(r"\btomorrow\b|\btmrw\b", re.IGNORECASE)
 
 
 def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[str]:
-    """Turn an EXPLICITLY stated day-month ("2nd oct") into an ISO date.
+    """Turn a stated date into ISO form ("2nd oct" -> 2026-10-02).
 
-    The agent was storing the raw phrase ("2nd oct") while speaking "2nd
-    October" - the export and the speech disagreed. Only day+month present in
-    the answer is resolved (year = this year, or next year when it already
-    passed). Vague answers ("after 2 days", "soon", "next week") are returned
-    unchanged for the model to resolve, because guessing WHICH day from a
-    relative phrase is fabrication territory.
+    The agent was storing the raw phrase ("2nd oct", "after 2 days") while
+    speaking a resolved date - the export and the speech disagreed. Two shapes
+    are resolved deterministically against TODAY (which is known, not guessed):
+    an explicit day+month (year = this year, or next year when passed), and an
+    explicit day count ("after/in N days", "tomorrow"). Anything vaguer
+    ("soon", "next week", "in a few days") is returned unchanged for the model,
+    because picking a day from those IS guessing.
     """
-    match = _EXPLICIT_DAY_MONTH_RE.search(str(answer or ""))
-    if not match:
-        return None
-    day = int(match.group(1))
-    month = _MONTH_ABBR[str(match.group(2)).lower()[:3] if len(str(match.group(2))) > 3 else str(match.group(2)).lower()]
-    try:
-        candidate = today.replace(year=today.year, month=month, day=day)
-    except ValueError:
-        return None  # "31st of feb" - leave it alone rather than invent one
-    if candidate < today:
+    text = str(answer or "")
+    match = _EXPLICIT_DAY_MONTH_RE.search(text)
+    if match:
+        day = int(match.group(1))
+        month = _MONTH_ABBR[str(match.group(2)).lower()[:3] if len(str(match.group(2))) > 3 else str(match.group(2)).lower()]
         try:
-            candidate = candidate.replace(year=today.year + 1)
+            candidate = today.replace(year=today.year, month=month, day=day)
         except ValueError:
-            return None
-    return candidate.isoformat()
+            return None  # "31st of feb" - leave it alone rather than invent one
+        if candidate < today:
+            try:
+                candidate = candidate.replace(year=today.year + 1)
+            except ValueError:
+                return None
+        return candidate.isoformat()
+    relative = _RELATIVE_DAYS_RE.search(text)
+    if relative:
+        days = int(relative.group(1) or relative.group(2) or 0)
+        if 1 <= days <= 60:
+            return (today + datetime.timedelta(days=days)).isoformat()
+        return None
+    if _TOMORROW_RE.search(text):
+        return (today + datetime.timedelta(days=1)).isoformat()
+    return None
 
 
 def _value_grounded_in_transcript(
@@ -1778,18 +1794,34 @@ def _execute_text_tool(
             )
         ):
             db.delete(existing)
+        stored_value = None if value is None else str(value)
+        # Normalize date-typed fields at write time so the export agrees with
+        # what was spoken, no matter which path recorded it (model tool call
+        # or deterministic backstop). Only resolvable shapes change.
+        if stored_value and "date" in str(field_name).lower():
+            normalized = _normalize_explicit_date(stored_value, utcnow().date())
+            if normalized:
+                stored_value = normalized
         db.add(
             ExtractedField(
                 call_id=call.id,
                 field_name=field_name,
-                field_value=None if value is None else str(value),
+                field_value=stored_value,
                 confidence=conf,
                 source_turn_index=source_turn_index,
             )
         )
+        # Mirror the DB write: the API response and the stored row must not
+        # disagree about the value ("tomorrow" in JSON, an ISO date in the
+        # export would be a real bug for anyone scripting the API).
+        reported = None if value is None else str(value)
+        if reported and "date" in str(field_name).lower():
+            normalized = _normalize_explicit_date(reported, utcnow().date())
+            if normalized:
+                reported = normalized
         recorded = {
             "field_name": field_name,
-            "field_value": None if value is None else str(value),
+            "field_value": reported,
             "confidence": conf,
         }
         return f"recorded {field_name}", recorded, False
@@ -2033,8 +2065,18 @@ async def _run_agent_turn(
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
         if not tool_calls:
-            assistant_text = content
+            # Prefer speech that already rode along with an earlier tool call;
+            # otherwise the follow-up round's short ack ("Thanks") replaces a
+            # full reply the model already gave.
+            if not assistant_text:
+                assistant_text = content
             break
+        # Keep any spoken text that rode along with the tool calls. Dropping
+        # it produced truncated replies ("When is Abhi expected to return to"
+        # with the rest lost) whenever the model spoke AND recorded in one
+        # turn; the follow-up round then added only a short ack.
+        if content and not assistant_text:
+            assistant_text = content
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         for tool_call in tool_calls:
             function = tool_call.get("function") or {}

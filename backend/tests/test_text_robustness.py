@@ -14,6 +14,15 @@ from conftest import auth_headers, register
 from test_playground_text import chat, create_groq_app, groq_client, script, start_session  # noqa: F401  (pytest fixture import)
 
 
+def _iso_in(days: int) -> str:
+    """ISO date `days` from the app's "today" (same clock the router uses)."""
+    from datetime import timedelta
+
+    from app.routers.playground import utcnow
+
+    return (utcnow() + timedelta(days=days)).date().isoformat()
+
+
 def test_parse_and_scrub_pseudo_tool_call() -> None:
     from app.routers.playground import _parse_pseudo_tool_calls, _scrub_tool_markup
 
@@ -683,8 +692,12 @@ def test_explicit_date_normalizes_to_iso() -> None:
     assert _normalize_explicit_date("on the 5th of january", today) == "2027-01-05"
     # Already-passed dates roll to next year; vague answers are untouched.
     assert _normalize_explicit_date("20 september", today) == "2027-09-20"
-    assert _normalize_explicit_date("after 2 days", today) is None
+    assert _normalize_explicit_date("after 2 days", today) == "2026-10-02"
+    assert _normalize_explicit_date("in 3 days", today) == "2026-10-03"
+    assert _normalize_explicit_date("tomorrow", today) == "2026-10-01"
     assert _normalize_explicit_date("soon", today) is None
+    assert _normalize_explicit_date("next week", today) is None
+    assert _normalize_explicit_date("in a few days", today) is None
     assert _normalize_explicit_date("31st of feb", today) is None
     assert _normalize_explicit_date("", today) is None
 
@@ -874,15 +887,22 @@ def test_stated_relative_date_is_accepted(groq_client, session_factory):
         headers=auth_headers(token),
     )
     assert resp.status_code == 200, resp.text
+    # "tomorrow" is resolvable against a known today, so it is normalized to an
+    # ISO date on write. The point of this test is that the value is ACCEPTED
+    # (never refused or stored empty), not that it stays a raw phrase.
     assert resp.json()["extracted_fields"] == [
-        {"field_name": "expected_return_date", "field_value": "tomorrow", "confidence": 0.9}
+        {
+            "field_name": "expected_return_date",
+            "field_value": _iso_in(1),
+            "confidence": 0.9,
+        }
     ]
     with session_factory() as db:
         rows = db.scalars(
             select(ExtractedField).where(ExtractedField.call_id == call_id)
         ).all()
         assert [(f.field_name, f.field_value) for f in rows] == [
-            ("expected_return_date", "tomorrow")
+            ("expected_return_date", _iso_in(1))
         ]
 
 
