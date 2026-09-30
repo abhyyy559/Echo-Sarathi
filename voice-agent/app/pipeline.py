@@ -786,6 +786,7 @@ class TurnTelemetry:
         self._extraction_tools = extraction_tools
         self._llm = llm
         self._agent = agent
+        self._room_name = str(getattr(room, "name", "") or "")
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
         self._activity_sequence = 1
@@ -1191,9 +1192,16 @@ class TurnTelemetry:
         exact problem it covered. Removed: slow-but-working turns stay silent
         while the reply generates, and only a turn with NO reply at all after
         12s gets the recovery line asking the caller to repeat.
+
+        On PHONE rooms the recovery doubles as a keep-alive: Vobiz drops a
+        media stream that goes silent too long (seen live: our bridge left
+        phone-155 with no hangup signal, mid-thought, during an LLM stall).
+        Speaking anything keeps audio flowing and the call alive, so phone
+        rooms recover at 7s while browser rooms wait the full 12s.
         """
         try:
-            await asyncio.sleep(12.0)
+            phone_room = "phone-" in str(getattr(self, "_room_name", "") or "")
+            await asyncio.sleep(7.0 if phone_room else 12.0)
             if generation != self._watchdog_generation or self._got_agent_item:
                 return
             try:
