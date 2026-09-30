@@ -323,6 +323,15 @@ def _validated_turn(item: Any) -> dict[str, Any]:
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
             raise ValueError(f"'{field}' must be a non-negative number")
         turn[field] = float(value)
+    # Per-turn serving model for the latency table's "Served by" column. Kept
+    # out of the Transcript row (no schema change): the completed-session view
+    # joins it from call.context, same as text mode.
+    served = item.get("served_by")
+    if isinstance(served, dict) and served.get("model"):
+        turn["served_by"] = {
+            "provider": str(served.get("provider") or ""),
+            "model": str(served["model"]),
+        }
     return turn
 
 
@@ -345,7 +354,23 @@ def post_transcript_turns(
     from app.models import Transcript
 
     for turn in turns:
+        # served_by is not a Transcript column (no schema change for a display
+        # field): fold it into the call context map the completed-session view
+        # already joins for its "Served by" column.
+        served = turn.pop("served_by", None)
         db.add(Transcript(call_id=call.id, **turn))
+        if isinstance(served, dict) and served.get("model"):
+            context = dict(call.context or {})
+            providers_seen = list(context.get("llm_turn_providers") or [])
+            providers_seen.append(
+                {
+                    "turn": turn["turn_index"],
+                    "provider": served.get("provider") or "",
+                    "model": served["model"],
+                }
+            )
+            context["llm_turn_providers"] = providers_seen
+            call.context = context
         # Per-turn latency log line (NFR-1 instrumentation from day one).
         logger.info(
             "turn_latency call=%s kind=%s turn=%s speaker=%s stt_final_ms=%s "

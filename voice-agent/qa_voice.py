@@ -127,6 +127,8 @@ class QACaller:
         self.agent_seen = asyncio.Event()
         self._reply_event = asyncio.Event()
         self._last_agent_text = ""
+        self._mic_source: rtc.AudioSource | None = None
+        self._mic_track: rtc.LocalAudioTrack | None = None
 
     async def connect(self) -> None:
         @self.room.on("data_received")
@@ -167,25 +169,25 @@ class QACaller:
             pass
 
     async def say(self, pcm48: bytes, timeout: float = 30.0) -> dict:
-        """Publish one utterance, wait for the agent's reply. Returns timings."""
-        source = rtc.AudioSource(48000, 1)
-        track = rtc.LocalAudioTrack.create_audio_track("qa-mic", source)
-        await self.room.local_participant.publish_track(track)
+        """Publish one utterance on the persistent mic track, wait for reply."""
+        if self._mic_source is None:
+            self._mic_source = rtc.AudioSource(48000, 1)
+            self._mic_track = rtc.LocalAudioTrack.create_audio_track("qa-mic", self._mic_source)
+            await self.room.local_participant.publish_track(self._mic_track)
         self._reply_event.clear()
         start = time.time()
-        # 20ms frames (960 samples @ 48kHz), then trailing silence so the
-        # agent's endpointing fires. capture_frame queues; the track plays in
-        # real time, so pace the loop to real time.
+        # 20ms frames paced to real time, then trailing silence so the
+        # agent's endpointing fires.
         step = 960 * 2
         for off in range(0, len(pcm48), step):
             chunk = pcm48[off : off + step]
             if len(chunk) < step:
                 chunk = chunk + b"\x00" * (step - len(chunk))
-            await source.capture_frame(rtc.AudioFrame(chunk, 48000, 1, 960))
+            await self._mic_source.capture_frame(rtc.AudioFrame(chunk, 48000, 1, 960))
             await asyncio.sleep(0.02)
         silence = rtc.AudioFrame(b"\x00" * step, 48000, 1, 960)
         for _ in range(40):
-            await source.capture_frame(silence)
+            await self._mic_source.capture_frame(silence)
             await asyncio.sleep(0.02)
         spoke_at = time.time()
         try:
@@ -195,7 +197,8 @@ class QACaller:
         except asyncio.TimeoutError:
             replied_at = time.time()
             ok = False
-        await self.room.local_participant.unpublish_track(track.sid)
+        # The mic track stays published for the whole session (like a real
+        # caller's microphone) so server-side inspection sees it.
         return {
             "spoke_s": round(spoke_at - start, 2),
             "reply_latency_s": round(replied_at - spoke_at, 2),
@@ -209,6 +212,32 @@ class QACaller:
             return True
         except asyncio.TimeoutError:
             return False
+
+    async def wait_for_greeting(
+        self, timeout: float = 60.0
+    ) -> bool:
+        """Wait until the agent's opening line is done playing.
+
+        Speaking over the greeting means the input collides with agent audio:
+        interruption handling suppresses it, endpointing never fires cleanly,
+        and nothing transcribes. A real caller waits for the pause, so the QA
+        must too. Estimates speech duration from caption length.
+        """
+        start = time.time()
+        greeting = ""
+        while time.time() - start < timeout:
+            for caption in self.captions:
+                if caption.get("speaker") == "agent" and caption.get("final"):
+                    greeting = caption.get("text") or ""
+                    break
+            if greeting:
+                break
+            await asyncio.sleep(0.5)
+        if not greeting:
+            return False
+        # ~12 chars/sec + trailing silence so endpointing settles.
+        await asyncio.sleep(len(greeting) / 12.0 + 3.0)
+        return True
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -244,8 +273,13 @@ async def main_async(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=1))
         return 1
 
-    # Let the opening line play, then run the script.
-    await asyncio.sleep(6.0)
+    # Let the opening line play fully before speaking (see wait_for_greeting).
+    greeted = await caller.wait_for_greeting()
+    report["greeting_heard"] = greeted
+    if not greeted:
+        report["verdict"] = "FAIL: agent never spoke the greeting"
+        print(json.dumps(report, indent=1))
+        return 1
     for line in args.lines:
         pcm16, rate = await asyncio.to_thread(synthesize, deepgram_key, line)
         turn = await caller.say(to_48k_mono(pcm16, rate))
@@ -253,6 +287,12 @@ async def main_async(args: argparse.Namespace) -> int:
         # What did STT hear? Ask the backend transcript for our turns.
         report["turns"].append(turn)
         await asyncio.sleep(2.0)
+
+    if args.hold_open > 0:
+        # Stay in the room so the server-side track/subscription state can be
+        # inspected from outside while both peers are present.
+        print(f"HOLDING room {session['room_name']} open for {args.hold_open}s", flush=True)
+        await asyncio.sleep(args.hold_open)
 
     await caller.room.disconnect()
     # Pull the server-side truth: transcript + fields + completion.
@@ -303,6 +343,12 @@ def main() -> None:
         "--lines",
         nargs="*",
         default=["yes", "sick leave", "2nd october", "no", "bye"],
+    )
+    parser.add_argument(
+        "--hold-open",
+        type=int,
+        default=0,
+        help="After the last line, keep the room open N seconds (for server-side inspection).",
     )
     args = parser.parse_args()
     sys.exit(asyncio.run(main_async(args)))

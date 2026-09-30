@@ -260,9 +260,18 @@ def _backfill_grounded_fields(
             sentence = sentence.strip(" .")
             if not sentence:
                 continue
+            # Never record a QUESTION as an answer. "So tell me how can I help
+            # you?" overlapped needs_human_help's description and was stored as
+            # the value - a question is the opposite of captured information.
+            if sentence.rstrip().endswith("?"):
+                continue
             words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
             date_shaped = "date" in field_type and bool(_DATE_LIKE_RE.search(sentence))
-            if not (date_shaped or (words & cue_words)):
+            if date_shaped:
+                pass  # a date-shaped answer to a date field is self-evident
+            elif len(words & cue_words) < 2:
+                # One generic word ("college", "today") is not evidence. The
+                # single-word rule stored explanations as flag values.
                 continue
             value = sentence
             if "date" in field_type:

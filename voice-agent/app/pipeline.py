@@ -131,6 +131,9 @@ class ProviderBundle:
     llm: Optional[llm.LLM]
     tts: Optional[tts_module.TTS]
     problems: list[str] = field(default_factory=list)
+    # Which STT backend is armed (deepgram | sarvam). The session is tuned
+    # differently per provider (Sarvam handles VAD/turn-taking internally).
+    stt_provider: str = "deepgram"
 
     @property
     def complete(self) -> bool:
@@ -194,6 +197,7 @@ class FallbackLLM(llm.LLM):
         primary: Any,
         fallback: Any = None,
         cooldown_s: float = 90.0,
+        provider_names: Optional[list[str]] = None,
     ) -> None:
         super().__init__()
         if isinstance(fallback, (int, float)) and not isinstance(fallback, bool):
@@ -211,6 +215,15 @@ class FallbackLLM(llm.LLM):
         self._cooldown_s = cooldown_s
         self._down_until: list[float] = [0.0] * len(members)
         self.last_served_index: int = 0
+        # Provider label per member ("groq", "gemini", ...), same order as the
+        # chain. A 429 on one member usually means the whole PROVIDER bucket is
+        # empty (Groq's TPM is org-wide), so the remaining keys of that
+        # provider are skipped instead of burned one by one. Members WITHOUT an
+        # explicit label each get a unique one, so they keep the old per-key
+        # cooldown behaviour instead of being lumped into one bucket.
+        if provider_names is None:
+            provider_names = [f"member-{index}" for index in range(len(members))]
+        self._providers: list[str] = list(provider_names)
 
     @property
     def last_served_model(self) -> str:
@@ -239,6 +252,21 @@ class FallbackLLM(llm.LLM):
     def _mark_down(self, index: int) -> None:
         self._down_until[index] = time.monotonic() + self._cooldown_s
 
+    def _mark_provider_down(self, provider: str) -> int:
+        """Cool down every member of one provider. Returns how many skipped.
+
+        A 429 on one key almost always means the provider's shared bucket
+        (org-wide TPM) is empty; the sibling keys would fail identically, so
+        trying them burns seconds of the caller's time for nothing.
+        """
+        now = time.monotonic()
+        skipped = 0
+        for index, name in enumerate(self._providers):
+            if name == provider and now >= self._down_until[index]:
+                self._down_until[index] = now + self._cooldown_s
+                skipped += 1
+        return skipped
+
     def _chat_kwargs(
         self, chat_ctx: llm.ChatContext, tools: Optional[list],
         conn_options: Optional[Any], kwargs: dict[str, Any],
@@ -262,9 +290,18 @@ class FallbackLLM(llm.LLM):
         # Remember who served, so turn telemetry can attribute the reply the
         # same way text mode does ("served by" per turn).
         try:
+            previous = getattr(self, "last_served_index", 0)
             self.last_served_index = index
         except Exception:
-            pass
+            previous = 0
+        # Cross-model continuity (mirrors text mode's handoff brief). When
+        # failover moves the call to another provider/model, that model has
+        # none of the previous model's context and restarts the conversation.
+        # Inject a brief as the leading system message so the new model
+        # continues instead of re-introducing itself. Same-model turns are
+        # untouched.
+        if index != previous:
+            chat_ctx = _with_handoff_brief(chat_ctx, previous, index)
         if index > 0 or len(self._chain) > 1:
             logger.info(
                 "LLM chain serving member %d/%d", index + 1, len(self._chain)
@@ -283,6 +320,33 @@ class FallbackLLM(llm.LLM):
             **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
         )
         return _FallbackStream(self, member_stream, index)
+
+
+def _with_handoff_brief(
+    chat_ctx: Any, previous_index: int, current_index: int
+) -> Any:
+    """Prepend a continuity brief when failover switches models mid-call.
+
+    Without this the new model re-introduces itself and re-asks answered
+    questions, because it genuinely does not know the conversation. The brief
+    is one system message stating the switch happened and that captured fields
+    (carried in the shared extraction coordinator, not in any one model) stand
+    as established. Never raises: a failed brief must not break the turn.
+    """
+    try:
+        from livekit.agents.llm import ChatMessage
+
+        brief = (
+            "CONTINUITY: you took over this call mid-conversation from another "
+            "model that stopped responding. Do NOT introduce yourself again, do "
+            "NOT re-disclose, and do NOT re-ask anything already answered. "
+            "Anything already recorded stands as established. Continue naturally "
+            "as if you had been on the call the whole time."
+        )
+        items = list(getattr(chat_ctx, "items", []) or [])
+        return chat_ctx.copy(items=[ChatMessage(role="system", content=[brief]), *items])
+    except Exception:
+        return chat_ctx
 
 
 class _FallbackStream(llm.LLMStream):
@@ -317,14 +381,28 @@ class _FallbackStream(llm.LLMStream):
         except StopAsyncIteration:
             raise
         except Exception as exc:  # noqa: BLE001 — classify, then maybe fail over
-            if getattr(exc, "status_code", None) not in _RETRYABLE_LLM_STATUS:
+            status = getattr(exc, "status_code", None)
+            if status not in _RETRYABLE_LLM_STATUS:
                 raise
-            logger.warning(
-                "LLM chain member %d failed (%s), cooling down for next member",
-                self._member_index + 1,
-                getattr(exc, "status_code", "connection-error"),
-            )
-            self._owner._mark_down(self._member_index)
+            if status == 429:
+                # Shared bucket: skip the provider's remaining keys now.
+                provider = self._owner._providers[self._member_index] if (
+                    0 <= self._member_index < len(self._owner._providers)
+                ) else "?"
+                skipped = self._owner._mark_provider_down(provider)
+                logger.warning(
+                    "LLM chain member %d 429 (%s); skipping %d sibling(s) on the exhausted bucket",
+                    self._member_index + 1,
+                    provider,
+                    max(skipped - 1, 0),
+                )
+            else:
+                logger.warning(
+                    "LLM chain member %d failed (%s), cooling down for next member",
+                    self._member_index + 1,
+                    status or "connection-error",
+                )
+                self._owner._mark_down(self._member_index)
             raise
 
     async def aclose(self) -> None:
@@ -368,7 +446,7 @@ def build_providers(
     model_override, tts_voice_override, voices_by_lang, language = _voice_overrides(voice_settings)
     effective_voice = voices_by_lang.get(language) or tts_voice_override
 
-    if settings.deepgram_api_key:
+    if settings.deepgram_api_key and os.getenv("STT_PROVIDER", "deepgram").lower() == "deepgram":
         stt_lang = str(
             (voice_settings or {}).get("stt_language", "en")
         ).strip().lower() or "en"
@@ -383,15 +461,60 @@ def build_providers(
             endpointing_ms=300,
             api_key=settings.deepgram_api_key,
         )
+        bundle.stt_provider = "deepgram"
+    elif os.getenv("STT_PROVIDER", "deepgram").lower() == "sarvam":
+        # Sarvam Saaras STT (official LiveKit plugin, streaming). Indian-accent
+        # accuracy is its strength over Nova; en-IN plus auto-detect via
+        # language="unknown". flush_signal emits the speech start/end markers
+        # the session needs for turn-taking. Requires SARVAM_TTS_API (same key
+        # as TTS) - the plugin also accepts SARVAM_API_KEY.
+        from livekit.plugins import sarvam as _sarvam_stt
+
+        sarvam_key = os.getenv("SARVAM_TTS_API", "") or os.getenv("SARVAM_API_KEY", "")
+        if not sarvam_key:
+            bundle.problems.append("SARVAM_TTS_API missing - Sarvam STT disabled")
+        else:
+            sarvam_lang = str(
+                (voice_settings or {}).get("stt_language", "")
+            ).strip() or os.getenv("SARVAM_STT_LANG", "en-IN")
+            # Sarvam requires BCP-47 (en-IN, hi-IN); our configs carry bare
+            # codes ("en"). A bare code raises ValueError at STT construction
+            # and degrades the whole session, so map the common ones.
+            _SARVAM_LANG_ALIASES = {
+                "en": "en-IN",
+                "hi": "hi-IN",
+                "ta": "ta-IN",
+                "te": "te-IN",
+                "bn": "bn-IN",
+                "ml": "ml-IN",
+                "mr": "mr-IN",
+                "kn": "kn-IN",
+                "gu": "gu-IN",
+                "pa": "pa-IN",
+            }
+            sarvam_lang = _SARVAM_LANG_ALIASES.get(sarvam_lang.lower(), sarvam_lang)
+            bundle.stt = _sarvam_stt.STT(
+                language=sarvam_lang,
+                model=os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
+                mode="transcribe",
+                api_key=sarvam_key,
+                flush_signal=True,
+            )
+            bundle.stt_provider = "sarvam"
+            logger.info("STT provider: Sarvam Saaras (%s)", sarvam_lang)
     else:
         bundle.problems.append(
             "DEEPGRAM_API_KEY missing - speech-to-text disabled"
         )
 
     selected_tts = os.getenv("TTS_PROVIDER", "cartesia").lower()
-    sarvam_key = os.getenv("SARVAM_TTS_API", "")
+    sarvam_key = os.getenv("SARVAM_TTS_API", "") or os.getenv("SARVAM_API_KEY", "")
     if selected_tts == "sarvam" and sarvam_key:
-        from app.tts_sarvam import SarvamTTS
+        # Official Sarvam LiveKit plugin (streaming Bulbul v3 over websocket,
+        # pronunciation dicts, Indian voices). Replaces the earlier hand-rolled
+        # REST TTS, which could not stream and raised "AudioEmitter isn't
+        # started" inside the framework's adapter.
+        from livekit.plugins import sarvam as _sarvam
 
         sarvam_model = (
             str((voice_settings or {}).get("tts_model", "") or "").strip()
@@ -405,11 +528,11 @@ def build_providers(
             str((voice_settings or {}).get("tts_language", "") or "").strip()
             or os.getenv("SARVAM_TTS_LANG", "en-IN")
         )
-        bundle.tts = SarvamTTS(
-            api_key=sarvam_key,
+        bundle.tts = _sarvam.TTS(
+            target_language_code=sarvam_lang,
             model=sarvam_model,
             speaker=sarvam_speaker,
-            language=sarvam_lang,
+            api_key=sarvam_key,
         )
         logger.info(
             "TTS provider: Sarvam Bulbul (%s/%s/%s)", sarvam_model, sarvam_speaker, sarvam_lang
@@ -482,6 +605,7 @@ def build_providers(
             )
     if groq_llms:
         chain: list[Any] = list(groq_llms)
+        chain_providers: list[str] = ["groq"] * len(groq_llms)
         # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN, Cerebras,
         # OpenRouter). Same-tier, different provider: Groq's free tier caps
         # out mid-call, and the wrapper re-issues the identical request on the
@@ -498,6 +622,7 @@ def build_providers(
                         max_completion_tokens=_max_completion_tokens_for(model),
                     )
                 )
+                chain_providers.append(name)
                 logger.info("LLM chain member armed: %s (%s)", name, model)
             except Exception as exc:  # noqa: BLE001 — never block the chain
                 logger.warning("LLM chain member %s rejected: %s", name, exc)
@@ -512,7 +637,7 @@ def build_providers(
                 )
                 or "no extra members",
             )
-            bundle.llm = FallbackLLM(chain)
+            bundle.llm = FallbackLLM(chain, provider_names=chain_providers)
         else:
             bundle.llm = groq_llms[0]
     elif settings.llm_fallback_chain:
@@ -650,6 +775,7 @@ class TurnTelemetry:
         backchannel: Optional[BackchannelController] = None,
         extraction_tools: Any = None,
         llm: Any = None,
+        agent: Any = None,
     ) -> None:
         self._session = session
         self._backend = backend
@@ -659,6 +785,7 @@ class TurnTelemetry:
         self._backchannel = backchannel
         self._extraction_tools = extraction_tools
         self._llm = llm
+        self._agent = agent
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
         self._activity_sequence = 1
@@ -1197,6 +1324,54 @@ class TurnTelemetry:
     def _round(self, value: Optional[float]) -> Optional[int]:
         return None if value is None else round(value)
 
+    def _maybe_compact_instructions(self) -> None:
+        """Swap full instructions for the compact version after the opening.
+
+        Same arithmetic as text mode: the full voice prompt (~8k chars) is
+        re-sent on every LLM call against an org-wide 7000 input-tokens/min
+        bucket. After 3 exchanges the history carries the persona, so later
+        turns only need the compact rules. Runs once; failures are silent
+        because instructions must never break a live call.
+        """
+        try:
+            if self._turn_index < 3:
+                return
+            agent = getattr(self, "_agent", None)
+            tools = self._extraction_tools
+            if agent is None or tools is None:
+                return
+            coordinator = getattr(tools, "_coordinator", None)
+            if coordinator is None:
+                return
+            recorded = list(getattr(coordinator, "recorded", {}).keys())
+            required = list(getattr(coordinator, "required_fields", []) or [])
+            from app.prompting import render_compact_instructions
+
+            import datetime
+
+            today = datetime.datetime.now(
+                datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+            ).strftime("%A %d %B %Y")
+            compact = render_compact_instructions(
+                [f for f in recorded],
+                [f for f in required if f not in recorded],
+                today,
+            )
+            if agent.swap_to_compact_instructions(compact):
+                logger.info(
+                    "voice instructions compacted at turn %d (%d chars)",
+                    self._turn_index,
+                    len(compact),
+                )
+                self._emit_event(
+                    "instructions_compacted",
+                    message=(
+                        f"full prompt swapped for compact continuation at turn {self._turn_index}"
+                    ),
+                )
+        except Exception:  # noqa: BLE001 — instructions must never break a call
+            logger.debug("Instruction compaction skipped", exc_info=True)
+
     async def flush_pending(self) -> None:
         """Post the current exchange (if any) as turn rows and log once."""
         async with self._flush_lock:
@@ -1204,6 +1379,7 @@ class TurnTelemetry:
                 return
             self._turn_index += 1
             turn_index = self._turn_index
+            self._maybe_compact_instructions()
             timestamp = self._utc_now_iso()
 
             e2e_ms: Optional[float] = None
@@ -1235,6 +1411,14 @@ class TurnTelemetry:
                     }
                 )
             if self._agent_text:
+                # Attribute the reply to its serving model, the same way text
+                # mode persists per-turn providers for the latency table.
+                served_model = None
+                try:
+                    if self._llm is not None and hasattr(self._llm, "last_served_model"):
+                        served_model = self._llm.last_served_model
+                except Exception:
+                    served_model = None
                 rows.append(
                     {
                         "turn_index": turn_index,
@@ -1245,6 +1429,7 @@ class TurnTelemetry:
                         "llm_first_token_ms": self._round(self._llm_first_token_ms),
                         "tts_first_audio_ms": self._round(self._tts_first_audio_ms),
                         "e2e_ms": self._round(e2e_ms),
+                        "served_by": {"model": served_model} if served_model else None,
                     }
                 )
 
@@ -1293,10 +1478,26 @@ class DomainCallAgent(Agent):
 
     def __init__(self, instructions: str, tools_impl: VoiceAgentTools) -> None:
         self._tools_impl = tools_impl
-        # NOTE: do NOT pass tools= here — livekit-agents auto-collects the
+        # NOTE: do NOT pass tools= here - livekit-agents auto-collects the
         # @function_tool-decorated methods below; passing them again raises
         # "duplicate function name".
         super().__init__(instructions=instructions)
+
+    def swap_to_compact_instructions(self, compact: str) -> bool:
+        """Replace full instructions with the compact continuation version.
+
+        Called after the opening exchanges: the full 8k-char prompt is re-sent
+        on every LLM call against an org-wide 7000 input-tokens/min bucket.
+        Returns True on the swap so it is logged once, not per turn.
+        """
+        try:
+            if getattr(self, "_compact_swapped", False):
+                return False
+            self.instructions = compact
+            self._compact_swapped = True
+            return True
+        except Exception:
+            return False
 
     @function_tool
     async def record_extracted_field(
@@ -1381,7 +1582,14 @@ def _get_noise_cancellation() -> Any:
     Runs before turn detection/STT: isolates the foreground speaker and
     suppresses competing voices (TV, car passengers) that plain noise
     cancellation hears as speech. Never raises.
+
+    VOICE_NC=off disables it entirely. Exists because an input-path processor
+    is a prime suspect when STT goes silent: if it corrupts or drops frames,
+    Deepgram receives garbage and returns nothing while VAD (upstream or
+    parallel) still flickers.
     """
+    if os.getenv("VOICE_NC", "on").strip().lower() in ("off", "0", "no", "false"):
+        return None
     try:
         from livekit.plugins import hush as _hush
     except ImportError:
@@ -1527,6 +1735,18 @@ def _turn_detection() -> Any:
     falls back to the pinned v1-mini cloud detector, then plain "vad".
     Nothing here may ever raise into the session path.
     """
+    # TURN_DETECTOR override (smart | v1-mini | vad, default smart). Exists so
+    # a turn-detection failure can be bisected without a code change: if STT
+    # works on "vad" but not "smart", the detector - not Deepgram, the mic,
+    # or the room - is swallowing the audio.
+    forced = os.getenv("TURN_DETECTOR", "smart").strip().lower()
+    if forced == "vad":
+        return "vad"
+    if forced == "v1-mini":
+        detector_cls = getattr(_inference, "TurnDetector", None) if _inference else None
+        if detector_cls is not None:
+            return _opts(detector_cls, version="v1-mini")
+        return "vad"
     if _SmartTurnDetector is not None:
         try:
             return _get_smart_turn()
@@ -1541,15 +1761,23 @@ def _turn_detection() -> Any:
 def _build_agent_session(
     bundle: ProviderBundle, preemptive_generation: bool = True
 ) -> AgentSession:
+    # Sarvam's own integration guide is explicit: when Saaras STT is active,
+    # do NOT pass VAD (handled internally), use turn_detection="stt", and set
+    # min_endpointing_delay=0.07 (their STT processes in ~70ms). Anything else
+    # fights their pipeline and adds seconds.
+    sarvam_stt = bundle.stt_provider == "sarvam"
+    session_kwargs: dict[str, Any] = {}
+    if not sarvam_stt:
+        session_kwargs["vad"] = _get_vad()
     return AgentSession(
         stt=bundle.stt,
         llm=bundle.llm,
         tts=bundle.tts,
-        vad=_get_vad(),
         aec_warmup_duration=0.0,
+        **session_kwargs,
         turn_handling=_opts(
             TurnHandlingOptions,
-            turn_detection=_turn_detection(),
+            turn_detection="stt" if sarvam_stt else _turn_detection(),
             # Preemptive generation: start the LLM on partial transcripts so
             # the first sentence is ready the moment the turn ends (TTS
             # already synthesizes sentence-by-sentence as tokens stream in).
@@ -1559,9 +1787,11 @@ def _build_agent_session(
             endpointing=_opts(
                 EndpointingOptions,
                 mode="fixed",
-                # 600ms patience: hesitant speakers pause mid-thought — jumping
-                # in at 350ms is what callers feel as "the agent interrupts me".
-                min_delay=0.6,
+                # Sarvam processes STT in ~70ms, so the session moves on
+                # almost immediately; otherwise 600ms patience for hesitant
+                # speakers (jumping in at 350ms is what callers feel as
+                # "the agent interrupts me").
+                min_delay=0.07 if bundle.stt_provider == "sarvam" else 0.6,
                 max_delay=1.5,
             ),
             interruption=_opts(
@@ -1831,6 +2061,9 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             await ctx.connect()
 
         agent = DomainCallAgent(instructions=instructions, tools_impl=tools_impl)
+        # Give telemetry the agent handle so it can swap full instructions for
+        # the compact continuation version after the opening exchanges.
+        telemetry._agent = agent
         await _start_agent_session(
             session, telemetry, ctx.room, agent,
             room_options=_room_options(),

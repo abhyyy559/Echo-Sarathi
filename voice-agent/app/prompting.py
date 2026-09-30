@@ -471,6 +471,42 @@ def render_caller_context(
     return "\n".join(lines)
 
 
+def render_compact_instructions(
+    captured: list[str],
+    remaining: list[str],
+    today: Optional[str] = None,
+) -> str:
+    """Short continuation instructions for mid/late voice turns.
+
+    Mirrors the backend's _render_compact_system_prompt: the full 8k-char
+    instructions are re-sent on EVERY LLM call, and Groq's input-token bucket
+    is organization-wide (7000/min). A voice call dies at ~3 turns on the full
+    prompt. After the opening exchanges the conversation history already
+    carries the persona, names and disclosure, so the model only needs today's
+    date, which fields are done, and the rules that must not be forgotten.
+    """
+    state = (
+        f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
+    )
+    todo = f"Still needed: {', '.join(remaining)}." if remaining else ""
+    return (
+        f"TODAY: {today or ''}.\n"
+        "You are the same outbound phone agent from earlier in this call; the "
+        "person is already verified. Reply in 1-2 short spoken sentences, one "
+        "thing per reply: if you still need an answer, ask it and STOP - never "
+        "ask and thank/close in the same reply. Acknowledge what they said, then "
+        "move on. Never invent a value: only record what the caller actually "
+        "said, and never ask them to repeat an answer they already gave.\n"
+        "Do NOT repeat yourself: no restating a value or confirmation you have "
+        "already given, no re-confirming a date, no 'anything else?'. If they "
+        "confirmed, ask the next missing thing or close politely.\n"
+        f"{state} {todo}\n"
+        f"Record with record_extracted_field(field_name, value, confidence); "
+        f"finish with end_call(summary). Valid field names: "
+        f"{', '.join(captured + remaining) or 'none'}."
+    )
+
+
 def render_system_prompt(
     config: Mapping[str, Any],
     contact: Optional[Mapping[str, Any]] = None,

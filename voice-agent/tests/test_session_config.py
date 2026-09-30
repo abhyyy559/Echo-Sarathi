@@ -3,7 +3,18 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from app import pipeline as pipeline_module
+
+
+@pytest.fixture(autouse=True)
+def _pin_turn_detector(monkeypatch) -> None:
+    """_turn_detection reads TURN_DETECTOR from the environment, and the repo
+    .env (loaded into os.environ by Settings.from_env in other tests) may
+    carry a debugging override. Pin the default so session-config assertions
+    test the code, not the ambient environment."""
+    monkeypatch.setenv("TURN_DETECTOR", "smart")
 
 
 class _SessionWithHandlers:

@@ -14,6 +14,16 @@ from typing import Any
 
 import app.pipeline as pipeline_module
 from app.config import Settings
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pin_deepgram_stt(monkeypatch) -> None:
+    """These tests assert Deepgram STT wiring. The repo .env may carry
+    STT_PROVIDER=sarvam (loaded into os.environ by Settings.from_env), which
+    would route build_providers away from Deepgram."""
+    monkeypatch.setenv("STT_PROVIDER", "deepgram")
 from app.pipeline import TurnTelemetry, build_providers
 from conftest import FakeBackendClient
 
