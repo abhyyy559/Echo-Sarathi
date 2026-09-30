@@ -264,11 +264,18 @@ def _backfill_grounded_fields(
             date_shaped = "date" in field_type and bool(_DATE_LIKE_RE.search(sentence))
             if not (date_shaped or (words & cue_words)):
                 continue
+            value = sentence
+            if "date" in field_type:
+                # Store the resolved date when the answer is explicit ("2nd
+                # oct" -> 2026-10-02); anything vague stays raw for the model.
+                normalized = _normalize_explicit_date(sentence, utcnow().date())
+                if normalized:
+                    value = normalized
             result_text, field_record, _done = _execute_text_tool(
                 db,
                 call,
                 "record_extracted_field",
-                {"field_name": field_name, "value": sentence, "confidence": 0.7},
+                {"field_name": field_name, "value": value, "confidence": 0.7},
                 turn_index,
                 text,
             )
@@ -666,6 +673,16 @@ def complete_session(
         .where(ExtractedField.call_id == call.id)
         .order_by(ExtractedField.id)
     ).all()
+    # Per-turn serving providers for the latency table. See _run_agent_turn,
+    # which appends one entry per agent turn as the turn is served.
+    served_by_map: dict[int, dict[str, str]] = {}
+    if isinstance(call.context, dict):
+        for entry in call.context.get("llm_turn_providers") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("turn"), int):
+                served_by_map[entry["turn"]] = {
+                    "provider": str(entry.get("provider") or ""),
+                    "model": str(entry.get("model") or ""),
+                }
 
     return {
         "call_id": call.id,
@@ -681,6 +698,7 @@ def complete_session(
                 "text": t.text,
                 "timestamp": t.timestamp,
                 **{m: getattr(t, m) for m in _LATENCY_METRICS},
+                **({"served_by": served_by_map.get(t.turn_index)} if t.turn_index in served_by_map else {}),
             }
             for t in turns
         ],
@@ -1175,6 +1193,40 @@ def _short_error(text: str, limit: int = 220) -> str:
     return collapsed[:limit]
 
 
+_CLOSING_PHRASES = (
+    "goodbye",
+    "good bye",
+    "have a good day",
+    "have a great day",
+    "thank you for your time",
+    "thanks for your time",
+    "take care",
+    "talk to you later",
+)
+
+
+def _is_closing_line(text: str) -> bool:
+    """True when the reply is a farewell with no question or new content."""
+    lowered = str(text or "").strip().lower()
+    if not lowered or "?" in lowered:
+        return False
+    return any(phrase in lowered for phrase in _CLOSING_PHRASES)
+
+
+def _fields_known(
+    db: Session, call: Call, required: list[str], extracted_now: list[dict[str, Any]]
+) -> list[bool]:
+    """Which required fields are known (DB plus this turn's records)."""
+    known = {
+        row.field_name
+        for row in db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call.id)
+        ).all()
+    }
+    known |= {str(item.get("field_name")) for item in extracted_now if item.get("field_name")}
+    return [name in known for name in required]
+
+
 def _refusal_text(reason: str, field_name: str) -> str:
     """Tool rejection the model will not turn into a story.
 
@@ -1534,6 +1586,57 @@ _DATE_LIKE_RE = re.compile(
     r"monday|tuesday|wednesday|thursday|friday|saturday|sunday",
     re.IGNORECASE,
 )
+
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+_MONTH_ABBR = {
+    abbr: number
+    for name, number in _MONTHS.items()
+    for abbr in {name[:3], name}
+}
+_EXPLICIT_DAY_MONTH_RE = re.compile(
+    r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[str]:
+    """Turn an EXPLICITLY stated day-month ("2nd oct") into an ISO date.
+
+    The agent was storing the raw phrase ("2nd oct") while speaking "2nd
+    October" - the export and the speech disagreed. Only day+month present in
+    the answer is resolved (year = this year, or next year when it already
+    passed). Vague answers ("after 2 days", "soon", "next week") are returned
+    unchanged for the model to resolve, because guessing WHICH day from a
+    relative phrase is fabrication territory.
+    """
+    match = _EXPLICIT_DAY_MONTH_RE.search(str(answer or ""))
+    if not match:
+        return None
+    day = int(match.group(1))
+    month = _MONTH_ABBR[str(match.group(2)).lower()[:3] if len(str(match.group(2))) > 3 else str(match.group(2)).lower()]
+    try:
+        candidate = today.replace(year=today.year, month=month, day=day)
+    except ValueError:
+        return None  # "31st of feb" - leave it alone rather than invent one
+    if candidate < today:
+        try:
+            candidate = candidate.replace(year=today.year + 1)
+        except ValueError:
+            return None
+    return candidate.isoformat()
 
 
 def _value_grounded_in_transcript(
@@ -1994,6 +2097,43 @@ async def _run_agent_turn(
     assistant_text = _scrub_tool_markup(assistant_text)
     assistant_text = _cap_reply(assistant_text)
 
+    # Deterministic closing. The model regularly said a full goodbye
+    # ("Thanks, have a good day") WITHOUT calling end_call, and if the caller
+    # then said anything at all ("okay", "yup"), it said ANOTHER goodbye. The
+    # live transcript showed four farewells before the call ended. The rule:
+    # once every required field is filled, the FIRST closing line we speak is
+    # the last one the caller hears - the turn is marked done and the session
+    # completes server-side instead of asking the model for another reply it
+    # will only use for another goodbye.
+    required = [
+        name
+        for name, spec in (getattr(version, "extraction_schema", None) or {}).items()
+        if isinstance(spec, dict) and str(spec.get("validation") or "").lower() == "required"
+    ]
+    required_known = _fields_known(db, call, required, extracted_now)
+    if (
+        required
+        and all(required_known)
+        and _is_closing_line(assistant_text)
+        and not done
+    ):
+        summary = "; ".join(
+            f"{item.get('field_name')}={item.get('field_value')}"
+            for item in extracted_now
+        )
+        done = True
+        logger.info(
+            "deterministic close call=%s fields=%s", call.id, [n for n in required]
+        )
+        telemetry.record(
+            "deterministic_close",
+            level="warn",
+            message="all required fields filled and the reply was a farewell; "
+            "ending server-side instead of requesting another model turn",
+            call_id=call.id,
+            fields=required,
+        )
+
     # Deterministic extraction backstop. The model's tool calling is
     # probabilistic: with gpt-oss it was so eager it 400'd, and with
     # qwen3.8-27b it silently SKIPS the tool on some turns ("sick" was stated
@@ -2012,18 +2152,6 @@ async def _run_agent_turn(
 
     elapsed_ms = round((time.monotonic() - started_mono) * 1000.0)
 
-    # Persist which provider/model served this call so the NEXT turn can tell
-    # a replacement model what it is inheriting. Without this, failover makes
-    # the conversation restart: the new model re-introduces itself and re-asks
-    # questions the caller already answered.
-    if previous_provider and previous_provider[0]:
-        context = dict(call.context or {})
-        context["llm_provider"] = {
-            "provider": previous_provider[0],
-            "model": previous_provider[1],
-        }
-        call.context = context
-
     # Persist both sides of the exchange (caller turn only when not start).
     user_index: Optional[int] = None
     if user_text:
@@ -2038,6 +2166,7 @@ async def _run_agent_turn(
             )
         )
     agent_index = next_index + 1 if user_text else next_index
+    _persist_serving_provider(call, agent_index, previous_provider)
     if assistant_text:
         db.add(
             Transcript(
@@ -2080,6 +2209,31 @@ async def _run_agent_turn(
         ),
         "llm_calls": len(groq_call_ms),
     }
+
+
+def _persist_serving_provider(
+    call: Call, agent_index: int, previous_provider: Optional[tuple[str, str]]
+) -> None:
+    """Persist who served this turn, so the completed-session view can show
+    "served by" per row and the next turn knows which provider it inherits
+    from for the continuity brief. Called AFTER agent_index exists."""
+    if not (previous_provider and previous_provider[0]):
+        return
+    context = dict(call.context or {})
+    context["llm_provider"] = {
+        "provider": previous_provider[0],
+        "model": previous_provider[1],
+    }
+    providers_seen = list(context.get("llm_turn_providers") or [])
+    providers_seen.append(
+        {
+            "turn": agent_index,
+            "provider": previous_provider[0],
+            "model": previous_provider[1],
+        }
+    )
+    context["llm_turn_providers"] = providers_seen
+    call.context = context
 
 
 @router.post("/campaigns/{campaign_id}/dry-run")

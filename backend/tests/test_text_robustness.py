@@ -636,7 +636,9 @@ def test_short_date_answer_is_captured_even_when_another_field_lands(
             select(ExtractedField).where(ExtractedField.call_id == call_id)
         ).all()
         stored = {r.field_name: r.field_value for r in rows}
-    assert stored.get("expected_return_date") == "2nd oct"
+    # An explicit day-month ("2nd oct") is stored as the resolved ISO date, not
+    # the raw phrase - export and speech must agree.
+    assert stored.get("expected_return_date") == "2026-10-02"
     # The model's own record must not be overwritten by the backstop.
     assert stored.get("is_sick_leave") == "yes"
 
@@ -669,6 +671,59 @@ def test_backstop_never_overwrites_a_model_recorded_field(groq_client, session_f
         ).all()
         stored = {r.field_name: r.field_value for r in rows}
     assert stored["reason_for_absence"] == "sick leave"
+
+
+def test_explicit_date_normalizes_to_iso() -> None:
+    import datetime
+
+    from app.routers.playground import _normalize_explicit_date
+
+    today = datetime.date(2026, 9, 30)
+    assert _normalize_explicit_date("2nd oct", today) == "2026-10-02"
+    assert _normalize_explicit_date("on the 5th of january", today) == "2027-01-05"
+    # Already-passed dates roll to next year; vague answers are untouched.
+    assert _normalize_explicit_date("20 september", today) == "2027-09-20"
+    assert _normalize_explicit_date("after 2 days", today) is None
+    assert _normalize_explicit_date("soon", today) is None
+    assert _normalize_explicit_date("31st of feb", today) is None
+    assert _normalize_explicit_date("", today) is None
+
+
+def test_deterministic_close_on_a_farewell_after_all_fields(groq_client, session_factory):
+    """Live loop: the agent said goodbye four times without calling end_call.
+    When every required field is known and the reply is a farewell, the turn
+    is marked done server-side."""
+    from test_playground_text import chat, script, start_session
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    # Pre-fill the required fields as if an earlier, working turn captured them.
+    script(
+        chat("Thanks, have a good day."),
+        chat("Goodbye."),
+        chat("Thanks, bye."),
+    )
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+
+    with session_factory() as db:
+        db.add_all(
+            [
+                ExtractedField(call_id=call_id, field_name="reason_for_absence", field_value="sick leave", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="expected_return_date", field_value="2026-10-02", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="call_outcome", field_value="resolved", confidence=1.0, source_turn_index=0),
+            ]
+        )
+        db.commit()
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "okay, bye"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["done"] is True, resp.json()
 
 
 def test_diagnostics_reports_chain_and_events_without_keys(groq_client):

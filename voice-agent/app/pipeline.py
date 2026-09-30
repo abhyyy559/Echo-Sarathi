@@ -607,6 +607,8 @@ class TurnTelemetry:
         # Buffered for the backend Diagnostics feed; flushed in batches so a
         # telemetry hiccup never blocks audio.
         self._pending_events: list[dict[str, Any]] = []
+        # Throttle for sampled partial-transcript events.
+        self._last_partial_event_at: float = 0.0
         self._agent_connecting_posted = False
         self._agent_speaking = False
         self._reset()
@@ -892,6 +894,19 @@ class TurnTelemetry:
         if transcript:
             # Stream PARTIAL captions too so the browser transcript feels live.
             self._publish_caption("user", transcript, final=is_final)
+            if not is_final:
+                # Sampled partials: proves audio is reaching Deepgram even when
+                # nothing ever finalises. Without this, "no finals" is
+                # ambiguous between a silent microphone and a turn-detection
+                # problem, and those need opposite fixes.
+                now = time.monotonic()
+                if now - self._last_partial_event_at > 2.0:
+                    self._last_partial_event_at = now
+                    self._emit_event(
+                        "stt_partial",
+                        provider="deepgram",
+                        message=f"partial: {transcript[:100]!r}",
+                    )
         if is_final:
             # Telemetry: proves audio actually reached Deepgram and was
             # transcribed. "My speech is not being transcribed" is
@@ -1433,6 +1448,58 @@ async def _speak_opening(
     return True
 
 
+def _attach_audio_probe(room: Any, telemetry: Any) -> None:
+    """Report which audio tracks the AGENT can actually see.
+
+    "The agent cannot hear me" has three causes that look identical from the
+    browser: the browser never published audio, LiveKit never delivered it to
+    the worker, or Deepgram never transcribed it. Only the middle one is
+    visible here. An ``audio_track_subscribed`` for the caller's microphone
+    proves the audio arrived; its absence points at the browser's publish side
+    (permission or device), which is the most common cause and cannot be fixed
+    from this side.
+    """
+    if room is None:
+        return
+
+    def _on_subscribed(
+        track: Any = None, publication: Any = None, participant: Any = None
+    ) -> None:
+        kind = str(getattr(track, "kind", "") or getattr(publication, "kind", ""))
+        source = str(getattr(publication, "source", "") or getattr(track, "source", ""))
+        identity = str(getattr(participant, "identity", "") or "?")
+        is_audio = kind == "audio" or "microphone" in source.lower() or source == "1"
+        telemetry._emit_event(
+            "audio_track_subscribed",
+            provider="livekit",
+            message=(
+                f"AUDIO track from {identity} (source={source or '?'}) - audio is reaching the agent"
+                if is_audio
+                else f"non-audio track from {identity} (source={source or '?'})"
+            ),
+        )
+
+    def _on_unsubscribed(track: Any = None, *_args: Any) -> None:
+        telemetry._emit_event(
+            "audio_track_unsubscribed",
+            level="warn",
+            provider="livekit",
+            message=f"track {getattr(track, 'sid', '?')} went away",
+        )
+
+    try:
+        room.on("track_subscribed")(lambda *a: _on_subscribed(*a))
+        room.on("track_unsubscribed")(_on_unsubscribed)
+        # Report what is ALREADY subscribed (the caller usually joins first).
+        for participant in list(getattr(room, "remote_participants", {}).values()):
+            for publication in getattr(participant, "track_publisations", {}).values():
+                _on_subscribed(
+                    getattr(publication, "track", None), publication, participant
+                )
+    except Exception:  # noqa: BLE001 - diagnostics must never break a session
+        logger.warning("Could not attach audio probe", exc_info=True)
+
+
 async def _start_agent_session(
     session: Any,
     telemetry: TurnTelemetry,
@@ -1442,6 +1509,7 @@ async def _start_agent_session(
 ) -> None:
     telemetry.queue_agent_connecting()
     if room_options is None:
+        _attach_audio_probe(room, telemetry)
         await session.start(room=room, agent=agent)
     else:
         await session.start(room=room, agent=agent, room_options=room_options)
