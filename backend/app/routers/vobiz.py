@@ -72,6 +72,12 @@ def _build_answer_xml(
     ws_url = f"{ws_base_url}/vobiz/media?call_id={call_id}"
     if bridge_token:
         ws_url += f"&bridge_token={bridge_token}"
+    # XML-escape the URL: a raw & in element text is malformed XML. Vobiz's
+    # parser could not read the Stream URL, so it never connected media and
+    # hung up ~3 seconds after answer. The server receives the decoded &.
+    ws_url_xml = (
+        ws_url.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
     status_attrs = ""
     if stream_status_url:
         status_attrs = (
@@ -83,7 +89,7 @@ def _build_answer_xml(
         "<Response>\n"
         f'<Stream bidirectional="true" keepCallAlive="true" '
         f'contentType="audio/x-mulaw;rate=8000"{status_attrs}>'
-        f"{ws_url}"
+        f"{ws_url_xml}"
         "</Stream>\n"
         "</Response>"
     )
