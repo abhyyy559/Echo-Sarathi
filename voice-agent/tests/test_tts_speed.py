@@ -8,8 +8,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 import app.pipeline as pipeline_module
 from app.pipeline import _cartesia_speed, build_providers
+
+
+@pytest.fixture(autouse=True)
+def _pin_cartesia_provider(monkeypatch) -> None:
+    """These tests assert Cartesia wiring. The repo .env may carry
+    TTS_PROVIDER=deepgram (loaded into os.environ by Settings.from_env), which
+    would route build_providers away from Cartesia."""
+    monkeypatch.setenv("TTS_PROVIDER", "cartesia")
 
 
 def _settings(**overrides: Any):  # type: ignore[no-untyped-def]

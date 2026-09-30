@@ -210,6 +210,15 @@ class FallbackLLM(llm.LLM):
         self._chain: list[Any] = members
         self._cooldown_s = cooldown_s
         self._down_until: list[float] = [0.0] * len(members)
+        self.last_served_index: int = 0
+
+    @property
+    def last_served_model(self) -> str:
+        """Model name of the member that served the most recent turn."""
+        try:
+            return str(getattr(self._chain[self.last_served_index], "model", "?"))
+        except Exception:
+            return "?"
 
     @property
     def model(self) -> str:
@@ -249,17 +258,26 @@ class FallbackLLM(llm.LLM):
         **kwargs: Any,
     ) -> llm.LLMStream:
         index = self._pick_member()
+        member = self._chain[index]
+        # Remember who served, so turn telemetry can attribute the reply the
+        # same way text mode does ("served by" per turn).
+        try:
+            self.last_served_index = index
+        except Exception:
+            pass
         if index > 0 or len(self._chain) > 1:
             logger.info(
                 "LLM chain serving member %d/%d", index + 1, len(self._chain)
             )
-        member = self._chain[index]
         # Fail FAST on every member (max 1 quick attempt): the session calls
         # chat() again on failure and the chain advances to the next key. The
         # SDK default (3 retries x 2s + gateway retries) turned one Groq 429
         # into ~13s of dead air before the fallback was even tried.
         conn_options = APIConnectOptions(
-            max_retry=1, retry_interval=0.5, timeout=15.0
+            # Fail fast: a hung provider must surface in seconds, not tens of
+            # seconds. The stall watchdog speaks a filler at 4s, so the member
+            # timeout must be well under that for the chain to have moved on.
+            max_retry=1, retry_interval=0.5, timeout=8.0
         )
         member_stream = member.chat(
             **self._chat_kwargs(chat_ctx, tools, conn_options, kwargs)
@@ -370,7 +388,33 @@ def build_providers(
             "DEEPGRAM_API_KEY missing - speech-to-text disabled"
         )
 
-    if settings.cartesia_api_key and os.getenv("TTS_PROVIDER", "cartesia").lower() == "cartesia":
+    selected_tts = os.getenv("TTS_PROVIDER", "cartesia").lower()
+    sarvam_key = os.getenv("SARVAM_TTS_API", "")
+    if selected_tts == "sarvam" and sarvam_key:
+        from app.tts_sarvam import SarvamTTS
+
+        sarvam_model = (
+            str((voice_settings or {}).get("tts_model", "") or "").strip()
+            or os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
+        )
+        sarvam_speaker = (
+            str((voice_settings or {}).get("tts_speaker", "") or "").strip()
+            or os.getenv("SARVAM_TTS_SPEAKER", "priya")
+        )
+        sarvam_lang = (
+            str((voice_settings or {}).get("tts_language", "") or "").strip()
+            or os.getenv("SARVAM_TTS_LANG", "en-IN")
+        )
+        bundle.tts = SarvamTTS(
+            api_key=sarvam_key,
+            model=sarvam_model,
+            speaker=sarvam_speaker,
+            language=sarvam_lang,
+        )
+        logger.info(
+            "TTS provider: Sarvam Bulbul (%s/%s/%s)", sarvam_model, sarvam_speaker, sarvam_lang
+        )
+    elif selected_tts == "cartesia" and settings.cartesia_api_key:
         tts_kwargs: dict[str, Any] = {}
         if effective_voice:
             tts_kwargs["voice"] = effective_voice
@@ -605,6 +649,7 @@ class TurnTelemetry:
         on_final_user: Any = None,
         backchannel: Optional[BackchannelController] = None,
         extraction_tools: Any = None,
+        llm: Any = None,
     ) -> None:
         self._session = session
         self._backend = backend
@@ -613,6 +658,7 @@ class TurnTelemetry:
         self._on_final_user = on_final_user
         self._backchannel = backchannel
         self._extraction_tools = extraction_tools
+        self._llm = llm
         self._turn_index = 0
         self._flush_lock = asyncio.Lock()
         self._activity_sequence = 1
@@ -623,6 +669,9 @@ class TurnTelemetry:
         self._pending_events: list[dict[str, Any]] = []
         # Throttle for sampled partial-transcript events.
         self._last_partial_event_at: float = 0.0
+        # Stall watchdog generation. Incremented on every final user turn and
+        # on reset so a stale watchdog can never speak into a later turn.
+        self._watchdog_generation: int = 0
         self._agent_connecting_posted = False
         self._agent_speaking = False
         self._reset()
@@ -648,6 +697,9 @@ class TurnTelemetry:
     def _reset(self) -> None:
         self._user_text = ""
         self._agent_text = ""
+        # A new exchange begins: any watchdog from the previous turn is stale
+        # and must never speak.
+        self._watchdog_generation += 1
         self._end_of_speech_at: Optional[float] = None
         self._reply_start_at: Optional[float] = None
         self._got_agent_item = False
@@ -807,6 +859,17 @@ class TurnTelemetry:
     def _on_user_state_changed(self, ev: Any) -> None:
         old_state = self._event_state(ev, "old_state")
         new_state = self._event_state(ev, "new_state")
+        # Caller status feed: speaking/listening transitions, including the
+        # barge-in moment (user starts speaking while the agent speaks).
+        if new_state and new_state != old_state:
+            barge = " (BARGE-IN: caller talking over the agent)" if (
+                new_state == "speaking" and self._agent_speaking
+            ) else ""
+            self._emit_event(
+                "user_state",
+                provider="caller",
+                message=f"caller {old_state or '?'} -> {new_state}{barge}",
+            )
         if self._backchannel is not None and new_state is not None:
             try:
                 self._backchannel.on_user_speaking(new_state == "speaking")
@@ -842,6 +905,16 @@ class TurnTelemetry:
     def _on_agent_state_changed(self, ev: Any) -> None:
         old_state = self._event_state(ev, "old_state")
         new_state = self._event_state(ev, "new_state")
+        # Agent status feed: listening / thinking / speaking transitions are
+        # what the playground console renders as the live agent status. Emit
+        # on every real transition so "what is the agent doing right now" is
+        # answerable without tailing docker logs.
+        if new_state and new_state != old_state:
+            self._emit_event(
+                "agent_state",
+                provider="agent",
+                message=f"agent {old_state or '?'} -> {new_state}",
+            )
         if new_state == "speaking":
             self._agent_speaking = True
         elif old_state == "speaking":
@@ -863,6 +936,14 @@ class TurnTelemetry:
                 self._tts_first_audio_ms = (
                     time.monotonic() - self._reply_start_at
                 ) * 1000.0
+                # TTS audibility proof: without this, "the agent is silent"
+                # cannot distinguish TTS failure from "it never tried to speak".
+                self._emit_event(
+                    "tts_first_audio",
+                    provider="tts",
+                    latency_ms=round(self._tts_first_audio_ms),
+                    message="agent started speaking (first audio out)",
+                )
             self._queue_activity(
                 state="agent_speaking",
                 event_type="agent_state_changed",
@@ -947,6 +1028,17 @@ class TurnTelemetry:
         # again here duplicated the final caption in the browser transcript.
         if self._reply_start_at is None:
             self._reply_start_at = time.monotonic()
+        self._watchdog_generation += 1
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (unit tests drive the handler synchronously):
+            # there is nothing to watch over, so skip the watchdog.
+            pass
+        else:
+            _spawn_task(
+                self._stall_watchdog(self._watchdog_generation, transcript)
+            )
         if self._on_final_user is not None:
             try:
                 result = self._on_final_user(transcript)
@@ -961,6 +1053,50 @@ class TurnTelemetry:
             # Keep the first measurement for this exchange; EOU metric refines it.
             if self._stt_final_ms is None:
                 self._stt_final_ms = elapsed_ms
+
+    async def _stall_watchdog(self, generation: int, transcript: str) -> None:
+        """Speak rather than leave the caller in silence on a stalled turn.
+
+        Live symptom: the caller said "Hello? Hello? Can you hear me?" three
+        times while the LLM was retrying a dead provider for 12-39 seconds.
+        Silence makes the caller feel unheard; a filler buys patience and a
+        recovery line restarts the exchange. Both are spoken directly (no LLM
+        call), so they work precisely when the LLM is the thing that is
+        broken. The generation guard guarantees a stale watchdog can never
+        speak into a later turn.
+        """
+        try:
+            await asyncio.sleep(4.0)
+            if generation != self._watchdog_generation or self._got_agent_item:
+                return
+            try:
+                await self._session.say("One moment, please.")
+            except Exception:
+                logger.warning("Filler utterance failed", exc_info=True)
+                return
+            self._emit_event(
+                "stall_filler",
+                message="no agent reply 4s after the caller finished; spoke a filler",
+            )
+            await asyncio.sleep(8.0)
+            if generation != self._watchdog_generation or self._got_agent_item:
+                return
+            try:
+                await self._session.say(
+                    "Sorry, I didn't quite catch that. Could you say it once more?"
+                )
+            except Exception:
+                logger.warning("Recovery utterance failed", exc_info=True)
+                return
+            self._emit_event(
+                "stall_recovery",
+                level="warn",
+                message=f"no agent reply 12s after {transcript[:60]!r}; asked the caller to repeat",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — diagnostics must never break a call
+            logger.warning("Stall watchdog failed", exc_info=True)
 
     def _on_conversation_item_added(self, ev: Any) -> None:
         item = getattr(ev, "item", None)
@@ -1134,6 +1270,12 @@ class TurnTelemetry:
                         "tts_characters": self._tts_characters,
                         "user_chars": len(self._user_text),
                         "agent_chars": len(self._agent_text),
+                        "llm_model": (
+                            self._llm.last_served_model
+                            if self._llm is not None
+                            and hasattr(self._llm, "last_served_model")
+                            else getattr(self._llm, "model", None)
+                        ),
                     },
                     ensure_ascii=False,
                 ),
@@ -1631,6 +1773,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             on_final_user=tools_impl.heuristic_extract,
             backchannel=backchannel,
             extraction_tools=tools_impl,
+            llm=bundle.llm,
         )
         telemetry.attach()
 

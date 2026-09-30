@@ -379,7 +379,9 @@ def test_cartesia_still_default_when_selected(monkeypatch) -> None:
 
     monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
     monkeypatch.setattr(pipeline_module.cartesia, "TTS", _FakeCartesia)
-    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    # The repo .env may carry TTS_PROVIDER=deepgram; the default path must be
+    # asserted with the variable explicitly selecting cartesia.
+    monkeypatch.setenv("TTS_PROVIDER", "cartesia")
 
     settings = Settings(
         livekit_url="ws://x",

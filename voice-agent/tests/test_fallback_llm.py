@@ -55,7 +55,9 @@ def test_fallback_stream_uses_real_api_connect_options() -> None:
         # not ~13s of dead air.
         assert options.max_retry == 1
         assert options.retry_interval == 0.5
-        assert options.timeout == 15.0
+        # 8s: a hung provider must surface before the 4s stall watchdog's
+        # filler, so the chain moves on instead of stacking silence.
+        assert options.timeout == 8.0
 
         await llm.LLMStream.aclose(stream)
         await stream._active.aclose()

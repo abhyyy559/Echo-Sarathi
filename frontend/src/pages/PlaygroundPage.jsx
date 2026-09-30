@@ -4,6 +4,8 @@ import { Room, RoomEvent, Track } from 'livekit-client';
 import { agentsApi, api, callExportUrl, playgroundApi } from '../api.js';
 import LatencyPanel from '../components/LatencyPanel.jsx';
 import DiagnosticsPanel from '../components/DiagnosticsPanel.jsx';
+import LiveConsole from '../components/LiveConsole.jsx';
+import TestCallPanel from '../components/TestCallPanel.jsx';
 import LeadCardForm, { ABSENT_STUDENT_DEFAULTS } from '../components/LeadCardForm.jsx';
 import TextPlayground, { confidenceClass } from '../components/TextPlayground.jsx';
 import { cleanTranscriptText } from '../utils/transcript.js';
@@ -523,6 +525,40 @@ export default function PlaygroundPage() {
     );
   }
 
+  // Frontend-side rows for the live console: microphone, room and websocket
+  // state the backend can never see. Rebuilt on every render from live state.
+  function micConsoleRows() {
+    const now = new Date().toTimeString().slice(0, 8);
+    if (!roomRef.current) {
+      return [{ at_iso: now, tag: 'UI', level: 'info', message: 'room: not connected' }];
+    }
+    const state = roomRef.current.state || roomRef.current.connectionState || '?';
+    const rows = [{ at_iso: now, tag: 'UI', level: 'info', message: `room: ${state}` }];
+    if (!micDiag) {
+      rows.push({ at_iso: now, tag: 'MIC', level: 'warn', message: 'microphone: no track info yet' });
+    } else if (micDiag.error) {
+      rows.push({ at_iso: now, tag: 'MIC', level: 'error', message: `microphone: ${micDiag.error}` });
+    } else {
+      rows.push({
+        at_iso: now,
+        tag: 'MIC',
+        level: micDiag.muted ? 'warn' : 'info',
+        message: `microphone: ${micDiag.muted ? 'MUTED' : 'publishing'} ${micDiag.sampleRate ?? '?'}Hz level=${Math.round(micLevel * 100)}${
+          micMuted ? ' (self-muted)' : ''
+        }`,
+      });
+    }
+    return rows;
+  }
+
+  function renderLiveConsole() {
+    return (
+      <div style={{ marginTop: 18 }}>
+        <LiveConsole active={phase !== PHASES.IDLE} localRows={micConsoleRows()} />
+      </div>
+    );
+  }
+
   function renderLatencySidebar(turns) {
     return (
       <div style={{ marginTop: 18 }}>
@@ -709,6 +745,7 @@ export default function PlaygroundPage() {
             ))}
           </div>
           {renderLiveLatencySidebar(agentTurns)}
+          {renderLiveConsole()}
         </aside>
       </div>
     );
@@ -951,6 +988,12 @@ export default function PlaygroundPage() {
               <summary>Who are we calling? (optional lead card)</summary>
               <LeadCardForm value={contactCard} onChange={setContactCard} defaults={ABSENT_STUDENT_DEFAULTS} />
             </details>
+
+            {selectedVersionId && (
+              <div style={{ marginTop: 12 }}>
+                <TestCallPanel versionId={selectedVersionId} contactCard={contactCard} />
+              </div>
+            )}
 
             {selectedVersionId && mode === MODES.VOICE && (
               <div style={{ marginTop: 20 }}>
