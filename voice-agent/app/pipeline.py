@@ -1492,7 +1492,7 @@ def _attach_audio_probe(room: Any, telemetry: Any) -> None:
         room.on("track_unsubscribed")(_on_unsubscribed)
         # Report what is ALREADY subscribed (the caller usually joins first).
         for participant in list(getattr(room, "remote_participants", {}).values()):
-            for publication in getattr(participant, "track_publisations", {}).values():
+            for publication in getattr(participant, "track_publications", {}).values():
                 _on_subscribed(
                     getattr(publication, "track", None), publication, participant
                 )
