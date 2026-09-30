@@ -8,11 +8,46 @@ say (runner stops the simulation for that lead).
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any, Mapping, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.timeutil import utcnow
+
+logger = logging.getLogger(__name__)
+
+#: A dry run fires ~10 LLM calls per contact back-to-back, straight into the
+#: org's 7000 input-tokens/minute bucket. Without pacing, the second contact
+#: always 429s and the whole request fails. On a 429 we wait for the bucket to
+#: refill and resume instead of failing; a few extra seconds beats re-running
+#: the entire dry run by hand.
+_DRY_RUN_429_WAIT_S = 20.0
+_DRY_RUN_429_MAX_WAITS = 4
+_DRY_RUN_PACING_S = 2.0
+
+
+async def _run_turn_patiently(run_turn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call run_turn, waiting out rate limits instead of failing the dry run."""
+    waits = 0
+    while True:
+        try:
+            reply = await run_turn(*args, **kwargs)
+            await asyncio.sleep(_DRY_RUN_PACING_S)
+            return reply
+        except HTTPException as exc:
+            if exc.status_code != 429 or waits >= _DRY_RUN_429_MAX_WAITS:
+                raise
+            waits += 1
+            logger.warning(
+                "dry-run rate limited; waiting %ss (%d/%d) then resuming",
+                _DRY_RUN_429_WAIT_S,
+                waits,
+                _DRY_RUN_429_MAX_WAITS,
+            )
+            await asyncio.sleep(_DRY_RUN_429_WAIT_S)
 
 PERSONA_ORDER: tuple[str, ...] = ("cooperative", "terse", "distracted", "refuses", "clueless")
 
@@ -123,13 +158,13 @@ async def run_campaign_dry_run(
         db.flush()
 
         turns_used = 0
-        reply = await run_turn(db, settings, call, version, user_text="", start_event=True)
+        reply = await _run_turn_patiently(run_turn, db, settings, call, version, user_text="", start_event=True)
         turns_used += 1
         while not reply.get("done") and turns_used < _MAX_DRY_RUN_TURNS:
             caller_line = persona_reply(persona, reply.get("reply_text") or "", turns_used - 1, card)
             if not (caller_line or "").strip():
                 break
-            reply = await run_turn(db, settings, call, version, user_text=caller_line, start_event=False)
+            reply = await _run_turn_patiently(run_turn, db, settings, call, version, user_text=caller_line, start_event=False)
             turns_used += 1
         if call.status == "in_progress":
             call.status = "completed"

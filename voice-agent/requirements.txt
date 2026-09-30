@@ -8,5 +8,10 @@ httpx>=0.27,<1.0
 python-dotenv>=1.0,<2.0
 tzdata>=2024.1  # zoneinfo database for Asia/Kolkata (Windows + slim images)
 # Free orchestration layer (all CPU-only, self-hosted, no per-minute fees):
-smart-turn-livekit==0.4.0  # semantic end-of-turn detection (Smart Turn v3 ONNX)
+# smart-turn-livekit[resample] is REQUIRED, not optional: LiveKit delivers
+# 24kHz audio and the model needs 16kHz. Without the resample extra EVERY audio
+# frame raised RuntimeError inside _forward_audio_task, so no speech ever
+# reached STT - the agent spoke the greeting and then listened forever, in both
+# playground and phone rooms.
+smart-turn-livekit[resample]==0.4.0  # semantic end-of-turn detection (Smart Turn v3 ONNX)
 livekit-plugins-hush==0.3.3  # background-speaker suppression (models bundled)
