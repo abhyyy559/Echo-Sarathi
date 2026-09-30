@@ -1201,9 +1201,21 @@ class TurnTelemetry:
         """
         try:
             phone_room = "phone-" in str(getattr(self, "_room_name", "") or "")
-            await asyncio.sleep(7.0 if phone_room else 12.0)
+            # 10s on phone (Vobiz drops silent streams; 7s collided with 5-11s
+            # throttled turns and talked over real replies), 12s in browser.
+            await asyncio.sleep(10.0 if phone_room else 12.0)
             if generation != self._watchdog_generation or self._got_agent_item:
                 return
+            # If the LLM has already produced its first token, a reply IS
+            # coming - speaking now would talk over it ("Sorry, I didn't" cut
+            # off mid-sentence, then the real reply). Only recover when there
+            # is genuinely nothing: no agent speech AND no LLM output.
+            if self._llm_first_token_ms is not None:
+                await asyncio.sleep(8.0)
+                if generation != self._watchdog_generation or self._got_agent_item:
+                    return
+                if self._llm_first_token_ms is not None and self._agent_text:
+                    return
             try:
                 await self._session.say(
                     "Sorry, I didn't quite catch that. Could you say it once more?"
