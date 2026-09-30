@@ -1182,30 +1182,18 @@ class TurnTelemetry:
                 self._stt_final_ms = elapsed_ms
 
     async def _stall_watchdog(self, generation: int, transcript: str) -> None:
-        """Speak rather than leave the caller in silence on a stalled turn.
+        """Break silence only when a turn is truly dead - never filler.
 
-        Live symptom: the caller said "Hello? Hello? Can you hear me?" three
-        times while the LLM was retrying a dead provider for 12-39 seconds.
-        Silence makes the caller feel unheard; a filler buys patience and a
-        recovery line restarts the exchange. Both are spoken directly (no LLM
-        call), so they work precisely when the LLM is the thing that is
-        broken. The generation guard guarantees a stale watchdog can never
-        speak into a later turn.
+        A 4s "One moment, please." filler was added for stalled turns, but on a
+        throttled provider EVERY turn is slow, so the filler fired after every
+        reply. Worse, callers answer the filler ("Hello."), creating extra
+        turns that cost more tokens and more latency - the filler amplified the
+        exact problem it covered. Removed: slow-but-working turns stay silent
+        while the reply generates, and only a turn with NO reply at all after
+        12s gets the recovery line asking the caller to repeat.
         """
         try:
-            await asyncio.sleep(4.0)
-            if generation != self._watchdog_generation or self._got_agent_item:
-                return
-            try:
-                await self._session.say("One moment, please.")
-            except Exception:
-                logger.warning("Filler utterance failed", exc_info=True)
-                return
-            self._emit_event(
-                "stall_filler",
-                message="no agent reply 4s after the caller finished; spoke a filler",
-            )
-            await asyncio.sleep(8.0)
+            await asyncio.sleep(12.0)
             if generation != self._watchdog_generation or self._got_agent_item:
                 return
             try:
