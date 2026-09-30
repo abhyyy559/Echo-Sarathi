@@ -403,6 +403,35 @@ def test_cartesia_still_default_when_selected(monkeypatch) -> None:
     assert made.get("api_key") == "cartesia"
 
 
+def test_compact_swap_uses_update_instructions() -> None:
+    """Agent.instructions is read-only AND update_instructions is a coroutine:
+    the swap must await it or it silently never happens (seen live: the full
+    8k prompt was re-sent every turn while the swap 'succeeded')."""
+    import asyncio
+
+    from app.pipeline import DomainCallAgent
+
+    from app.extraction_tools import ExtractionBackend, ExtractionCoordinator, VoiceAgentTools
+
+    class _Backend(ExtractionBackend):
+        async def post_fields(self, call_id, fields):  # type: ignore[no-untyped-def]
+            return True
+
+        async def post_complete(self, call_id, **kwargs):  # type: ignore[no-untyped-def]
+            return True
+
+    async def scenario() -> None:
+        tools = VoiceAgentTools(ExtractionCoordinator(), _Backend(), "1")
+        agent = DomainCallAgent(instructions="FULL PROMPT", tools_impl=tools)
+        assert await agent.swap_to_compact_instructions("SHORT") is True
+        assert agent.instructions == "SHORT"
+        # Second call is a no-op (logged once).
+        assert await agent.swap_to_compact_instructions("OTHER") is False
+        assert agent.instructions == "SHORT"
+
+    asyncio.run(scenario())
+
+
 def test_placeholder_keys_raise_startup_warning(monkeypatch) -> None:
     from app.config import _looks_like_placeholder, get_settings, reset_settings_cache
 

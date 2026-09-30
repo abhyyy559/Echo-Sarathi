@@ -1324,7 +1324,7 @@ class TurnTelemetry:
     def _round(self, value: Optional[float]) -> Optional[int]:
         return None if value is None else round(value)
 
-    def _maybe_compact_instructions(self) -> None:
+    async def _maybe_compact_instructions(self) -> None:
         """Swap full instructions for the compact version after the opening.
 
         Same arithmetic as text mode: the full voice prompt (~8k chars) is
@@ -1379,7 +1379,7 @@ class TurnTelemetry:
                 return
             self._turn_index += 1
             turn_index = self._turn_index
-            self._maybe_compact_instructions()
+            await self._maybe_compact_instructions()
             timestamp = self._utc_now_iso()
 
             e2e_ms: Optional[float] = None
@@ -1483,17 +1483,20 @@ class DomainCallAgent(Agent):
         # "duplicate function name".
         super().__init__(instructions=instructions)
 
-    def swap_to_compact_instructions(self, compact: str) -> bool:
+    async def swap_to_compact_instructions(self, compact: str) -> bool:
         """Replace full instructions with the compact continuation version.
 
         Called after the opening exchanges: the full 8k-char prompt is re-sent
         on every LLM call against an org-wide 7000 input-tokens/min bucket.
-        Returns True on the swap so it is logged once, not per turn.
+        Uses update_instructions (Agent.instructions is a read-only property,
+        and update_instructions is a coroutine - calling it without await was
+        why the swap silently never happened). Returns True on the swap so it
+        is logged once, not per turn.
         """
         try:
             if getattr(self, "_compact_swapped", False):
                 return False
-            self.instructions = compact
+            await self.update_instructions(compact)
             self._compact_swapped = True
             return True
         except Exception:

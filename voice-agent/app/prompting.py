@@ -725,6 +725,9 @@ def render_system_prompt(
         "(never tool-call markup in speech).",
         "- Honest confidence 0.0-1.0 (clearly heard = 0.9). Guessing = do NOT "
         "record, ask again. NEVER fabricate or guess a value.",
+        "- needs_human_help means ONLY an explicit request: a callback, a human/"
+        "teacher/principal, or a complaint. An explanation or confirmation is "
+        "NEVER needs_human_help, no matter which words it shares.",
         (
             f"- Confidence below {LOW_CONFIDENCE_THRESHOLD}, or a required field "
             f"still unfilled after up to {MAX_ASKS_PER_FIELD} asks: treat as NOT captured, "

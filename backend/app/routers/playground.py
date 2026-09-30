@@ -921,6 +921,10 @@ def _render_text_system_prompt(
         "to repeat themselves. Never re-ask a question they already answered.",
         "- When everything is captured (or they want to stop), call "
         "`end_call(summary)` including any unfilled required fields.",
+        "- needs_human_help means ONLY an explicit request: the caller asks for "
+        "a callback, asks to speak to a human/teacher/principal, or raises a "
+        "complaint. An explanation, a confirmation, or any other sentence is "
+        "NEVER needs_human_help, no matter which words it shares.",
         "Fields:",
     ]
     schema = config.extraction_schema or {}
