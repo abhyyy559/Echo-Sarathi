@@ -18,6 +18,7 @@ offline-tested logic lives in ``app.prompting`` / ``app.extraction_tools``.
 from __future__ import annotations
 
 import asyncio
+import os
 import inspect
 import json
 import logging
@@ -369,7 +370,7 @@ def build_providers(
             "DEEPGRAM_API_KEY missing - speech-to-text disabled"
         )
 
-    if settings.cartesia_api_key:
+    if settings.cartesia_api_key and os.getenv("TTS_PROVIDER", "cartesia").lower() == "cartesia":
         tts_kwargs: dict[str, Any] = {}
         if effective_voice:
             tts_kwargs["voice"] = effective_voice
@@ -385,6 +386,19 @@ def build_providers(
         if pron_dict:
             tts_kwargs["pronunciation_dict_id"] = pron_dict
         bundle.tts = cartesia.TTS(api_key=settings.cartesia_api_key, **tts_kwargs)
+    elif settings.deepgram_api_key:
+        # Deepgram Aura fallback. Cartesia returns 402 when its balance runs
+        # out (seen live: "Invalid response status", retryable=False), which
+        # silences the agent even though everything else works. Aura runs on
+        # the same Deepgram key as STT, so voice keeps working with zero new
+        # accounts. TTS_PROVIDER=deepgram forces it; otherwise it is used
+        # whenever Cartesia is not selected.
+        aura_model = (
+            str((voice_settings or {}).get("tts_model", "") or "").strip()
+            or os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
+        )
+        bundle.tts = deepgram.TTS(model=aura_model, api_key=settings.deepgram_api_key)
+        logger.info("TTS provider: Deepgram Aura (%s)", aura_model)
     else:
         bundle.problems.append("CARTESIA_API_KEY missing - text-to-speech disabled")
 

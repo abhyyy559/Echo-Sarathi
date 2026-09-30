@@ -331,6 +331,76 @@ def test_qwen_model_sends_no_reasoning_effort(monkeypatch) -> None:
     assert "reasoning_effort" not in made[0]
 
 
+def test_deepgram_tts_used_when_cartesia_not_selected(monkeypatch) -> None:
+    """Cartesia 402s when its balance runs out; Aura on the STT key keeps voice alive."""
+    import os as _os
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: (_ for _ in ()).throw(AssertionError("cartesia must not be constructed")))
+    made: dict[str, Any] = {}
+
+    class _FakeAuraTTS:
+        def __init__(self, **kwargs: Any) -> None:
+            made.update(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "TTS", _FakeAuraTTS)
+    monkeypatch.setenv("TTS_PROVIDER", "deepgram")
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="cartesia",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+    )
+    try:
+        bundle = build_providers(settings)
+    finally:
+        monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    assert bundle.tts is not None
+    assert made.get("model") == "aura-2-thalia-en"
+    assert made.get("api_key") == "dg"
+
+
+def test_cartesia_still_default_when_selected(monkeypatch) -> None:
+    made: dict[str, Any] = {}
+
+    class _FakeCartesia:
+        def __init__(self, **kwargs: Any) -> None:
+            made.update(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", _FakeCartesia)
+    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="cartesia",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+    )
+    bundle = build_providers(settings)
+    assert bundle.tts is not None
+    assert made.get("api_key") == "cartesia"
+
+
 def test_placeholder_keys_raise_startup_warning(monkeypatch) -> None:
     from app.config import _looks_like_placeholder, get_settings, reset_settings_cache
 
