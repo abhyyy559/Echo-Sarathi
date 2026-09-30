@@ -72,6 +72,48 @@ router = APIRouter(
 )
 
 
+@router.post("/telemetry/events")
+def post_telemetry_events(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ingest pipeline events from the voice worker.
+
+    The worker runs in a different process from the backend, so its STT / TTS /
+    LLM events were invisible to the playground Diagnostics panel: a voice
+    failure could only be diagnosed by tailing docker logs. The worker posts
+    here and the panel renders them in the same feed, which makes "my speech
+    is not being transcribed" answerable from the UI - no ``stt_final`` event
+    at all means audio never reached the agent, not that the model ignored it.
+    """
+    from app.services.telemetry import recorder as telemetry
+
+    ignored = {
+        "kind",
+        "level",
+        "provider",
+        "model",
+        "status",
+        "latency_ms",
+        "message",
+        "call_id",
+    }
+    recorded = 0
+    for event in payload.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        telemetry.record(
+            str(event.get("kind") or "note"),
+            level=str(event.get("level") or "info"),
+            provider=str(event.get("provider") or ""),
+            model=str(event.get("model") or ""),
+            status=event.get("status"),
+            latency_ms=event.get("latency_ms"),
+            message=str(event.get("message") or ""),
+            call_id=event.get("call_id"),
+            **{k: v for k, v in event.items() if k not in ignored},
+        )
+        recorded += 1
+    return {"recorded": recorded, "latest_seq": telemetry.latest_seq()}
+
+
 @router.get("/calls/{call_id}/context")
 def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     call = db.get(Call, call_id)

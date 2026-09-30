@@ -21,6 +21,25 @@ const LEVEL_STYLE = {
   error: { color: '#b91c1c', label: 'error' },
 };
 
+// Short, human tags for the pipeline event kinds. Without these the log is a
+// wall of lowercase identifiers ("stt_final", "llm_handoff") and reading it
+// during a call is slow.
+const KIND_TAG = {
+  stt_final: 'STT',
+  voice_session_start: 'VOICE',
+  voice_provider_problem: 'VOICE',
+  tts_first_audio: 'TTS',
+  llm_attempt: 'LLM',
+  llm_handoff: 'XFR',
+  llm_skip: 'XFR',
+  llm_quota_shared: 'XFR',
+  llm_quota_wait: 'XFR',
+  llm_quota_exhausted: 'XFR',
+  llm_chain_exhausted: 'LLM',
+  llm_tool_conflict: 'LLM',
+  extraction_backfill: 'EXT',
+};
+
 function StatusDot({ ok }) {
   if (ok === null || ok === undefined) return <span className="dp-dot dp-dot-idle" title="not exercised yet" />;
   return (
@@ -37,6 +56,7 @@ function EventRow({ event }) {
   return (
     <div className={`dp-row dp-${event.level || 'info'}`}>
       <span className="dp-time">{event.at_iso}</span>
+      <span className="dp-kind">{KIND_TAG[event.kind] || 'GEN'}</span>
       <span className="dp-lvl" style={{ color: style.color }}>
         {style.label}
       </span>

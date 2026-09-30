@@ -5446,3 +5446,10 @@ input[type='range']::-moz-range-thumb {
 .dp-error { color: #b91c1c; font-size: 10.5px; margin-bottom: 4px; }
 .dp-empty { color: var(--dim); font-size: 10.5px; }
 .dp-foot { font-size: 10px; color: var(--dim); margin-top: 5px; }
+.dp-kind {
+  flex: 0 0 34px;
+  color: var(--dim);
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+}

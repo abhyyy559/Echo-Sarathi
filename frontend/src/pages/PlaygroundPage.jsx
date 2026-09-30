@@ -30,6 +30,32 @@ function fmtClock(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Reads the ACTUAL published microphone state. Used to separate "the browser
+// is not sending audio" from "Deepgram is not transcribing it" - the two look
+// identical from the agent side and have completely different fixes.
+export function readMicDiagnostic(pub) {
+  if (!pub) {
+    return {
+      published: false,
+      error: 'no microphone track publication - permission denied or no input device',
+    };
+  }
+  const track = pub.audioTrack || pub.track;
+  const settings = track?.mediaStreamTrack?.getSettings?.() || {};
+  return {
+    published: true,
+    muted: Boolean(pub.isMuted),
+    trackMuted: Boolean(track?.mediaStreamTrack?.enabled === false),
+    readyState: track?.mediaStreamTrack?.readyState || null,
+    sampleRate: settings.sampleRate ?? null,
+    channelCount: settings.channelCount ?? null,
+    echoCancellation: settings.echoCancellation ?? null,
+    noiseSuppression: settings.noiseSuppression ?? null,
+    autoGainControl: settings.autoGainControl ?? null,
+    label: track?.mediaStreamTrack?.label || null,
+  };
+}
+
 export default function PlaygroundPage() {
   const params = useParams();
   const routeVersionId = params.agentVersionId ? Number(params.agentVersionId) : null;
@@ -57,6 +83,9 @@ export default function PlaygroundPage() {
   const [fatalError, setFatalError] = useState(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [micLevel, setMicLevel] = useState(0);
+  // Mic self-mute + the published-track diagnostic the panel reads.
+  const [micMuted, setMicMuted] = useState(false);
+  const [micDiag, setMicDiag] = useState(null);
   const [bargeIn, setBargeIn] = useState(false);
   const [captions, setCaptions] = useState([]);
 
@@ -351,7 +380,32 @@ export default function PlaygroundPage() {
     const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
     micTrackRef.current = pub && pub.audioTrack ? pub.audioTrack : null;
 
+    // Publish the REAL microphone state, not an assumption. "The agent cannot
+    // hear me" has two very different causes - the browser is not publishing
+    // audio at all (permission/device/processing), or it is publishing and
+    // Deepgram is failing. Those are indistinguishable from the agent side, so
+    // the panel needs this.
+    setMicDiag(readMicDiagnostic(pub));
+
     roomRef.current = room;
+  }
+
+  // Mute/unmute self: the agent must go quiet when the tester stops talking,
+  // otherwise its own turn-taking fights the human and both sides talk over
+  // each other. Also the quickest check that the agent really does stop
+  // reacting to audio.
+  async function toggleMute() {
+    const room = roomRef.current;
+    if (!room) return;
+    const next = !micMuted;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!next);
+      setMicMuted(next);
+      const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      setMicDiag(readMicDiagnostic(pub));
+    } catch (e) {
+      setMicDiag({ error: String(e?.message || e) });
+    }
   }
 
   async function startCall() {
@@ -589,10 +643,46 @@ export default function PlaygroundPage() {
             )}
           </div>
           <div className="form-actions" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${micMuted ? 'btn-danger' : ''}`}
+              onClick={toggleMute}
+              disabled={connecting}
+              title="Mute or unmute your microphone. While muted the agent cannot hear you."
+              style={{ marginRight: 8 }}
+            >
+              {micMuted ? 'Unmute mic' : 'Mute mic'}
+            </button>
             <button type="button" className="btn btn-danger btn-sm" onClick={endCall} disabled={connecting}>
               End call
             </button>
           </div>
+          {/* Why "the agent cannot hear me" is not guessable from the agent side:
+              a silent published track (permission/device/processing) and a
+              working track with a failing STT look identical from here. */}
+          {micDiag && (
+            <div className="dp-wrap" style={{ marginTop: 10 }}>
+              <div className="dp-body">
+                <div className="dp-section-title" style={{ marginTop: 4 }}>Your microphone</div>
+                {micDiag.error ? (
+                  <div className="dp-error">{micDiag.error}</div>
+                ) : (
+                  <div className="dp-member">
+                    <span className="dp-name">track</span>
+                    <span className="dp-model">{micDiag.readyState || 'unknown'}</span>
+                    <span className={micDiag.muted ? 'dp-missing' : 'dp-ok'}>
+                      {micDiag.muted ? 'MUTED' : 'publishing'}
+                    </span>
+                    <span className="dp-cap">{micDiag.sampleRate ?? '?'} Hz</span>
+                    <span className="dp-cap">{micDiag.channelCount ?? '?'} ch</span>
+                    <span className="dp-cap">AEC {String(micDiag.echoCancellation)}</span>
+                    <span className="dp-cap">NS {String(micDiag.noiseSuppression)}</span>
+                    <span className="dp-cap">level {Math.round(micLevel * 100)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {statusNote && <div className="banner banner-info">{statusNote}</div>}

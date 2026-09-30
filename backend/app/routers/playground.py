@@ -198,12 +198,18 @@ def _backfill_grounded_fields(
     qwen/qwen3.8-27b is the opposite: it skips ``record_extracted_field``
     entirely on some turns, so a plainly stated "sick" was never recorded and
     the call reported no fields at all. Leaving that to sampling is not
-    acceptable, so when the model recorded nothing this turn we look for a
-    CALLER sentence that literally overlaps the field name/description.
+    acceptable, so for every REQUIRED field still unfilled we look for a
+    CALLER sentence that literally matches the field.
+
+    This is a PER-FIELD check, not a per-turn one. Gating it on "the model
+    recorded nothing this turn" looked reasonable and was wrong: the turn
+    where the parent said "2nd oct" also carried another recorded field, so
+    the guard suppressed the safety net and the return date was lost anyway.
 
     Safety properties, all deliberate:
     - only the caller's own words from THIS turn are candidates
-    - a real word overlap with the field name/description is required
+    - a real word overlap with the field name/description is required, or the
+      field is date-typed and the sentence is itself date-shaped
     - the normal grounding check still runs, so a paraphrase is refused first
       and the two-strike rule still applies
     - a field the model already recorded is never touched
@@ -212,7 +218,7 @@ def _backfill_grounded_fields(
     same way.
     """
     text = str(user_text or "").strip()
-    if not text or extracted_now:
+    if not text:
         return 0
     schema = getattr(version, "extraction_schema", None)
     if not isinstance(schema, dict) or not schema:
@@ -222,6 +228,10 @@ def _backfill_grounded_fields(
         for row in db.scalars(
             select(ExtractedField).where(ExtractedField.call_id == call.id)
         ).all()
+    }
+    # Fields the model just recorded are already handled; never overwrite them.
+    already |= {
+        str(item.get("field_name")) for item in extracted_now if item.get("field_name")
     }
     captured = 0
     for field_name, spec in schema.items():
@@ -234,19 +244,25 @@ def _backfill_grounded_fields(
         if not isinstance(spec, dict) or str(spec.get("validation") or "").lower() != "required":
             continue
         description = str(spec.get("description") or "")
+        # A date-typed field has to be recoverable from short answers like
+        # "2 oct" or "on the 5th", which contain none of the field's words -
+        # word overlap alone missed exactly these, and the caller was clearly
+        # answering the date question.
+        field_type = str(spec.get("type") or "").lower()
         cue_words = {
             w.lower()
             for w in re.split(r"[^a-z0-9]+", f"{field_name} {description}")
             if len(w) > 3
         }
-        if not cue_words:
+        if not cue_words and "date" not in field_type:
             continue
         for sentence in re.split(r"(?<=[.!?])\s+|,\s+", text):
             sentence = sentence.strip(" .")
             if not sentence:
                 continue
             words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
-            if not (words & cue_words):
+            date_shaped = "date" in field_type and bool(_DATE_LIKE_RE.search(sentence))
+            if not (date_shaped or (words & cue_words)):
                 continue
             result_text, field_record, _done = _execute_text_tool(
                 db,
@@ -270,8 +286,8 @@ def _backfill_grounded_fields(
         telemetry.record(
             "extraction_backfill",
             level="warn",
-            message=f"model recorded nothing; recovered {captured} field(s) "
-            "from the caller's own words",
+            message=f"recovered {captured} required field(s) from the caller's "
+            "own words that the model did not record",
             call_id=call.id,
             fields=[f.get("field_name") for f in extracted_now],
         )
@@ -313,6 +329,9 @@ def _render_compact_system_prompt(
         "ask and thank/close in the same reply. Acknowledge what they said, then "
         "move on. Never invent a value: only record what the caller actually "
         "said, and never ask them to repeat an answer they already gave.\n"
+        "Do NOT repeat yourself: no restating a value or confirmation you have "
+        "already given, no re-confirming a date, no 'anything else?'. If they "
+        "confirmed, ask the next missing thing or close politely.\n"
         f"{state} {todo}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
         f"finish with end_call(summary). Valid field names: "
@@ -841,6 +860,10 @@ def _render_text_system_prompt(
         "- Be a person, not a form: acknowledge what they just said in a few "
         "words, then ask the next thing. Vary your wording; never read the "
         "goals out in order like a questionnaire; never stack two questions.\n"
+        "- NEVER repeat yourself: do not restate a value or a confirmation you "
+        "have already given ('we'll note that...', 'we'll update...', 'I've "
+        "updated...'), and do not ask 'anything else?' or re-confirm a date. If "
+        "they confirmed, move on to what is still missing, or close the call.\n"
         "- Answer what they ACTUALLY said first. If you did not catch it, say "
         "so plainly and move on after one retry. Stay polite even if upset."
     )
@@ -950,6 +973,52 @@ _TEXT_TOOLS: list[dict[str, Any]] = [
         },
     },
 ]
+
+
+def _provider_handoff_block(
+    previous: Optional[tuple[str, str]],
+    current: tuple[str, str],
+    captured: list[Mapping[str, Any]],
+    recent_turns: list[str],
+) -> Optional[str]:
+    """Context bridge for when failover moves the call to another model.
+
+    A model swap mid-call is a context trap: the new model has none of the
+    previous model's knowledge and tends to re-introduce itself, re-ask
+    answered questions, or contradict an earlier answer. It cannot be fixed by
+    prompt alone because the new provider genuinely does not know.
+
+    So the handoff states explicitly: who was speaking before, everything
+    already captured with values, and the last few utterances. Cheap (a few
+    dozen tokens), and it is what makes failover invisible to the caller
+    instead of a conversation restarting from zero.
+    """
+    if not previous:
+        return None
+    prev_name, prev_model = previous
+    cur_name, cur_model = current
+    if prev_name == cur_name and prev_model == cur_model:
+        return None
+    lines = [
+        "CONTINUITY (you took over this call mid-conversation):",
+        f"- The conversation was already in progress and was being handled by "
+        f"{prev_name} ({prev_model}). You are now {cur_name} ({cur_model}). "
+        "Do NOT introduce yourself again, do NOT re-disclose, and do NOT "
+        "re-ask anything the caller already answered.",
+    ]
+    if captured:
+        facts = "; ".join(
+            f"{item.get('field_name')}={item.get('field_value')}" for item in captured
+        )
+        lines.append(f"- Already captured (established, do not re-ask): {facts}")
+    if recent_turns:
+        lines.append(
+            "- Recent exchanges: " + " | ".join(recent_turns[-4:])
+        )
+    lines.append(
+        "- Continue naturally from here as if you had been on the call the whole time."
+    )
+    return "\n".join(lines)
 
 
 def _groq_request_body(settings: Settings, messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1106,7 +1175,26 @@ def _short_error(text: str, limit: int = 220) -> str:
     return collapsed[:limit]
 
 
-def _message_or_raise(response: Any) -> dict[str, Any]:
+def _refusal_text(reason: str, field_name: str) -> str:
+    """Tool rejection the model will not turn into a story.
+
+    The raw reason ("value ... was never stated by the caller") was read by the
+    model as a confession and it told the parent "I'm sorry, I made a mistake
+    earlier - I mentioned a return date you never gave me" after the caller HAD
+    given one. That is a hallucination caused by our own tool text, so the
+    message is now explicit that this is an internal bookkeeping rejection and
+    must never be narrated to the caller.
+    """
+    return (
+        f"NOT RECORDED: {reason} This is an internal note only. Do NOT tell the "
+        f"caller you made a mistake and do NOT mention recording, extraction or "
+        f"any date you have not just heard them say. If they already told you "
+        f"'{field_name}', call this tool again with exactly what they said; "
+        f"otherwise ask once more."
+    )
+
+
+def _message_or_raise(response: Any, served_by: Optional[tuple[str, str]] = None) -> dict[str, Any]:
     """Extract ``choices[0].message`` or fail loudly with the provider body.
 
     The body used to be dropped, which made every provider 4xx/5xx look
@@ -1120,6 +1208,14 @@ def _message_or_raise(response: Any) -> dict[str, Any]:
             status_code=502,
             detail="Unexpected response from the language model.",
         ) from exc
+    # Record which member actually served, so the NEXT turn can inject a
+    # continuity brief if failover moves to a different provider/model. It must
+    # land ON the message we return, not on the envelope.
+    if served_by is not None:
+        try:
+            payload["__served_by__"] = {"provider": served_by[0], "model": served_by[1]}
+        except TypeError:
+            pass
     try:
         usage = payload.get("usage") or {}
         logger.info(
@@ -1132,12 +1228,19 @@ def _message_or_raise(response: Any) -> dict[str, Any]:
     except AttributeError:
         pass
     try:
-        return payload["choices"][0]["message"]
+        message = payload["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(
             status_code=502,
             detail="Unexpected response from the language model.",
         ) from exc
+    served = payload.pop("__served_by__", None)
+    if served:
+        try:
+            message["served_by"] = served
+        except TypeError:
+            pass
+    return message
 
 
 async def _groq_chat(
@@ -1146,6 +1249,9 @@ async def _groq_chat(
     include_tools: bool = True,
     call_id: Optional[int] = None,
     wait_before_retry_ms: int = _QUOTA_RETRY_WAIT_MS,
+    previous_provider: Optional[tuple[str, str]] = None,
+    captured: Optional[list[Mapping[str, Any]]] = None,
+    recent_turns: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Chat-completions round trip over the configured provider chain.
 
@@ -1191,6 +1297,26 @@ async def _groq_chat(
                 )
                 continue
             member_body = _member_body(body, model)
+            # If this is not the provider that served the previous turn, tell
+            # the new model what it is taking over (see _provider_handoff_block).
+            handoff = _provider_handoff_block(
+                previous_provider, (name, model), captured or [], recent_turns or []
+            )
+            if handoff:
+                member_body["messages"] = [
+                    {"role": "system", "content": handoff},
+                    *member_body["messages"],
+                ]
+                telemetry.record(
+                    "llm_handoff",
+                    level="warn",
+                    provider=name,
+                    model=model,
+                    message=f"taking over mid-call from "
+                    f"{previous_provider[0] if previous_provider else '?'}; "
+                    "continuity brief injected",
+                    call_id=call_id,
+                )
             headers = {"Authorization": f"Bearer {api_key}"}
             if name == "openrouter":
                 headers["HTTP-Referer"] = "https://echosarathi.local"
@@ -1272,7 +1398,7 @@ async def _groq_chat(
                         headers=headers,
                     )
                     if response.status_code == 200:
-                        return _message_or_raise(response)
+                        return _message_or_raise(response, served_by=(name, model))
                 if response.status_code != 429:
                     break
                 if _is_shared_quota_exhausted(getattr(response, "text", "")):
@@ -1317,7 +1443,7 @@ async def _groq_chat(
             if response is None:
                 continue
             if response.status_code == 200:
-                return _message_or_raise(response)
+                return _message_or_raise(response, served_by=(name, model))
             last_error_text = response.text[:300]
             rate_limited = rate_limited or response.status_code == 429
             logger.warning(
@@ -1522,8 +1648,7 @@ def _execute_text_tool(
                     "grounding_nudges": [*nudges, nudge_key],
                 }
                 return (
-                    f"NOT RECORDED: {ground_reason} Re-ask specifically, or record "
-                    f"it once the caller actually states it.",
+                    _refusal_text(ground_reason, field_name),
                     None,
                     False,
                 )
@@ -1749,6 +1874,24 @@ async def _run_agent_turn(
     started_mono = time.monotonic()
     assistant_text = ""
     groq_call_ms: list[float] = []
+    # Continuity state: who served the previous turn, what is already captured,
+    # and the last utterances. If failover moves this turn to another model,
+    # _groq_chat injects a brief so the new model does not restart the call.
+    captured_before = [
+        {"field_name": row.field_name, "field_value": row.field_value}
+        for row in db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call.id)
+        ).all()
+    ]
+    recent_turns = [
+        f"{row.speaker}: {row.text}" for row in history_rows[-4:] if row.text
+    ]
+    previous_provider = (call.context or {}).get("llm_provider") if isinstance(call.context, dict) else None
+    previous_provider = (
+        (str(previous_provider.get("provider")), str(previous_provider.get("model")))
+        if isinstance(previous_provider, dict)
+        else None
+    )
 
     for round_no in range(_MAX_TOOL_ROUNDS):
         call_started = time.monotonic()
@@ -1759,8 +1902,17 @@ async def _run_agent_turn(
         # tool call a server-side error. A legal tool call costs one round
         # trip; an illegal one costs a 400 plus a wasted key.
         message = await _groq_chat(
-            settings, messages, include_tools=True, call_id=call.id
+            settings,
+            messages,
+            include_tools=True,
+            call_id=call.id,
+            previous_provider=previous_provider,
+            captured=captured_before,
+            recent_turns=recent_turns,
         )
+        served = message.get("served_by")
+        if isinstance(served, dict) and served.get("provider"):
+            previous_provider = (str(served["provider"]), str(served.get("model") or ""))
         groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
@@ -1812,6 +1964,9 @@ async def _run_agent_turn(
                 ],
                 include_tools=True,
                 call_id=call.id,
+                previous_provider=previous_provider,
+                captured=captured_before,
+                recent_turns=recent_turns,
             )
         except HTTPException:
             message = {}
@@ -1856,6 +2011,18 @@ async def _run_agent_turn(
     )
 
     elapsed_ms = round((time.monotonic() - started_mono) * 1000.0)
+
+    # Persist which provider/model served this call so the NEXT turn can tell
+    # a replacement model what it is inheriting. Without this, failover makes
+    # the conversation restart: the new model re-introduces itself and re-asks
+    # questions the caller already answered.
+    if previous_provider and previous_provider[0]:
+        context = dict(call.context or {})
+        context["llm_provider"] = {
+            "provider": previous_provider[0],
+            "model": previous_provider[1],
+        }
+        call.context = context
 
     # Persist both sides of the exchange (caller turn only when not start).
     user_index: Optional[int] = None
@@ -1903,6 +2070,15 @@ async def _run_agent_turn(
         "done": done,
         "extracted_fields": extracted_now,
         "turn_index": agent_index if assistant_text else next_index,
+        # Which provider/model actually produced this reply. The playground
+        # shows it per turn: a fast answer from an unknown model is not
+        # verifiable otherwise, and failover is invisible without it.
+        "served_by": (
+            {"provider": previous_provider[0], "model": previous_provider[1]}
+            if previous_provider and previous_provider[0]
+            else None
+        ),
+        "llm_calls": len(groq_call_ms),
     }
 
 

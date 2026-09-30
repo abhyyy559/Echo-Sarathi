@@ -604,6 +604,9 @@ class TurnTelemetry:
         self._activity_sequence = 1
         self._activity_post_lock = asyncio.Lock()
         self._activity_seen_events: set[tuple[str, str, str, float]] = set()
+        # Buffered for the backend Diagnostics feed; flushed in batches so a
+        # telemetry hiccup never blocks audio.
+        self._pending_events: list[dict[str, Any]] = []
         self._agent_connecting_posted = False
         self._agent_speaking = False
         self._reset()
@@ -860,12 +863,45 @@ class TurnTelemetry:
                 to_state=new_state,
             )
 
+    def _emit_event(
+        self,
+        kind: str,
+        *,
+        level: str = "info",
+        provider: str = "",
+        status: Any = None,
+        latency_ms: Any = None,
+        message: str = "",
+    ) -> None:
+        """Queue a pipeline event for the backend Diagnostics feed."""
+        self._pending_events.append(
+            {
+                "kind": kind,
+                "level": level,
+                "provider": provider,
+                "status": status,
+                "latency_ms": latency_ms,
+                "message": message,
+                "call_id": self._call_id,
+            }
+        )
+
     def _on_user_input_transcribed(self, ev: Any) -> None:
         transcript = str(getattr(ev, "transcript", "") or "").strip()
         is_final = bool(getattr(ev, "is_final", False))
         if transcript:
             # Stream PARTIAL captions too so the browser transcript feels live.
             self._publish_caption("user", transcript, final=is_final)
+        if is_final:
+            # Telemetry: proves audio actually reached Deepgram and was
+            # transcribed. "My speech is not being transcribed" is
+            # unanswerable from the UI without this - no stt_final event at
+            # all means audio never arrived, not that the model ignored it.
+            self._emit_event(
+                "stt_final",
+                provider="deepgram",
+                message=f"transcribed: {transcript[:120]!r}",
+            )
         if not is_final:
             return
         if not transcript:
@@ -1516,6 +1552,26 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         )
         telemetry.attach()
 
+        # Announce the REAL pipeline this session is running. "Voice mode is
+        # not working" is most often a provider that silently degraded, and
+        # this is where it becomes visible in the Diagnostics panel.
+        telemetry._emit_event(
+            "voice_session_start",
+            message=(
+                f"STT={'deepgram' if bundle.stt else 'DISABLED'} "
+                f"LLM={type(bundle.llm).__name__ if bundle.llm else 'DISABLED'}"
+                f"{'(chain of %d)' % bundle.llm.chain_size if isinstance(bundle.llm, FallbackLLM) else ''} "
+                f"TTS={'cartesia' if bundle.tts else 'DISABLED'} "
+                f"room={room_name}"
+            ),
+        )
+        for problem in bundle.problems:
+            telemetry._emit_event(
+                "voice_provider_problem",
+                level="error",
+                message=problem,
+            )
+
         async def _backchannel_loop() -> None:
             try:
                 while True:
@@ -1526,7 +1582,25 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             except Exception:  # noqa: BLE001 — cues never kill sessions
                 logger.exception("Backchannel loop failed")
 
+        async def _telemetry_loop() -> None:
+            # Batch-flush pipeline events to the backend so the Diagnostics
+            # panel shows STT/TTS/LLM activity live. Failures are swallowed:
+            # telemetry must never disturb a live call.
+            try:
+                while True:
+                    await asyncio.sleep(1.0)
+                    pending = list(telemetry._pending_events)
+                    if not pending:
+                        continue
+                    telemetry._pending_events.clear()
+                    await backend.post_telemetry(pending)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — diagnostics never kill a call
+                logger.exception("Telemetry loop failed")
+
         backchannel_task = asyncio.ensure_future(_backchannel_loop())
+        telemetry_task = asyncio.ensure_future(_telemetry_loop())
 
         if not await _is_connected(ctx):
             await ctx.connect()
@@ -1551,9 +1625,16 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         task = locals().get("backchannel_task")
         if task is not None:
             task.cancel()
+        telemetry_task = locals().get("telemetry_task")
+        if telemetry_task is not None:
+            telemetry_task.cancel()
         if telemetry is not None:
             try:
-                await telemetry.flush_pending()
+                # Send whatever is still buffered before the client closes.
+                pending = list(telemetry._pending_events)
+                telemetry._pending_events.clear()
+                if pending:
+                    await backend.post_telemetry(pending)
             except Exception:
                 logger.exception("Final telemetry flush failed")
         await backend.aclose()

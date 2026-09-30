@@ -1,4 +1,4 @@
-"""Text-path robustness: pseudo tool-call markup + Groq 429 retry."""
+﻿"""Text-path robustness: pseudo tool-call markup + Groq 429 retry."""
 from __future__ import annotations
 
 import asyncio
@@ -469,6 +469,208 @@ def test_shared_quota_skips_the_rest_of_that_provider(flaky_client, monkeypatch)
     assert bearers == ["Bearer k1", "Bearer ck1"]
 
 
+def test_provider_handoff_brief_is_only_injected_on_a_real_switch() -> None:
+    from app.routers.playground import _provider_handoff_block
+
+    captured = [{"field_name": "reason_for_absence", "field_value": "fever"}]
+    turns = ["caller: yes", "agent: noted, when is he back?"]
+    # Same provider serving the next turn: nothing to bridge.
+    assert _provider_handoff_block(("groq", "qwen"), ("groq", "qwen"), captured, turns) is None
+    # First turn of a call: no predecessor.
+    assert _provider_handoff_block(None, ("groq", "qwen"), captured, turns) is None
+    block = _provider_handoff_block(("groq", "qwen"), ("gemini", "flash"), captured, turns)
+    assert block is not None
+    lowered = block.lower()
+    assert "do not introduce yourself again" in lowered
+    assert "reason_for_absence=fever" in block
+    assert "caller: yes" in block
+    assert "groq" in block and "gemini" in block
+
+
+def test_chain_fails_over_and_hands_over_context(flaky_client):
+    """Groq is rate limited, the fallback serves the turn, and the fallback
+    request carries a continuity brief naming what was already captured."""
+    from app.config import Settings as _S
+    from app.routers.playground import _groq_chat
+
+    async def scenario() -> None:
+        client = flaky_client
+        token, _ = register(client)
+        start_session(client, token)
+        _FlakyAsyncClient.planned = [
+            _FlakyResponse(429, {"error": {"message": "Rate limit reached ... on tokens per minute (TPM): Limit 8000"}}),
+            _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "noted"}}]}),
+        ]
+        _FlakyAsyncClient.requests = []
+        settings = _S(
+            groq_api_key="k1",
+            llm_fallback_chain="gemini|https://x/v1|gk|gemini-flash-latest",
+            database_url="sqlite://",
+            _env_file=None,
+        )
+        message = await _groq_chat(
+            settings,
+            [{"role": "system", "content": "sys"}, {"role": "user", "content": "when is he back?"}],
+            previous_provider=("groq", "qwen/qwen3.8-27b"),
+            captured=[{"field_name": "reason_for_absence", "field_value": "fever"}],
+            recent_turns=["caller: he has a fever"],
+        )
+        assert message["content"] == "noted"
+        assert message["served_by"] == {"provider": "gemini", "model": "gemini-flash-latest"}
+        fallback_request = _FlakyAsyncClient.requests[-1]["json"]
+        first = fallback_request["messages"][0]
+        assert first["role"] == "system"
+        assert "CONTINUITY" in first["content"]
+        assert "reason_for_absence=fever" in first["content"]
+        # The original system prompt must still be present underneath it.
+        assert any(m.get("content") == "sys" for m in fallback_request["messages"])
+
+    asyncio.run(scenario())
+
+
+def test_serving_provider_is_persisted_for_the_next_turn(groq_client, session_factory):
+    """The handoff only works if the next turn knows who served this one."""
+    from sqlalchemy import select
+
+    from app.models import Call
+    from test_playground_text import chat, script, start_session
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(chat("Noted."))
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "sick"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        call = db.get(Call, call_id)
+        assert call.context.get("llm_provider") == {
+            "provider": "groq",
+            "model": "openai/gpt-oss-20b",
+        }
+
+
+def test_voice_worker_events_land_in_the_diagnostics_feed(groq_client):
+    """The worker posts STT/TTS/LLM events from another process; the panel only
+    works if they arrive here."""
+    token, _ = register(groq_client)
+    groq_client.post("/api/playground/events", headers=auth_headers(token))
+    resp = groq_client.post(
+        "/internal/telemetry/events",
+        json={
+            "events": [
+                {
+                    "kind": "voice_session_start",
+                    "provider": "deepgram",
+                    "message": "STT=deepgram LLM=FallbackLLM TTS=cartesia",
+                    "call_id": 77,
+                },
+                {
+                    "kind": "stt_final",
+                    "provider": "deepgram",
+                    "message": "transcribed: 'sick leave'",
+                    "call_id": 77,
+                },
+                {"kind": "voice_provider_problem", "level": "error", "message": "DEEPGRAM_API_KEY missing"},
+                "not-a-dict",
+            ]
+        },
+        headers={"X-Internal-Token": "test_internal_token"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["recorded"] == 3
+
+    feed = groq_client.get("/api/playground/events?since=0", headers=auth_headers(token)).json()
+    kinds = {e["kind"] for e in feed["events"]}
+    assert "stt_final" in kinds
+    assert "voice_session_start" in kinds
+    assert any(e["level"] == "error" for e in feed["events"])
+
+
+def test_voice_worker_events_require_the_internal_token(groq_client):
+    resp = groq_client.post(
+        "/internal/telemetry/events", json={"events": [{"kind": "stt_final"}]}
+    )
+    assert resp.status_code == 401
+
+
+def test_short_date_answer_is_captured_even_when_another_field_lands(
+    groq_client, session_factory
+):
+    """Live regression: the parent said "2nd oct" and the return date was lost.
+
+    Two separate bugs were involved. The backstop was gated on "the model
+    recorded nothing this turn", but this turn ALSO carried a recorded field,
+    so the safety net was suppressed; and a short date answer contains none of
+    the field's words, so word overlap alone could not match it either.
+    """
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+    from test_playground_text import chat, script, start_session, tool_call
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        # The model records a different field this turn and says nothing else.
+        tool_call(
+            "record_extracted_field",
+            {"field_name": "is_sick_leave", "value": "yes", "confidence": 0.9},
+        ),
+        chat("Thanks."),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "2nd oct"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    names = [f["field_name"] for f in resp.json()["extracted_fields"]]
+    assert "expected_return_date" in names, names
+    with session_factory() as db:
+        rows = db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call_id)
+        ).all()
+        stored = {r.field_name: r.field_value for r in rows}
+    assert stored.get("expected_return_date") == "2nd oct"
+    # The model's own record must not be overwritten by the backstop.
+    assert stored.get("is_sick_leave") == "yes"
+
+
+def test_backstop_never_overwrites_a_model_recorded_field(groq_client, session_factory):
+    from sqlalchemy import select
+
+    from app.models import ExtractedField
+    from test_playground_text import chat, script, start_session, tool_call
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(
+        tool_call(
+            "record_extracted_field",
+            {"field_name": "reason_for_absence", "value": "sick leave", "confidence": 0.9},
+        ),
+        chat("Thanks."),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "sick leave on monday"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        rows = db.scalars(
+            select(ExtractedField).where(ExtractedField.call_id == call_id)
+        ).all()
+        stored = {r.field_name: r.field_value for r in rows}
+    assert stored["reason_for_absence"] == "sick leave"
+
+
 def test_diagnostics_reports_chain_and_events_without_keys(groq_client):
     """The operator's verification aid: what is configured, which provider
     served, what fell back. It must never leak a key."""
@@ -735,4 +937,5 @@ def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monke
         assert bearers == ["Bearer k1"] * 3 + ["Bearer k2"]
     _FlakyAsyncClient.planned = []
     _FlakyAsyncClient.requests = []
+
 

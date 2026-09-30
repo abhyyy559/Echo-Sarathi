@@ -78,6 +78,7 @@ export default function LatencyPanel({ turns, summary }) {
                     {m.label}
                   </th>
                 ))}
+                <th>Served by</th>
               </tr>
             </thead>
             <tbody>
@@ -117,6 +118,14 @@ export default function LatencyPanel({ turns, summary }) {
                         </td>
                       );
                     })}
+                    <td className="nowrap cell-strong">
+                      {/* Which model actually produced this reply. Failover is
+                          invisible without it, and a suspiciously fast answer
+                          from an unnamed model is not verifiable. */}
+                      {t.served_by?.model || t.served_by?.provider || (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
             </tbody>

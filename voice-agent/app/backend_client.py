@@ -8,6 +8,7 @@ Endpoints consumed (frozen contract, see
 - ``POST /internal/calls/{call_id}/extracted-fields``  body: JSON array
 - ``POST /internal/calls/{call_id}/activity``            body: JSON object
 - ``POST /internal/calls/{call_id}/complete``          body: JSON object
+- ``POST /internal/telemetry/events``                   body: JSON object (diagnostics feed)
 
 All requests carry the ``X-Internal-Token`` header. Post-style calls are
 best-effort: failures are logged and reported via a ``False`` return value so
@@ -193,6 +194,26 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("post_complete failed for call %s: %s", call_id, exc)
+            return False
+        return True
+
+    async def post_telemetry(self, events: list[Mapping[str, Any]]) -> bool:
+        """Send pipeline events to the backend Diagnostics feed.
+
+        Best effort and never raises: losing telemetry must never break a live
+        call. This is what makes a voice failure diagnosable from the
+        playground UI instead of from docker logs.
+        """
+        if not events:
+            return True
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/internal/telemetry/events",
+                json={"events": [dict(e) for e in events]},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("post_telemetry failed (%d events): %s", len(events), exc)
             return False
         return True
 
