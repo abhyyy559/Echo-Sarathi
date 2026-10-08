@@ -385,6 +385,11 @@ async def vobiz_media(websocket: WebSocket) -> None:
     drains: list[asyncio.Task[None]] = []
     seen_tracks: set[Any] = set()
     room_gone = asyncio.Event()
+    # Outbound-audio diagnostics for this call leg (what the CALLER hears):
+    # how many agent tracks were drained, per-track input rates, queue drops,
+    # and output peak. Logged once at teardown - levels and rates, never
+    # content - so the next "noisy call" report comes with numbers.
+    drain_stats: dict[str, Any] = {}
 
     def _on_frame(
         track: Any, _publication: Any = None, _participant: Any = None
@@ -393,7 +398,7 @@ async def vobiz_media(websocket: WebSocket) -> None:
         if key in seen_tracks:
             return
         seen_tracks.add(key)
-        drains.append(asyncio.ensure_future(drain_track(track, queue)))
+        drains.append(asyncio.ensure_future(drain_track(track, queue, drain_stats)))
 
     def _on_room_disconnected(_room: Any = None) -> None:
         room_gone.set()
@@ -434,6 +439,19 @@ async def vobiz_media(websocket: WebSocket) -> None:
         for task in (*tasks, *drains):
             task.cancel()
         await asyncio.gather(*tasks, *drains, return_exceptions=True)
+        # Outbound verdict (what the caller heard): tracks>1 means two audio
+        # sources were mixed into one leg (echo/garble); drops>0 means gaps
+        # and crackle; out_peak near 32767 means the agent's TTS is clipping
+        # into mu-law (harsh distortion). in_rates shows the resample path.
+        logger.info(
+            "vobiz outbound audio call=%s tracks=%s frames_in=%s drops=%s in_rates=%s out_peak=%s",
+            call_pk,
+            drain_stats.get("tracks", 0),
+            drain_stats.get("frames_in", 0),
+            drain_stats.get("drops", 0),
+            sorted(drain_stats.get("in_rates") or []),
+            drain_stats.get("out_peak", 0),
+        )
         try:
             await room.disconnect()
         except Exception:  # noqa: BLE001

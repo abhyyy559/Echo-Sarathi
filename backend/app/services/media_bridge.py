@@ -70,21 +70,37 @@ def verify_bridge_token(token: Any, call_id: Any, secret: str) -> bool:
     return hmac.compare_digest(presented, build_bridge_token(call_id, secret))
 
 
-async def drain_track(track: Any, queue: Any) -> None:
+async def drain_track(track: Any, queue: Any, stats: Any = None) -> None:
     """Forward one subscribed remote audio track into the bridge queue.
 
     Resamples to 8 kHz with a proper low-pass (not naive decimation) and
     encodes to mu-law; drops frames when the queue is full (live caller
     audio wins over stale backlog). Always ends by putting the end-of-stream
     sentinel.
+
+    ``stats`` (optional dict) collects per-track diagnostics the bridge logs
+    per call: frames in, queue-full drops, input sample rates seen, and the
+    output PCM peak. This is how a "noisy call" gets debugged without
+    recording anyone: levels and rates, never content.
     """
+    import audioop
+    import logging
+
     from livekit import rtc
 
     from app.services.g711 import PcmResampler, pcm16_to_ulaw
 
+    logger = logging.getLogger("app.services.media_bridge")
     audio_stream = rtc.AudioStream(track)
     resampler: Any = None
     last_rate = 0
+    if stats is not None:
+        stats.setdefault("tracks", 0)
+        stats["tracks"] += 1
+        stats.setdefault("frames_in", 0)
+        stats.setdefault("drops", 0)
+        stats.setdefault("in_rates", set())
+        stats.setdefault("out_peak", 0)
     try:
         async for event in audio_stream:
             pcm = bytes(event.frame.data)
@@ -92,10 +108,25 @@ async def drain_track(track: Any, queue: Any) -> None:
             if resampler is None or in_rate != last_rate:
                 resampler = PcmResampler(in_rate, 8000)
                 last_rate = in_rate
+                logger.info(
+                    "drain resampling %d Hz -> 8000 Hz (track %s)",
+                    in_rate, getattr(track, "sid", "?"),
+                )
             pcm = resampler.convert(pcm)
+            if stats is not None:
+                stats["frames_in"] += 1
+                stats["in_rates"].add(in_rate)
+                try:
+                    peak = audioop.max(pcm, 2)
+                    if peak > stats["out_peak"]:
+                        stats["out_peak"] = peak
+                except Exception:  # noqa: BLE001 — stats never break audio
+                    pass
             try:
                 queue.put_nowait(pcm16_to_ulaw(pcm))
             except asyncio.QueueFull:
+                if stats is not None:
+                    stats["drops"] += 1
                 pass  # drop backlog: live caller audio wins over stale frames
     finally:
         await audio_stream.aclose()
