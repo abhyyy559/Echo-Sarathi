@@ -7,7 +7,7 @@ import '../od-roadmap.css';
  * All state local; no backend calls.
  */
 const STEPS = [
-  { t: 'Create a campaign', you: 'Name your campaign — “Aug absence sweep” is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
+  { t: 'Create a campaign', you: 'Name your campaign — “Aug absence sweep” is enough.', sarati: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
   { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarati: 'Parses it locally, checks every number’s format, flags bad rows red before import.', tip: 'Extra columns like student_name become words the agent can say naturally.' },
   { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarati: 'Turns that list into a natural conversation plan — not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
   { t: 'Launch', you: 'Press launch inside the calling window (9 AM – 9 PM IST).', sarati: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window — nobody gets a midnight call.' },

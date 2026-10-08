@@ -33,7 +33,8 @@ export default function PricingPage() {
     return () => io.disconnect();
   }, []);
 
-  const cost = (minutes * 0.1).toFixed(2);
+  // Billed in rupees: ₹8.50/min (≈ $0.10 × 85). Indian digit grouping.
+  const cost = (minutes * 8.5).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
   return (
     <div className="od-pricing" ref={rootRef}>
@@ -77,7 +78,7 @@ export default function PricingPage() {
         <div className="grid">
           <div className="pcard reveal">
             <div className="tier"><i></i>Free</div>
-            <div className="pline"><span className="amt">$0</span><span className="unit">forever</span></div>
+            <div className="pline"><span className="amt">₹0</span><span className="unit">forever</span></div>
             <p className="ptag">One agent, real conversations, real structured data. Everything you need to hear the difference before spending anything.</p>
             <ul className="feats">
               <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg><span><b>1 voice agent</b> with full builder access</span></li>
@@ -92,14 +93,14 @@ export default function PricingPage() {
           <div className="pcard featured reveal" style={{ transitionDelay: '.12s' }}>
             <span className="rec"><i></i>Recommended</span>
             <div className="tier"><i style={{ background: 'var(--pearl)' }}></i>Pay as you go</div>
-            <div className="pline"><span className="amt">$0.10</span><span className="unit">per minute · billed by the second</span></div>
+            <div className="pline"><span className="amt">₹8.50</span><span className="unit">per minute · billed by the second</span></div>
             <p className="ptag">Unlimited agents and campaigns. Metered to the second — watch spend tick live while your campaigns run.</p>
             <div className="est">
               <span className="est-h">Estimate your month</span>
               <input type="range" min="100" max="5000" step="50" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} aria-label="Estimated minutes per month" />
               <div className="est-row">
-                <span className="est-min"><b>{minutes.toLocaleString()}</b> minutes / mo</span>
-                <span className="est-cost"><span>${cost}</span> <small>/ month est.</small></span>
+                <span className="est-min"><b>{minutes.toLocaleString('en-IN')}</b> minutes / mo</span>
+                <span className="est-cost"><span>₹{cost}</span> <small>/ month est.</small></span>
               </div>
             </div>
             <ul className="feats">
@@ -122,7 +123,7 @@ export default function PricingPage() {
 
         <div className="mini-cta reveal">
           <h2>Start free. Scale when it works.</h2>
-          <p>Create an agent, run your first calls on us, and only pay when you take it live — $0.10 per minute, metered to the second, in dollars.</p>
+          <p>Create an agent, run your first calls on us, and only pay when you take it live — ₹8.50 per minute, metered to the second, billed in rupees.</p>
           <div className="btns">
             <Link to="/login" className="btn-p">Start free</Link>
             <Link to="/#demo" className="btn-g">See the demo</Link>
