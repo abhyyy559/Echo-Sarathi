@@ -127,7 +127,12 @@ def test_preemptive_off_for_phone_rooms(monkeypatch) -> None:
 
     pipeline_module._build_agent_session(bundle, preemptive_generation=False)
     turn_handling = captured["turn_handling"]
-    assert not turn_handling.get("preemptive_generation")
+    # Explicitly disabled: omitting the key fills the SDK default, which is
+    # enabled=True (speculative generation on PSTN rooms). The mapping form
+    # is required - a plain bool raises TypeError on 1.8+.
+    preemptive = turn_handling.get("preemptive_generation")
+    assert isinstance(preemptive, dict), preemptive
+    assert preemptive.get("enabled") is False, preemptive
     pipeline_module._build_agent_session(bundle)
     # Must match the helper output after the installed SDK's own filtering:
     # 1.8+ carries the options mapping, 1.7 drops the unknown key entirely.

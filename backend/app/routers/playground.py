@@ -271,9 +271,21 @@ def _backfill_grounded_fields(
             if date_shaped:
                 pass  # a date-shaped answer to a date field is self-evident
             elif len(words & cue_words) < 2:
-                # One generic word ("college", "today") is not evidence. The
-                # single-word rule stored explanations as flag values.
-                continue
+                # Synonym escape hatch: a plain-spoken answer ("sick") shares
+                # no words with reason_for_absence's cues but IS the answer.
+                # One synonym hit upgrades a 0/1-overlap sentence to evidence.
+                name_stems = {
+                    w.lower()
+                    for w in re.split(r"[^a-z0-9]+", field_name)
+                    if len(w) > 3
+                }
+                synonyms = set()
+                for stem in name_stems:
+                    synonyms |= _FIELD_SYNONYMS.get(stem, frozenset())
+                if not (synonyms and (words & synonyms)):
+                    # One generic word ("college", "today") is not evidence. The
+                    # single-word rule stored explanations as flag values.
+                    continue
             value = sentence
             if "date" in field_type:
                 # Store the resolved date when the answer is explicit ("2nd
@@ -405,10 +417,6 @@ def _build_short_opening(
         parts.append(f"Are you {student}'s parent?")
     else:
         parts.append("May I know who I'm speaking with?")
-    opening = " ".join(p for p in parts if p)
-    # No unsubstituted [...] may ever be spoken; apply_token_substitution
-    # already stripped them, this is belt-and-braces for merged text.
-    return re.sub(r"\[[^\]]*\]", "", opening).strip()
     opening = " ".join(p for p in parts if p)
     # No unsubstituted [...] may ever be spoken; apply_token_substitution
     # already stripped them, this is belt-and-braces for merged text.
@@ -1326,6 +1334,30 @@ def _message_or_raise(response: Any, served_by: Optional[tuple[str, str]] = None
     return message
 
 
+#: Providers proven plan/billing-exhausted, per call. _groq_chat is invoked
+#: fresh every turn, so a function-local set cannot skip anything: a
+#: zero-balance DeepSeek would 402 identically on every turn (~3s burned per
+#: turn to re-learn it). Keyed by call_id with a TTL so ended calls stop
+#: occupying memory; single-process backend, so module state is sufficient.
+_EXHAUSTED_PROVIDERS: dict[int, tuple[float, set[str]]] = {}
+_EXHAUSTED_TTL_S = 2 * 3600
+
+
+def _session_exhausted(call_id: Optional[int]) -> set[str]:
+    """Live set of providers to skip for this call (mutate to record more)."""
+    if call_id is None:
+        return set()
+    now = time.monotonic()
+    stale = [cid for cid, (stamp, _) in _EXHAUSTED_PROVIDERS.items() if now - stamp > _EXHAUSTED_TTL_S]
+    for cid in stale:
+        del _EXHAUSTED_PROVIDERS[cid]
+    entry = _EXHAUSTED_PROVIDERS.get(call_id)
+    if entry is None:
+        entry = (now, set())
+        _EXHAUSTED_PROVIDERS[call_id] = entry
+    return entry[1]
+
+
 async def _groq_chat(
     settings: Settings,
     messages: list[dict[str, Any]],
@@ -1338,12 +1370,12 @@ async def _groq_chat(
 ) -> dict[str, Any]:
     """Chat-completions round trip over the configured provider chain.
 
-    Members are tried in order (Groq keys first, then LLM_FALLBACK_CHAIN,
-    OpenAI, Cerebras, OpenRouter). Within a member, 429 gets a short bounded
-    backoff; a member that stays rate-limited or errors is abandoned and the
-    identical request moves to the next provider. This is what stops the agent
-    going silent after 4-6 turns on a single free-tier key — the caller only
-    sees an error when the ENTIRE chain is exhausted.
+    Members are tried in owner order (explicit LLM_FALLBACK_CHAIN entries,
+    DeepSeek, Groq keys, then the remaining shorthands). Within a member, 429
+    gets a short bounded backoff; a member that stays rate-limited or errors
+    is abandoned and the identical request moves to the next provider. This is
+    what stops the agent going silent after 4-6 turns on a single free-tier
+    key — the caller only sees an error when the ENTIRE chain is exhausted.
     """
     body = _groq_request_body(settings, messages)
     if not include_tools:
@@ -1357,7 +1389,9 @@ async def _groq_chat(
         )
     last_error_text = ""
     rate_limited = False
-    exhausted_providers: set[str] = set()
+    # Session-persistent: a provider proven billing-dead stays skipped for the
+    # rest of THIS call, not just this turn (see _session_exhausted).
+    exhausted_providers = _session_exhausted(call_id)
     # Operators watch this in the playground Diagnostics panel to see WHICH
     # provider served the turn and WHY it moved on, live.
     telemetry.record(
@@ -1482,6 +1516,28 @@ async def _groq_chat(
                     )
                     if response.status_code == 200:
                         return _message_or_raise(response, served_by=(name, model))
+                # Hard-quota FIRST, on ANY status: a DeepSeek 402 ("Insufficient
+                # Balance") used to hit the `!= 429` break below and never reach
+                # classification, so it was retried every turn. Gemini's quota
+                # 429 also matches the shared markers ("requests per minute"),
+                # so checking hard first fixes its misclassification too.
+                if _is_hard_quota_exhausted(getattr(response, "text", "")):
+                    # Plan/quota exhausted: retrying cannot help. Skip the whole
+                    # provider for the rest of the SESSION, not just this turn:
+                    # a zero-balance DeepSeek 402s identically on every turn,
+                    # and paying ~3s per turn to re-learn that would wreck a
+                    # call's latency for zero information.
+                    exhausted_providers.add(name)
+                    telemetry.record(
+                        "llm_quota_exhausted",
+                        level="error",
+                        provider=name,
+                        model=model,
+                        status=response.status_code,
+                        message="provider quota/plan exhausted; not retrying",
+                        call_id=call_id,
+                    )
+                    break
                 if response.status_code != 429:
                     break
                 if _is_shared_quota_exhausted(getattr(response, "text", "")):
@@ -1500,23 +1556,6 @@ async def _groq_chat(
                         status=429,
                         message="organization token bucket exhausted; this "
                         "provider's remaining keys are skipped (they share it)",
-                        call_id=call_id,
-                    )
-                    break
-                if _is_hard_quota_exhausted(getattr(response, "text", "")):
-                    # Plan/quota exhausted: retrying cannot help. Skip the whole
-                    # provider for the rest of the SESSION, not just this turn:
-                    # a zero-balance DeepSeek 402s identically on every turn,
-                    # and paying ~3s per turn to re-learn that would wreck a
-                    # call's latency for zero information.
-                    exhausted_providers.add(name)
-                    telemetry.record(
-                        "llm_quota_exhausted",
-                        level="error",
-                        provider=name,
-                        model=model,
-                        status=response.status_code,
-                        message="provider quota/plan exhausted; not retrying",
                         call_id=call_id,
                     )
                     break
@@ -1575,12 +1614,18 @@ async def _groq_chat(
                 wait_before_retry_ms,
             )
             await asyncio.sleep(wait_before_retry_ms / 1000.0)
+            # The continuity brief must survive the wait: without
+            # previous_provider/captured/recent_turns the retry can restart
+            # the conversation (re-introduce/re-ask) after failover moved it.
             return await _groq_chat(
                 settings,
                 messages,
                 include_tools=include_tools,
                 call_id=call_id,
                 wait_before_retry_ms=0,
+                previous_provider=previous_provider,
+                captured=captured,
+                recent_turns=recent_turns,
             )
         telemetry.record(
             "llm_chain_exhausted",
@@ -1613,6 +1658,19 @@ _GROUNDING_STOPWORDS = frozenset(
     "this these those there here what when where which who whom whose how why "
     "do does did done am s t ve re ll m d don doesn isn wasn aren".split()
 )
+#: Field-name stems whose plain-spoken answers share NO words with the field
+#: name or description. "Sick" answers reason_for_absence, but neither
+#: "reason" nor "absence" appears in "he is feeling sick today", so the
+#: 2-word overlap rule silently drops the exact case the backstop exists for.
+#: A synonym hit counts as one overlap word (still needs the sentence to be
+#: an answer, never a question - enforced at the call site).
+_FIELD_SYNONYMS: dict[str, frozenset[str]] = {
+    "reason": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
+    "absence": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
+    "absent": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
+    "sick": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
+    "leave": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
+}
 # A value counts as a resolved date (exempt from word-overlap grounding)
 # when it names an actual day: digits ("30", "2026-09-30"), month names, or
 # weekday/today/tomorrow tokens. Bare spans like "next week" or "one month"
@@ -1651,6 +1709,44 @@ _RELATIVE_DAYS_RE = re.compile(
     re.IGNORECASE,
 )
 _TOMORROW_RE = re.compile(r"\btomorrow\b|\btmrw\b", re.IGNORECASE)
+#: Date-shaped cue on the CALLER's side. Deliberately stricter than
+#: _DATE_LIKE_RE (which matches any digit): caller_text spans the WHOLE call,
+#: so a bare digit anywhere ("10-B", "class 5", a phone fragment) used to
+#: exempt every later invented date. A cue must look like an actual date:
+#: explicit day-month, day count, tomorrow/today, weekday, or ISO form.
+_CALLER_DATE_CUE_RE = re.compile(
+    r"\b\d{1,2}(?:st|nd|rd|th)?\s*(?:of\s+)?(?:january|february|march|april|may|"
+    r"june|july|august|september|october|november|december|jan|feb|mar|apr|jun|"
+    r"jul|aug|sep|sept|oct|nov|dec)\b"
+    r"|\b(?:after|in|within|next)\s+\d{1,3}\s+days?\b"
+    r"|\b\d{1,3}\s+days?\s+(?:later|from\s+now|hence)\b"
+    r"|\btomorrow\b|\btmrw\b|\btoday\b"
+    r"|\bmonday\b|\btuesday\b|\bwednesday\b|\bthursday\b|\bfriday\b|\bsaturday\b|\bsunday\b"
+    r"|\b\d{4}-\d{2}-\d{2}\b",
+    re.IGNORECASE,
+)
+
+
+def _field_is_date_typed(db: Session, call: Call, field_name: str) -> bool:
+    """True when the field is date-typed by schema OR by name.
+
+    Both writers (model tool calls and the deterministic backstop) must agree
+    on what "date-typed" means, or the same field stores raw phrases from one
+    path and ISO dates from the other. Schema type wins; the name fallback
+    covers configs whose schema omits explicit types.
+    """
+    try:
+        version = (
+            db.get(AgentVersion, call.agent_version_id)
+            if call.agent_version_id
+            else None
+        )
+        spec = (getattr(version, "extraction_schema", None) or {}).get(str(field_name))
+        if isinstance(spec, dict) and str(spec.get("type") or "").lower() == "date":
+            return True
+    except Exception:  # noqa: BLE001 — normalization is best-effort
+        pass
+    return "date" in str(field_name).lower()
 
 
 def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[str]:
@@ -1731,8 +1827,9 @@ def _value_grounded_in_transcript(
     if _DATE_LIKE_RE.search(text):
         # Resolved dates are only exempt when the caller actually gave a date
         # to resolve. "tomorrow at 8am" recorded against "hlooo" is pure
-        # invention, so the exemption requires a date-ish cue on their side.
-        if _DATE_LIKE_RE.search(caller_text):
+        # invention, so the exemption requires a date-shaped cue on their
+        # side - a bare digit ("10-B", "class 5") is NOT a date.
+        if _CALLER_DATE_CUE_RE.search(caller_text):
             return True, ""
         return (
             False,
@@ -1819,8 +1916,11 @@ def _execute_text_tool(
         stored_value = None if value is None else str(value)
         # Normalize date-typed fields at write time so the export agrees with
         # what was spoken, no matter which path recorded it (model tool call
-        # or deterministic backstop). Only resolvable shapes change.
-        if stored_value and "date" in str(field_name).lower():
+        # or deterministic backstop). Only resolvable shapes change. Keyed on
+        # the SCHEMA type, not the field name: a date-typed field whose name
+        # lacks "date" (e.g. expected_return) must normalize identically on
+        # both writers, or the two paths store different shapes.
+        if stored_value and _field_is_date_typed(db, call, field_name):
             normalized = _normalize_explicit_date(stored_value, utcnow().date())
             if normalized:
                 stored_value = normalized
@@ -1837,7 +1937,7 @@ def _execute_text_tool(
         # disagree about the value ("tomorrow" in JSON, an ISO date in the
         # export would be a real bug for anyone scripting the API).
         reported = None if value is None else str(value)
-        if reported and "date" in str(field_name).lower():
+        if reported and _field_is_date_typed(db, call, field_name):
             normalized = _normalize_explicit_date(reported, utcnow().date())
             if normalized:
                 reported = normalized
@@ -2151,13 +2251,18 @@ async def _run_agent_turn(
         except HTTPException:
             message = {}
         groq_call_ms.append((time.monotonic() - call_started) * 1000.0)
-        assistant_text = str(message.get("content") or "").strip()
+        # The tool loop may already have banked a real spoken reply (content
+        # that rode along with tool calls). Never overwrite it with this
+        # round's short ack - "Thanks - noted." replacing a substantive answer
+        # is exactly the truncation this fallback was built to prevent.
         if not assistant_text:
-            assistant_text = "Thanks - noted."
-            logger.warning(
-                "text_turn call=%s: no speech after tool rounds; using fallback line",
-                call.id,
-            )
+            assistant_text = str(message.get("content") or "").strip()
+            if not assistant_text:
+                assistant_text = "Thanks - noted."
+                logger.warning(
+                    "text_turn call=%s: no speech after tool rounds; using fallback line",
+                    call.id,
+                )
 
     # Pseudo tool calls: the model sometimes emits <tool_call> XML as text
     # instead of a real function call (seen live: the field was lost and raw
@@ -2194,11 +2299,30 @@ async def _run_agent_turn(
         and _is_closing_line(assistant_text)
         and not done
     ):
+        # Summarize ALL known required fields (DB + this turn), not just
+        # this turn's: fields captured on earlier turns would otherwise leave
+        # an empty summary on exactly the calls that closed cleanly.
+        known_rows = {
+            f.field_name: f.field_value
+            for f in db.scalars(
+                select(ExtractedField).where(ExtractedField.call_id == call.id)
+            ).all()
+        }
+        for item in extracted_now:
+            if item.get("field_name"):
+                known_rows[str(item.get("field_name"))] = item.get("field_value")
         summary = "; ".join(
-            f"{item.get('field_name')}={item.get('field_value')}"
-            for item in extracted_now
+            f"{name}={known_rows.get(name)}" for name in required
         )
         done = True
+        # Finalize the row exactly like end_call: without this the session
+        # stays in_progress forever and accepts more turns after goodbye.
+        now = utcnow()
+        call.summary = summary or None
+        call.status = "completed"
+        call.ended_at = now
+        if call.started_at is not None:
+            call.duration_seconds = (now - call.started_at).total_seconds()
         logger.info(
             "deterministic close call=%s fields=%s", call.id, [n for n in required]
         )

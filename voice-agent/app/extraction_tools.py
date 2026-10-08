@@ -50,19 +50,32 @@ PLACEHOLDER_VALUES: frozenset[str] = frozenset(
     {
         "",
         "unknown",
+        "unknown.",
         "n/a",
         "na",
         "none",
+        "none.",
         "null",
         "not sure",
         "not sure.",
         "unsure",
+        "unsure.",
         "i don't know",
+        "i don't know.",
         "i dont know",
+        "i dont know.",
         "don't know",
+        "don't know.",
         "dont know",
+        "dont know.",
+        "do not know",
+        "do not know.",
         "no idea",
+        "no idea.",
         "not provided",
+        "not provided.",
+        "no clue",
+        "no clue.",
         "-",
         "?",
     }
@@ -229,6 +242,10 @@ class ExtractionCoordinator:
                 reason=reason,
             )
         self.recorded[field_name] = {"value": value, "confidence": clamped}
+        # A later accepted value clears any earlier flag: without this the
+        # field is simultaneously "recorded" and "flagged" in diagnostics and
+        # end-call data (placeholder first, real answer second).
+        self.flagged_fields.pop(field_name, None)
         return RecordResult(
             field_name=field_name,
             value=value,
@@ -272,6 +289,19 @@ class VoiceAgentTools:
         # Latest final caller utterance, set by the pipeline on every turn.
         # Powers the transcript-grounding check below (M13).
         self.recent_caller_text: str = ""
+        # Rolling window of recent caller utterances. Grounding against ONLY
+        # the latest utterance falsely rejects a value stated two turns ago
+        # and recorded now ("fever" in turn 3, tool call in turn 5).
+        self.recent_caller_history: List[str] = []
+
+    def note_caller_text(self, transcript: str) -> None:
+        """Record one final caller utterance for grounding (keeps last 4)."""
+        text = str(transcript or "").strip()
+        if not text:
+            return
+        self.recent_caller_text = text
+        self.recent_caller_history.append(text)
+        del self.recent_caller_history[:-4]
 
     def _grounding_rejection(self, field_name: str, value: str) -> Optional[str]:
         """Reject model-called values with no transcript evidence (M13).
@@ -291,7 +321,13 @@ class VoiceAgentTools:
         }
         if not words:
             return None
-        caller_words = set(re.findall(r"[a-z0-9']+", recent.lower()))
+        # Evidence window, not just the latest utterance: the value may have
+        # been stated a turn or two before the model got around to recording
+        # it (slow turns, interruptions, back-to-back questions).
+        history = self.recent_caller_history or [recent]
+        caller_words = set()
+        for utter in history[-4:]:
+            caller_words.update(re.findall(r"[a-z0-9']+", str(utter).lower()))
         if words & caller_words:
             return None
         return f"value '{text}' for '{field_name}' was never stated by the caller."
@@ -363,6 +399,12 @@ class VoiceAgentTools:
             # exempt; empty recent text (offline tests) skips the check.
             grounded_reason = self._grounding_rejection(str(field_name), str(value))
             if grounded_reason is not None:
+                # Evict the banked value: record() already stored it, but the
+                # backend never receives it (we return below without posting).
+                # Leaving it banked creates a ghost - "Already recorded" in
+                # prompts and unfilled_required() both treat it as captured
+                # while nothing was ever persisted.
+                self._coordinator.recorded.pop(str(field_name), None)
                 return (
                     f"NOT RECORDED: {grounded_reason} Re-ask specifically, or "
                     f"record it once the caller actually states it."

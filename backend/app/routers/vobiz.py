@@ -309,20 +309,6 @@ async def vobiz_media(websocket: WebSocket) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    # H3: per-call bridge token minted at answer time. Reject strangers
-    # before the handshake (4403); empty internal token = warn + allow.
-    from app.services.media_bridge import verify_bridge_token
-
-    settings = websocket.app.state.settings
-    if not verify_bridge_token(
-        websocket.query_params.get("bridge_token"),
-        query_call_id,
-        settings.internal_api_token,
-    ):
-        logger.warning("vobiz media bridge rejected (bad token) call_id=%s", query_call_id)
-        await _close(4403)
-        return
-
     loop = asyncio.get_running_loop()
     deadline = loop.time() + HANDSHAKE_TIMEOUT_SECONDS
     start_call_id = ""
@@ -363,6 +349,23 @@ async def vobiz_media(websocket: WebSocket) -> None:
             await _close(4404)
             return
         call_pk = int(call.id)
+        # H3: per-call bridge token minted at answer time. Verified AFTER
+        # identity resolution (not before the handshake): the token is bound
+        # to the numeric call id, and checking it against an empty query id
+        # first made the provider_call_id fallback above unreachable (every
+        # WS without ?call_id= died with 4403). The start frame reveals
+        # nothing and grants nothing until this check passes.
+        from app.services.media_bridge import verify_bridge_token
+
+        settings = websocket.app.state.settings
+        if not verify_bridge_token(
+            websocket.query_params.get("bridge_token"),
+            call_pk,
+            settings.internal_api_token,
+        ):
+            logger.warning("vobiz media bridge rejected (bad token) call_id=%s", call_pk)
+            await _close(4403)
+            return
         contact = db.get(Contact, call.contact_id) if call.contact_id else None
         version_id = int(call.agent_version_id)
         contact_card: dict = {}
@@ -475,10 +478,27 @@ async def vobiz_media(websocket: WebSocket) -> None:
                     )
                     if after == before:
                         # Provider unreachable or still in flight: close out
-                        # locally rather than sticking forever.
-                        done_call.status = "completed"
-                        if done_call.ended_at is None:
-                            done_call.ended_at = utcnow()
+                        # locally rather than sticking forever. Never "completed"
+                        # here - an unconfirmed call is not a success. Answered
+                        # legs completed (a conversation happened); unanswered
+                        # legs go no_answer so the retry policy re-queues them
+                        # instead of stranding the contact in "calling".
+                        teardown_contact = db.get(Contact, done_call.contact_id) if done_call.contact_id else None
+                        teardown_status = "completed" if done_call.answered_at is not None else "no_answer"
+                        if teardown_contact is not None:
+                            end_call(
+                                db, done_call, teardown_contact, teardown_status,
+                                websocket.app.state.settings, now=utcnow(),
+                            )
+                        else:
+                            done_call.status = teardown_status
+                            if done_call.ended_at is None:
+                                done_call.ended_at = utcnow()
+                        log_call_event(
+                            db, done_call.id,
+                            f"media_teardown_provisional:{teardown_status}",
+                            {"provider_unreachable": True},
+                        )
                         db.commit()
         except Exception:  # noqa: BLE001 â€” finalize best-effort only
             logger.warning("finalize-on-close failed for call %s", call_pk, exc_info=True)
@@ -604,6 +624,17 @@ async def vobiz_status(
     mapped = VOBIZ_STATUS_MAP.get(raw_status, "")
     now = utcnow()
     contact = db.get(Contact, call.contact_id)
+    # Terminal states stick: provider webhooks can arrive out of order, and a
+    # late "answered"/"in-progress" or trailing Hangup must never resurrect a
+    # call that already ended truthfully (busy/no_answer reverted to
+    # in_progress corrupts reports and strands the contact in "calling").
+    if call.status in ("completed", "failed", "no_answer", "busy", "canceled"):
+        logger.info(
+            "vobiz status %r ignored: call %s already terminal (%s)",
+            raw_status, call.id, call.status,
+        )
+        db.commit()
+        return Response(status_code=200)
     if mapped == "in_progress":
         call.status = "in_progress"
         if call.answered_at is None:
@@ -614,12 +645,19 @@ async def vobiz_status(
         if call.status == "queued":
             call.status = mapped
     elif mapped in ("completed", "no_answer", "busy", "failed", "canceled"):
-        if call.status != "completed":
-            settings = request.app.state.settings
-            if contact is not None:
-                end_call(db, call, contact, mapped, settings, now=now)
-            else:
-                call.status = mapped
-                call.ended_at = now
+        # A bare Hangup (Event=Hangup with no CallStatus field) only proves
+        # the call ended, not its outcome: answered calls completed, but a
+        # call still queued/ringing was hung up before answer (no_answer).
+        # Without this, every unanswered hangup launders into "completed".
+        if raw_status == "hangup" and not any(
+            k in payload for k in ("CallStatus", "callStatus", "status", "Status")
+        ):
+            mapped = "completed" if call.status == "in_progress" else "no_answer"
+        settings = request.app.state.settings
+        if contact is not None:
+            end_call(db, call, contact, mapped, settings, now=now)
+        else:
+            call.status = mapped
+            call.ended_at = now
     db.commit()
     return Response(status_code=200)

@@ -98,3 +98,58 @@ def test_accepted_field_still_posted_and_recorded(fake_backend: Any) -> None:
     assert len(fake_backend.field_posts) == 1
     assert coordinator.recorded["reason_for_absence"]["value"] == "viral fever"
     assert "Recorded" in reply
+
+
+def test_period_terminated_hedges_are_placeholders(fake_backend: Any) -> None:
+    """The model emits "I don't know." with a period; without the dotted
+    variants the hedge banks as a fact."""
+    from app.extraction_tools import _is_placeholder
+
+    for hedge in ("unknown.", "i don't know.", "dont know.", "no idea.", "none."):
+        assert _is_placeholder(hedge) is True, hedge
+    coordinator, tools = _tools(fake_backend)
+    reply = asyncio.run(
+        tools.record_extracted_field("reason_for_absence", "I don't know.", 0.95)
+    )
+    assert fake_backend.field_posts == []
+    assert coordinator.recorded == {}
+    assert "NOT RECORDED" in reply
+
+
+def test_accepted_value_clears_earlier_flag(fake_backend: Any) -> None:
+    """Placeholder first, real answer second: the field must not stay
+    simultaneously recorded AND flagged."""
+    coordinator, tools = _tools(fake_backend)
+    asyncio.run(tools.record_extracted_field("reason_for_absence", "unknown", 0.9))
+    assert "reason_for_absence" in coordinator.flagged_fields
+    asyncio.run(tools.record_extracted_field("reason_for_absence", "viral fever", 0.95))
+    assert "reason_for_absence" not in coordinator.flagged_fields
+    assert coordinator.recorded["reason_for_absence"]["value"] == "viral fever"
+
+
+def test_grounding_rejection_evicts_banked_value(fake_backend: Any) -> None:
+    """A grounding-rejected value must not linger as a ghost in recorded:
+    prompts and unfilled_required() would treat it as captured while the
+    backend never received it."""
+    coordinator, tools = _tools(fake_backend)
+    tools.note_caller_text("yes, hello?")
+    reply = asyncio.run(
+        tools.record_extracted_field("reason_for_absence", "pneumonia", 0.95)
+    )
+    assert "NOT RECORDED" in reply
+    assert "reason_for_absence" not in coordinator.recorded
+    assert "reason_for_absence" in coordinator.unfilled_required()
+
+
+def test_grounding_uses_utterance_window_not_just_latest(fake_backend: Any) -> None:
+    """A value stated two turns ago and recorded now must ground: the check
+    spans the last 4 caller utterances, not only the latest."""
+    coordinator, tools = _tools(fake_backend)
+    tools.note_caller_text("he has had a fever since tuesday")
+    tools.note_caller_text("yes")
+    tools.note_caller_text("uh huh")
+    reply = asyncio.run(
+        tools.record_extracted_field("reason_for_absence", "fever", 0.9)
+    )
+    assert "Recorded" in reply
+    assert coordinator.recorded["reason_for_absence"]["value"] == "fever"

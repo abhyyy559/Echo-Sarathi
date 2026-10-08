@@ -218,6 +218,7 @@ export const api = {
   launchCampaign: (id) => apiFetch(`/api/campaigns/${id}/launch`, { method: 'POST' }),
   pauseCampaign: (id) => apiFetch(`/api/campaigns/${id}/pause`, { method: 'POST' }),
   cancelCampaign: (id) => apiFetch(`/api/campaigns/${id}/cancel`, { method: 'POST' }),
+  deleteCampaign: (id) => apiFetch(`/api/campaigns/${id}`, { method: 'DELETE' }),
   getCampaignDashboard: (id) => apiFetch(`/api/campaigns/${id}/dashboard`),
 
   importContacts: (campaignId, formData) =>

@@ -132,7 +132,15 @@ def test_turn_happy_path_persists_caller_and_agent_rows(groq_client, session_fac
     body = resp.json()
     assert body["reply_text"] == "Sorry to hear that. How long has he been unwell?"
     assert body["done"] is False
-    assert body["extracted_fields"] == []
+    # The caller's plain-spoken reason is backfilled ("fever" answers
+    # reason_for_absence via the synonym escape hatch).
+    assert body["extracted_fields"] == [
+        {
+            "field_name": "reason_for_absence",
+            "field_value": "My son was absent because he had a fever",
+            "confidence": 0.7,
+        }
+    ]
     assert body["turn_index"] == 1  # caller row at 0, agent row at 1
 
     # The Groq request carries the slim system prompt + history + the new turn.

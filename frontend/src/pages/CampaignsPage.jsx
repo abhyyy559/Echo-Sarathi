@@ -181,6 +181,18 @@ export default function CampaignsPage() {
                           Cancel
                         </button>
                       )}
+                      <button
+                        className="btn sm danger-outline"
+                        style={{ marginLeft: 6 }}
+                        title="Permanently delete this campaign and its contacts, calls, and transcripts"
+                        onClick={() => {
+                          if (window.confirm(`Delete campaign "${c.name}"? This removes its contacts, calls, transcripts, and extracted fields. Cannot be undone.`)) {
+                            act(c.id, api.deleteCampaign);
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 );

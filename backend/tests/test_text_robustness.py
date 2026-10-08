@@ -69,15 +69,21 @@ def test_pseudo_tool_call_recorded_and_scrubbed(groq_client, session_factory):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    # The pseudo tool call records is_sick_leave AND the backfill recovers
+    # reason_for_absence from "He is sick." via the synonym escape hatch.
     assert body["extracted_fields"] == [
-        {"field_name": "is_sick_leave", "field_value": "yes", "confidence": 0.95}
+        {"field_name": "is_sick_leave", "field_value": "yes", "confidence": 0.95},
+        {"field_name": "reason_for_absence", "field_value": "He is sick", "confidence": 0.7},
     ]
     assert "<tool_call>" not in body["reply_text"]
     with session_factory() as db:
         fields = db.scalars(
             select(ExtractedField).where(ExtractedField.call_id == call_id)
         ).all()
-        assert [(f.field_name, f.field_value) for f in fields] == [("is_sick_leave", "yes")]
+        assert [(f.field_name, f.field_value) for f in fields] == [
+            ("is_sick_leave", "yes"),
+            ("reason_for_absence", "He is sick"),
+        ]
         texts = [
             t.text
             for t in db.scalars(
@@ -299,12 +305,17 @@ def test_invented_value_refused_despite_high_confidence(groq_client, session_fac
         headers=auth_headers(token),
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["extracted_fields"] == []
+    # The invented date stays refused - but the genuinely stated reason is
+    # now backfilled via the synonym escape hatch ("sick" answers
+    # reason_for_absence despite sharing no cue words).
+    names = [f["field_name"] for f in resp.json()["extracted_fields"]]
+    assert "expected_return_date" not in names, names
+    assert "reason_for_absence" in names, names
     with session_factory() as db:
         rows = db.scalars(
             select(ExtractedField).where(ExtractedField.call_id == call_id)
         ).all()
-        assert [f.field_name for f in rows] == []
+        assert [f.field_name for f in rows] == ["reason_for_absence"]
 
 
 def test_run_on_reply_is_capped_to_two_sentences(groq_client, session_factory):
@@ -760,6 +771,30 @@ def test_deterministic_close_on_a_farewell_after_all_fields(groq_client, session
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["done"] is True, resp.json()
+    # The row itself must finalize (status/summary/ended_at): without this
+    # the session stayed in_progress forever and kept accepting turns.
+    from app.models import Call
+
+    with session_factory() as db:
+        call = db.get(Call, call_id)
+        assert call.status == "completed"
+        assert call.ended_at is not None
+        assert call.summary, "deterministic close must keep the field summary"
+        assert call.duration_seconds is not None
+
+
+def test_session_exhausted_set_persists_across_turns() -> None:
+    """A billing-dead provider skipped on turn N must still be skipped on
+    turn N+1: the old per-invocation set re-learned the 402 every turn."""
+    from app.routers import playground as pg
+
+    first = pg._session_exhausted(424242)
+    first.add("deepseek")
+    assert pg._session_exhausted(424242) == {"deepseek"}
+    assert pg._session_exhausted(None) == set()
+    # Other calls are unaffected.
+    assert pg._session_exhausted(424243) == set()
+    del pg._EXHAUSTED_PROVIDERS[424242]
 
 
 def test_bare_thanks_is_a_closing_line() -> None:

@@ -184,11 +184,13 @@ class FallbackLLM(llm.LLM):
     Same-tier, different-provider/key: every member must sound like the same
     agent. ``primary`` is one LLM or an ordered list (e.g. one Groq client
     per API key); ``fallback`` (e.g. OpenAI) is appended last when given.
-    The session calls chat() per turn and retries it on failure; chat()
-    always serves the first member whose cooldown expired (else the first
-    member, better than silence). On a retryable serving failure the proxy
-    below marks THAT member down and re-raises, so the session retry
-    transparently moves to the next key/provider. This object never retries
+    The session calls chat() per turn; chat() always serves the first member
+    whose cooldown expired (else the first member, better than silence). On
+    a retryable serving failure the proxy below marks THAT member down and
+    re-raises. NOTE: livekit-agents 1.8.x does NOT retry chat() within the
+    failed turn (the speech handle just ends in error), so failover takes
+    effect from the NEXT turn via the cooldown marks - the failed turn itself
+    is dead air covered by the stall watchdog. This object never retries
     inside a stream: no duplicated prefixes, no re-implemented machinery.
 
     Backward compatible: ``FallbackLLM(primary, fallback)`` behaves exactly
@@ -337,7 +339,7 @@ def _with_handoff_brief(
     as established. Never raises: a failed brief must not break the turn.
     """
     try:
-        from livekit.agents.llm import ChatMessage
+        from livekit.agents.llm import ChatContext, ChatMessage
 
         brief = (
             "CONTINUITY: you took over this call mid-conversation from another "
@@ -347,7 +349,10 @@ def _with_handoff_brief(
             "as if you had been on the call the whole time."
         )
         items = list(getattr(chat_ctx, "items", []) or [])
-        return chat_ctx.copy(items=[ChatMessage(role="system", content=[brief]), *items])
+        # NOTE: ChatContext.copy() accepts only exclude_* flags (no `items`
+        # kwarg) - the old copy(items=[...]) call raised TypeError, which the
+        # blanket except swallowed, so the brief was silently never injected.
+        return ChatContext([ChatMessage(role="system", content=[brief]), *items])
     except Exception:
         return chat_ctx
 
@@ -356,8 +361,9 @@ class _FallbackStream(llm.LLMStream):
     """LLMStream proxy that observes failures; never retries itself.
 
     On a retryable serving-member failure it marks THAT member down for
-    cooldown and re-raises, so the session retry gets a concrete stream
-    from the next key/provider in the chain.
+    cooldown and re-raises. The 1.8.x session does not re-invoke chat() for
+    the failed turn, so the NEXT turn's chat() serves the next key/provider
+    in the chain via the cooldown marks.
     """
 
     def __init__(
@@ -656,16 +662,39 @@ def build_providers(
         else:
             bundle.llm = groq_llms[0]
     elif settings.llm_fallback_chain:
-        # No Groq at all, but extra providers are configured: serve the call
-        # rather than degrading to an apology.
+        # No Groq at all, but extra providers are configured: arm ALL of them
+        # as a fallback chain (not just the first) with the same output caps,
+        # so reasoning models can't truncate to empty replies and a dead
+        # member cools down instead of silencing the call.
+        extra_llms: list[Any] = []
+        extra_names: list[str] = []
         for name, base_url, api_key, model in settings.llm_fallback_chain:
             if not base_url:
                 continue
-            bundle.llm = openai.LLM(
-                model=model, api_key=api_key, base_url=base_url
+            try:
+                extra_llms.append(
+                    openai.LLM(
+                        model=model,
+                        api_key=api_key,
+                        base_url=base_url,
+                        max_completion_tokens=_max_completion_tokens_for(model),
+                    )
+                )
+                extra_names.append(name)
+            except Exception as exc:  # noqa: BLE001 — never block the chain
+                logger.warning("LLM chain member %s rejected: %s", name, exc)
+        if len(extra_llms) > 1:
+            logger.info(
+                "GROQ_API_KEY missing - using fallback chain: %s",
+                ", ".join(
+                    f"{name}:{getattr(m, 'model', '?')}"
+                    for name, m in zip(extra_names, extra_llms)
+                ),
             )
-            logger.info("GROQ_API_KEY missing - using %s (%s)", name, model)
-            break
+            bundle.llm = FallbackLLM(extra_llms, provider_names=extra_names)
+        elif extra_llms:
+            bundle.llm = extra_llms[0]
+            logger.info("GROQ_API_KEY missing - using %s (%s)", extra_names[0], getattr(extra_llms[0], "model", "?"))
         if bundle.llm is None:
             bundle.problems.append("No usable LLM chain member (bad LLM_FALLBACK_CHAIN)")
     elif settings.openai_api_key:
@@ -677,6 +706,7 @@ def build_providers(
             model=settings.openai_model,
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
+            max_completion_tokens=_max_completion_tokens_for(settings.openai_model),
         )
     else:
         bundle.problems.append("No LLM key (GROQ_API_KEY / OPENAI_API_KEY) set")
@@ -1164,7 +1194,7 @@ class TurnTelemetry:
         # transcript-grounding check (M13).
         if self._extraction_tools is not None:
             try:
-                self._extraction_tools.recent_caller_text = transcript
+                self._extraction_tools.note_caller_text(transcript)
             except Exception:  # noqa: BLE001 — defensive
                 pass
         # The is_final event already published the caption above; publishing
@@ -1649,13 +1679,14 @@ def _preemptive_kwargs(enabled: bool) -> dict[str, Any]:
     livekit-agents 1.8+ requires a ``PreemptiveGenerationOptions`` MAPPING
     and raises ``TypeError: 'bool' object is not a mapping`` for a plain
     boolean (this killed every phone session with the apology fallback).
-    Older versions take the boolean. Disabled means the key is omitted
-    entirely — deterministic turn-taking on PSTN rooms.
+    Older versions take the boolean. Disabled means an explicit
+    enabled=False mapping - omitting the key fills SDK defaults, which are
+    enabled=True, i.e. the exact opposite of "deterministic turn-taking".
     """
     if _PreemptiveOpts is None:
         return {"preemptive_generation": bool(enabled)}
     if not enabled:
-        return {}
+        return {"preemptive_generation": _PreemptiveOpts(enabled=False)}
     return {"preemptive_generation": _opts(_PreemptiveOpts)}
 
 
@@ -2018,7 +2049,10 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         )
 
         async def _say_cue(text: str) -> None:
-            await session.say(text, allow_interruptions=True)
+            # add_to_chat_ctx=False: a listener cue is not a turn. With the
+            # default True, "mm-hmm" became an assistant chat message, fired
+            # conversation_item_added, and got flushed as the exchange's reply.
+            await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
 
         backchannel = BackchannelController(_say_cue)
         telemetry = TurnTelemetry(
@@ -2140,6 +2174,7 @@ async def _degrade(
         logger.exception("Could not connect while degrading")
 
     # Speak the apology through whatever TTS is configured, best-effort.
+    apology_session = None
     try:
         bundle = build_providers(settings)
         if bundle.tts is not None:
@@ -2154,6 +2189,14 @@ async def _degrade(
             await apology_session.say(APOLOGY_TEXT, allow_interruptions=False)
     except Exception:
         logger.exception("Apology playback failed (best-effort)")
+    finally:
+        # A leaked session keeps providers/room refs alive and the room never
+        # tears down on this path.
+        if apology_session is not None:
+            try:
+                await apology_session.aclose()
+            except Exception:
+                logger.debug("apology session close failed", exc_info=True)
 
     if call_id:
         posted = await backend.post_complete(

@@ -117,3 +117,22 @@ def test_402_marks_member_down_instead_of_killing_the_turn() -> None:
         await llm.LLMStream.aclose(retry)
 
     asyncio.run(scenario())
+
+
+def test_handoff_brief_prepends_system_message() -> None:
+    """The old chat_ctx.copy(items=[...]) raised TypeError (no such kwarg),
+    swallowed by the blanket except: the continuity brief never shipped and
+    failovers re-introduced themselves. The brief must actually land."""
+    from livekit.agents.llm import ChatContext, ChatMessage
+
+    from app.pipeline import _with_handoff_brief
+
+    prior = ChatContext([ChatMessage(role="user", content=["he is sick"])])
+    out = _with_handoff_brief(prior, 0, 2)
+    assert isinstance(out, ChatContext)
+    assert len(out.items) == 2
+    first = out.items[0]
+    assert first.role == "system"
+    assert "CONTINUITY" in str(first.content)
+    # Original history preserved underneath.
+    assert out.items[1].role == "user"

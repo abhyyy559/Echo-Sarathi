@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Agent, AgentVersion, Campaign, Call, Contact, DomainConfig, User
+from app.models import Agent, AgentVersion, Campaign, Call, Contact, DomainConfig, IN_FLIGHT_CALL_STATUSES, User
 from app.schemas import CampaignCreate, CampaignDetail, CampaignListItem, CampaignOut
 from app.services.calls_service import in_flight_call_count
 from app.timeutil import is_within_calling_hours, utcnow
@@ -213,6 +213,31 @@ def cancel_campaign(
     db.commit()
     db.refresh(campaign)
     return _campaign_out(db, campaign)
+
+
+@router.delete("/{campaign_id}", status_code=204)
+def delete_campaign(
+    campaign_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Delete a campaign and everything it owns (contacts, calls, kids)."""
+    campaign = _get_campaign_or_404(db, campaign_id, user)
+    # Scoped to THIS campaign: a global in-flight count would 409 the delete
+    # because of an unrelated playground session or another org's live call.
+    live_here = db.scalar(
+        select(func.count())
+        .select_from(Call)
+        .where(
+            Call.campaign_id == campaign_id,
+            Call.status.in_(IN_FLIGHT_CALL_STATUSES),
+        )
+    ) or 0
+    if live_here:
+        raise HTTPException(status_code=409, detail="cannot delete while calls are in flight")
+    db.delete(campaign)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{campaign_id}/dashboard")

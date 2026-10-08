@@ -212,8 +212,8 @@ class Campaign(Base):
     )
 
     domain_config: Mapped[Optional[DomainConfig]] = relationship(back_populates="campaigns")
-    contacts: Mapped[list["Contact"]] = relationship(back_populates="campaign")
-    calls: Mapped[list["Call"]] = relationship(back_populates="campaign")
+    contacts: Mapped[list["Contact"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
+    calls: Mapped[list["Call"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
 
 
 class Contact(Base):
@@ -244,7 +244,7 @@ class Contact(Base):
     )
 
     campaign: Mapped[Campaign] = relationship(back_populates="contacts")
-    consent_records: Mapped[list["ConsentRecord"]] = relationship(back_populates="contact")
+    consent_records: Mapped[list["ConsentRecord"]] = relationship(back_populates="contact", cascade="all, delete-orphan")
 
 
 class Call(Base):
