@@ -79,14 +79,17 @@ export default function TestCallPanel({ versionId, contactCard }) {
       </div>
       <div className="dp-body">
         <div className="field" style={{ marginBottom: 8 }}>
-          <label htmlFor="pg-call-to">Dial (blank = configured sandbox number)</label>
+          <label htmlFor="pg-call-to">Dial</label>
           <input
             id="pg-call-to"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            placeholder="+91…"
+            placeholder="+91 98765 43210"
             inputMode="tel"
           />
+          <small className="dp-sub" style={{ display: 'block', marginTop: 4 }}>
+            Leave blank to dial the configured sandbox number.
+          </small>
         </div>
         <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={placeCall}>
           {busy ? 'Placing…' : 'Place test call'}
