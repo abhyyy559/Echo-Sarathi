@@ -133,6 +133,14 @@ async def drain_track(track: Any, queue: Any, stats: Any = None) -> None:
         put_sentinel(queue)
 
 
+#: Outbound bridge queue depth (chunks). Drain chunks are ~10ms each, so 100
+#: holds ~1 SECOND of agent audio - but TTS streams a 12s opening in ~3s and
+#: the paced pump consumes at realtime. Everything past 1s was silently
+#: dropped and the caller heard Swiss cheese: the "crackling/robotic" noise.
+#: 2000 holds ~20s (320KB); barge-in flush already drops stale audio, so a
+#: deep queue delays nothing - it only stops the drops.
+OUTBOUND_QUEUE_MAXSIZE = 2000
+
 #: Bytes per PSTN frame: 20ms of 8kHz mu-law. Telephony endpoints expect
 #: constant-size frames; LiveKit delivers variable-size chunks, and forwarding
 #: them raw is heard as crackle/robotic noise (classic on car speakers).

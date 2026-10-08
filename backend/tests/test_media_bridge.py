@@ -5,7 +5,12 @@ from array import array
 
 import pytest
 
-from app.services.media_bridge import drain_track, make_frame, put_sentinel
+from app.services.media_bridge import (
+    OUTBOUND_QUEUE_MAXSIZE,
+    drain_track,
+    make_frame,
+    put_sentinel,
+)
 
 
 def _pcm16(*samples: int) -> bytes:
@@ -16,6 +21,18 @@ def test_module_exports_helpers():
     assert callable(make_frame)
     assert callable(put_sentinel)
     assert inspect.iscoroutinefunction(drain_track)
+
+
+def test_outbound_queue_holds_a_full_reply():
+    """Regression for the crackling/robotic call audio: drain chunks are
+    ~10ms, TTS streams a 12s opening in ~3s, and the paced pump consumes at
+    realtime. A 100-deep queue held ~1s and silently dropped the rest."""
+    assert OUTBOUND_QUEUE_MAXSIZE >= 1500
+    for router in ("vobiz", "twilio", "plivo"):
+        source = inspect.getsource(
+            __import__(f"app.routers.{router}", fromlist=["x"])
+        )
+        assert "OUTBOUND_QUEUE_MAXSIZE" in source, router
 
 
 class TestMakeFrame:

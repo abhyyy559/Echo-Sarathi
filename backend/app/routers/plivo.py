@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Call, Contact
 from app.services.calls_service import PLIVO_STATUS_MAP, end_call, log_call_event
-from app.services.media_bridge import drain_track, make_frame, put_sentinel
+from app.services.media_bridge import OUTBOUND_QUEUE_MAXSIZE, drain_track, make_frame, put_sentinel
 from app.services.plivo_bridge import (
     build_clearaudio_message,
     build_playaudio_message,
@@ -202,7 +202,7 @@ async def plivo_media(websocket: WebSocket) -> None:
     )
     room = rtc.Room()
 
-    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAXSIZE)
     drains: list[asyncio.Task[None]] = []
     seen_tracks: set[Any] = set()
     room_gone = asyncio.Event()
