@@ -352,6 +352,36 @@ export default function CampaignDetailPage() {
       },
     },
     {
+      key: 'select',
+      label: (() => {
+        const visible = ((contactsData && contactsData.items) || []).filter((c) => TOGGLEABLE.includes(c.status));
+        const allChecked = visible.length > 0 && visible.every((c) => c.status !== 'skipped');
+        const noneChecked = visible.length > 0 && visible.every((c) => c.status === 'skipped');
+        return visible.length > 0 ? (
+          <input
+            type="checkbox"
+            aria-label="Select all visible contacts"
+            title="Select/deselect everyone on this page"
+            checked={allChecked}
+            ref={(el) => { if (el) el.indeterminate = !allChecked && !noneChecked; }}
+            onChange={() => bulkSetStatus(allChecked ? 'skipped' : 'pending_review')}
+          />
+        ) : '';
+      })(),
+      render: (c) =>
+        TOGGLEABLE.includes(c.status) ? (
+          <input
+            type="checkbox"
+            aria-label={`Select ${c.name || c.phone} to call`}
+            checked={c.status !== 'skipped'}
+            onChange={() => toggleSkip(c)}
+            onClick={(e) => e.stopPropagation()}
+            title={c.status === 'skipped' ? 'Select for calling' : 'Selected for calling'}
+          />
+        ) : null,
+      className: 'nowrap select-cell',
+    },
+    {
       key: 'actions',
       label: '',
       render: (c) => (
