@@ -134,6 +134,9 @@ class ProviderBundle:
     # Which STT backend is armed (deepgram | sarvam). The session is tuned
     # differently per provider (Sarvam handles VAD/turn-taking internally).
     stt_provider: str = "deepgram"
+    # Which TTS backend is armed (cartesia | deepgram | sarvam). Reported in
+    # the session-start event so the panel names the REAL pipeline.
+    tts_provider: str = "cartesia"
 
     @property
     def complete(self) -> bool:
@@ -534,6 +537,7 @@ def build_providers(
             speaker=sarvam_speaker,
             api_key=sarvam_key,
         )
+        bundle.tts_provider = "sarvam"
         logger.info(
             "TTS provider: Sarvam Bulbul (%s/%s/%s)", sarvam_model, sarvam_speaker, sarvam_lang
         )
@@ -553,6 +557,7 @@ def build_providers(
         if pron_dict:
             tts_kwargs["pronunciation_dict_id"] = pron_dict
         bundle.tts = cartesia.TTS(api_key=settings.cartesia_api_key, **tts_kwargs)
+        bundle.tts_provider = "cartesia"
     elif settings.deepgram_api_key:
         # Deepgram Aura fallback. Cartesia returns 402 when its balance runs
         # out (seen live: "Invalid response status", retryable=False), which
@@ -565,6 +570,7 @@ def build_providers(
             or os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
         )
         bundle.tts = deepgram.TTS(model=aura_model, api_key=settings.deepgram_api_key)
+        bundle.tts_provider = "deepgram"
         logger.info("TTS provider: Deepgram Aura (%s)", aura_model)
     else:
         bundle.problems.append("CARTESIA_API_KEY missing - text-to-speech disabled")
@@ -2024,10 +2030,10 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         telemetry._emit_event(
             "voice_session_start",
             message=(
-                f"STT={'deepgram' if bundle.stt else 'DISABLED'} "
+                f"STT={bundle.stt_provider if bundle.stt else 'DISABLED'} "
                 f"LLM={type(bundle.llm).__name__ if bundle.llm else 'DISABLED'}"
                 f"{'(chain of %d)' % bundle.llm.chain_size if isinstance(bundle.llm, FallbackLLM) else ''} "
-                f"TTS={'cartesia' if bundle.tts else 'DISABLED'} "
+                f"TTS={bundle.tts_provider if bundle.tts else 'DISABLED'} "
                 f"room={room_name}"
             ),
         )

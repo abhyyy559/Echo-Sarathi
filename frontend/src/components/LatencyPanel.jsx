@@ -22,9 +22,31 @@ function fmtMs(v) {
  *
  * turns:   per-turn latency rows from the complete-session response
  * summary: { [metric]: { n, avg, p50, p95 } } | undefined
+ *
+ * The API returns one row per transcript line, so a turn appears twice: the
+ * caller row carries STT timing and the agent row carries LLM/TTS timing plus
+ * the serving provider. Rendering both produces duplicate "#N" rows and puts
+ * a model label on caller speech. Group by turn_index instead: caller STT +
+ * agent reply in one row, "Served by" only where a model actually spoke.
  */
+function groupTurns(rows) {
+  const byTurn = new Map();
+  for (const t of rows) {
+    const key = t.turn_index != null ? t.turn_index : `row-${byTurn.size}`;
+    if (!byTurn.has(key)) byTurn.set(key, { turn_index: t.turn_index });
+    const g = byTurn.get(key);
+    const isAgent = String(t.speaker || '').toLowerCase() !== 'caller';
+    for (const m of METRICS) {
+      if (g[m.key] == null && t[m.key] != null) g[m.key] = t[m.key];
+    }
+    // The provider belongs to the reply, never to caller speech.
+    if (isAgent && g.served_by == null && t.served_by != null) g.served_by = t.served_by;
+  }
+  return [...byTurn.values()];
+}
+
 export default function LatencyPanel({ turns, summary }) {
-  const list = Array.isArray(turns) ? turns : [];
+  const list = groupTurns(Array.isArray(turns) ? turns : []);
   const hasTurns = list.some((t) => METRICS.some((m) => t[m.key] != null));
 
   return (

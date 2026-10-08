@@ -23,6 +23,16 @@ def _iso_in(days: int) -> str:
     return (utcnow() + timedelta(days=days)).date().isoformat()
 
 
+def _iso_oct2() -> str:
+    """This year's Oct 2, or next year's once it has passed (same rule as the
+    router's day-month resolver, so the test never goes stale)."""
+    from app.routers.playground import utcnow
+
+    today = utcnow().date()
+    year = today.year if today <= today.replace(month=10, day=2) else today.year + 1
+    return f"{year}-10-02"
+
+
 def test_parse_and_scrub_pseudo_tool_call() -> None:
     from app.routers.playground import _parse_pseudo_tool_calls, _scrub_tool_markup
 
@@ -646,8 +656,9 @@ def test_short_date_answer_is_captured_even_when_another_field_lands(
         ).all()
         stored = {r.field_name: r.field_value for r in rows}
     # An explicit day-month ("2nd oct") is stored as the resolved ISO date, not
-    # the raw phrase - export and speech must agree.
-    assert stored.get("expected_return_date") == "2026-10-02"
+    # the raw phrase - export and speech must agree. Resolved against the live
+    # clock (Oct 2 rolls to next year once it has passed).
+    assert stored.get("expected_return_date") == _iso_oct2()
     # The model's own record must not be overwritten by the backstop.
     assert stored.get("is_sick_leave") == "yes"
 
@@ -737,6 +748,21 @@ def test_deterministic_close_on_a_farewell_after_all_fields(groq_client, session
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["done"] is True, resp.json()
+
+
+def test_bare_thanks_is_a_closing_line() -> None:
+    """Live loop: the call drifted through tail fragments ("Thanks", "Is",
+    "Could you") because a bare "Thanks" was never recognized as the close.
+    A short thanks with no question closes; a mid-call thanks that keeps
+    talking must never match."""
+    from app.routers.playground import _is_closing_line
+
+    assert _is_closing_line("Thanks") is True
+    assert _is_closing_line("Thank you, Ram.") is True
+    assert _is_closing_line("Thanks, bye.") is True
+    assert _is_closing_line("Thanks, Ram. Could you tell me the reason?") is False
+    assert _is_closing_line("Thanks, Ram. Abhi was absent from college today.") is False
+    assert _is_closing_line("") is False
 
 
 def test_diagnostics_reports_chain_and_events_without_keys(groq_client):

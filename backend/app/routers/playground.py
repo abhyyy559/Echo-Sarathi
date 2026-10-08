@@ -338,6 +338,13 @@ def _render_compact_system_prompt(
         f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
     )
     todo = f"Still needed: {', '.join(remaining)}." if remaining else ""
+    close_rule = (
+        " Everything is recorded: say ONE short goodbye (e.g. 'Thanks, Ram. "
+        "Goodbye.'), call end_call(summary) in the SAME reply, and say nothing "
+        "else - no questions, no acknowledgments, no further turns."
+        if not remaining
+        else ""
+    )
     return (
         f"TODAY: {today}.\n"
         "You are the same outbound phone agent from earlier in this call; the "
@@ -349,7 +356,7 @@ def _render_compact_system_prompt(
         "Do NOT repeat yourself: no restating a value or confirmation you have "
         "already given, no re-confirming a date, no 'anything else?'. If they "
         "confirmed, ask the next missing thing or close politely.\n"
-        f"{state} {todo}\n"
+        f"{state} {todo}{close_rule}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
         f"finish with end_call(summary). Valid field names: "
         f"{', '.join(captured + remaining) or 'none'}."
@@ -1224,7 +1231,16 @@ def _is_closing_line(text: str) -> bool:
     lowered = str(text or "").strip().lower()
     if not lowered or "?" in lowered:
         return False
-    return any(phrase in lowered for phrase in _CLOSING_PHRASES)
+    if any(phrase in lowered for phrase in _CLOSING_PHRASES):
+        return True
+    # A bare short thanks ("Thanks", "Thank you, Ram.") is also a farewell -
+    # the live transcript showed the call drifting through four goodbye turns
+    # because "Thanks" alone was never recognized as the close. Length-gated
+    # so a mid-call "Thanks, Ram. Abhi was absent..." can never match.
+    words = lowered.split()
+    if len(words) <= 4 and ("thank" in lowered or "thanks" in lowered):
+        return True
+    return False
 
 
 def _fields_known(
