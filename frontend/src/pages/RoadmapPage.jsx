@@ -1,47 +1,106 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import '../od-roadmap.css';
+import '../od-roadmap-v2.css';
 
-/* Roadmap & Guide — ported from frontend by opendesign/roadmap.html.
- * Public page: journey stepper + language phases + turn pipeline diagram.
- * All state local; no backend calls.
+/* Roadmap — redesigned Oct 2026.
+ * Three status lanes (Live / Building / Planned), a vertical journey
+ * timeline, and the per-turn loop. All content visible without interaction;
+ * reveal-on-scroll is progressive enhancement only.
+ * Public page: no auth, no backend calls.
  */
+const LIVE = [
+  { t: 'English voice calls', d: 'Full-quality conversations with sub-second replies, barge-in, and structured field extraction on every call.' },
+  { t: 'Playground testing', d: 'Try any agent in the browser first — live console, per-turn latency, and provider attribution before spending a rupee.' },
+  { t: 'Campaign calling', d: 'Upload contacts, launch inside the 9 AM – 9 PM IST window, pause anytime. Busy numbers retry politely later.' },
+  { t: 'Transcripts & Excel export', d: 'Every word with speakers and timestamps, fields with confidence scores, one row per person out to Excel.' },
+];
+
+const BUILDING = [
+  { t: 'Telugu', d: 'In training — ships only after it passes our accent benchmarks, not before.', meta: 'Accent benchmarks in progress' },
+  { t: 'Telugu + English code-switching', d: 'Mixed sentences handled naturally (“fee pay cheyyandi please”).', meta: 'Follows Telugu' },
+];
+
+const PLANNED = [
+  { t: 'Hindi, Tamil, Kannada & beyond', d: 'More Indian languages in community-driven order. Tell us which your callers speak.', meta: 'Vote: hello@echosarathi.ai' },
+];
+
 const STEPS = [
-  { t: 'Create a campaign', you: 'Name your campaign — “Aug absence sweep” is enough.', sarati: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
-  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarati: 'Parses it locally, checks every number’s format, flags bad rows red before import.', tip: 'Extra columns like student_name become words the agent can say naturally.' },
-  { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarati: 'Turns that list into a natural conversation plan — not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
-  { t: 'Launch', you: 'Press launch inside the calling window (9 AM – 9 PM IST).', sarati: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window — nobody gets a midnight call.' },
-  { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarati: 'Listens, takes turns, handles interruptions — like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
-  { t: 'Transcribe', you: 'Nothing — this happens automatically.', sarati: 'Writes down every word with speakers and timestamps, second by second.', tip: 'Transcripts power the extraction step and stay attached to each contact.' },
-  { t: 'Extract structured results', you: 'Define what counts as an answer: reason, callback, yes/no.', sarati: 'Fills those fields with confidence scores — low-confidence items get flagged.', tip: 'Flagged calls surface with ⚑ so a human reviews only what needs review.' },
-  { t: 'Review & export', you: 'Open results, filter what matters, export to Excel.', sarati: 'Produces one row per person: transcript link, fields, outcome, duration.', tip: 'Exports include everything — perfect for feeding your existing systems.' },
+  { t: 'Create a campaign', you: 'Name your campaign — “Aug absence sweep” is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
+  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every number’s format, flags bad rows red before import.', tip: 'Extra columns like student_name become words the agent can say naturally.' },
+  { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarathi: 'Turns that list into a natural conversation plan — not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
+  { t: 'Launch', you: 'Press launch inside the calling window (9 AM – 9 PM IST).', sarathi: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window — nobody gets a midnight call.' },
+  { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarathi: 'Listens, takes turns, handles interruptions — like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
+  { t: 'Transcribe', you: 'Nothing — this happens automatically.', sarathi: 'Writes down every word with speakers and timestamps, second by second.', tip: 'Transcripts power the extraction step and stay attached to each contact.' },
+  { t: 'Extract structured results', you: 'Define what counts as an answer: reason, callback, yes/no.', sarathi: 'Fills those fields with confidence scores — low-confidence items get flagged.', tip: 'Flagged calls surface for human review; you only check what needs checking.' },
+  { t: 'Review & export', you: 'Open results, filter what matters, export to Excel.', sarathi: 'Produces one row per person: transcript link, fields, outcome, duration.', tip: 'Exports include everything — ready for your existing systems.' },
 ];
 
-const PHASES = [
-  ['Phase 1 · English', 'Live today — full quality', 'live', 'ok'],
-  ['Phase 2 · Telugu', 'In training — rolling out after accent benchmarks pass', 'next', 'warn'],
-  ['Phase 3 · Telugu + English code-switching', 'Mixed sentences handled naturally (“fee pay cheyyandi please”)', 'next', 'warn'],
-  ['Phase 4 · More Indian languages', 'Hindi, Tamil, Kannada and beyond — community-driven order', 'planned', 'queued'],
+const LOOP = [
+  ['Phone line', 'The call connects'],
+  ['Speech recognition', 'Every word, live'],
+  ['Conversation engine', 'Decides the reply'],
+  ['Voice generation', 'Speaks naturally'],
 ];
 
-const PIPE = [['☎', 'Phone line'], ['〰', 'Real-time audio'], ['A|', 'Speech recognition'], ['◆', 'Conversation engine'], ['♪', 'Voice generation'], ['☎', 'Back to caller']];
+function StatusDot({ kind, label }) {
+  return (
+    <span className={`rm2-status rm2-${kind}`}>
+      <span className="rm2-dot" aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+function Lane({ id, title, sub, kind, label, items }) {
+  return (
+    <section className="rm2-lane reveal" aria-labelledby={id}>
+      <div className="rm2-lane-head">
+        <h2 id={id}>{title}</h2>
+        <StatusDot kind={kind} label={label} />
+      </div>
+      <p className="rm2-lane-sub">{sub}</p>
+      <div className="rm2-cards">
+        {items.map((it) => (
+          <article className="rm2-card" key={it.t}>
+            <h3>{it.t}</h3>
+            <p>{it.d}</p>
+            {it.meta && <p className="rm2-meta">{it.meta}</p>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function RoadmapPage() {
   const [navScrolled, setNavScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [cur, setCur] = useState(0);
+  const rootRef = useRef(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const onScroll = () => setNavScrolled(window.scrollY > 40);
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  const go = (i) => setCur(Math.max(0, Math.min(STEPS.length - 1, i)));
-  const s = STEPS[cur];
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !('IntersectionObserver' in window)) {
+      root?.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+      return undefined;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      }),
+      { threshold: 0.12 },
+    );
+    root.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
 
   return (
-    <div className="od-roadmap">
+    <div className="rm2" ref={rootRef}>
       <nav id="mainNav" className={navScrolled ? 'scrolled' : ''}>
         <div className="nav-inner">
           <div className="nav-left">
@@ -55,7 +114,7 @@ export default function RoadmapPage() {
           </div>
           <div className="nav-right">
             <Link to="/playground" className="nav-link">Playground</Link>
-            <Link to="/roadmap" className="nav-link">Roadmap</Link>
+            <Link to="/roadmap" className="nav-link" aria-current="page">Roadmap</Link>
             <Link to="/login" className="nav-cta">Start free</Link>
             <div className={`hamburger${mobileOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-label="Menu"
               onClick={() => setMobileOpen((v) => !v)}
@@ -74,74 +133,116 @@ export default function RoadmapPage() {
         <Link to="/login" className="drawer-cta">Start free</Link>
       </div>
 
-      <main className="page" style={{ maxWidth: 1120, margin: '0 auto', padding: '170px 24px 80px' }}>
-        <div className="card pad" style={{ marginBottom: 20 }}>
-          <span style={{ fontSize: 11, letterSpacing: '.24em', textTransform: 'uppercase', color: 'var(--gold)' }}>Start here</span>
-          <h2 style={{ fontFamily: 'var(--font-d)', fontSize: 'clamp(22px,3vw,30px)', fontWeight: 600, marginTop: 10 }}>From a spreadsheet to structured answers — in eight steps.</h2>
-          <p style={{ color: 'var(--muted)', marginTop: 10, maxWidth: 640, lineHeight: 1.7 }}>Click any step below (or use the arrows) to see exactly what <b style={{ color: 'var(--brand)' }}>you do</b>, what <b style={{ color: 'var(--cyan)' }}>Sarathi does</b>, and one practical tip.</p>
-        </div>
+      <main className="rm2-page">
+        <header className="rm2-hero reveal">
+          <span className="rm2-kick">Roadmap · updated October 2026</span>
+          <h1>Built in the open.</h1>
+          <p className="rm2-sub">
+            What works today, what&apos;s in training, and what&apos;s next — no vapor.
+            We ship each language only when it passes our quality bar, not before.
+          </p>
+          <div className="rm2-counts" role="list" aria-label="Roadmap status summary">
+            <span role="listitem"><b>4</b> live now</span>
+            <span role="listitem"><b>2</b> in training</span>
+            <span role="listitem"><b>1</b> planned</span>
+          </div>
+          <div className="rm2-hero-cta">
+            <Link to="/playground" className="rm2-btn-primary">Try the playground</Link>
+            <Link to="/pricing" className="rm2-btn-ghost">See pricing</Link>
+          </div>
+        </header>
 
-        <div className="journey-steps">
-          {STEPS.map((st, i) => (
-            <div key={st.t} className={`js ${i === cur ? 'on' : ''} ${i < cur ? 'seen' : ''}`} onClick={() => go(i)} role="button" tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go(i); }}>
-              <span className="node">{i < cur ? '✓' : i + 1}</span><p>{st.t}</p>
-            </div>
-          ))}
-        </div>
-        <div className="detail-card card pad">
-          <div className="dc-grid">
-            <div className="dc-box you"><h5>You do</h5><p>{s.you}</p></div>
-            <div className="dc-box sarati"><h5>Sarathi does</h5><p>{s.sarati}</p></div>
-            <div className="dc-box tip"><h5>Good to know</h5><p>{s.tip}</p></div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 26 }}>
-            <button className="btn ghost sm" disabled={cur === 0} onClick={() => go(cur - 1)}>← Previous</button>
-            <button className="btn primary sm" onClick={() => { if (cur === STEPS.length - 1) { window.location.href = '/playground'; } else { go(cur + 1); } }}>
-              {cur === STEPS.length - 1 ? '+ Try the playground' : 'Next →'}
-            </button>
-            <div className="progress" style={{ maxWidth: 220, marginLeft: 'auto' }}><b style={{ width: `${((cur + 1) / STEPS.length) * 100}%` }}></b></div>
-          </div>
-        </div>
+        <Lane
+          id="lane-live"
+          title="Live now"
+          sub="Working today, on real calls, billed by the second."
+          kind="live"
+          label="Live"
+          items={LIVE}
+        />
+        <Lane
+          id="lane-building"
+          title="In training"
+          sub="Being built and benchmarked right now."
+          kind="building"
+          label="Building"
+          items={BUILDING}
+        />
+        <Lane
+          id="lane-planned"
+          title="Planned"
+          sub="Committed direction, community decides the order."
+          kind="planned"
+          label="Planned"
+          items={PLANNED}
+        />
 
-        <h2 style={{ fontFamily: 'var(--font-d)', fontSize: 24, fontWeight: 600, margin: '46px 0 6px' }} id="languages">Language roadmap</h2>
-        <p style={{ color: 'var(--muted)', maxWidth: 640, lineHeight: 1.7 }}>Honest phases — we ship each language only when it passes our quality bar, not before.</p>
-        <div className="rowflex" style={{ marginTop: 22, alignItems: 'stretch', gap: 22 }}>
-          <div className="card pad" style={{ flex: 1.1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', gap: 10 }}>
-            <div className="dia">తెలుగు</div>
-            <p style={{ fontSize: 13, color: 'var(--dim)' }}>Designed with Indian multilingual voice interaction in mind from day one.</p>
-          </div>
-          <div className="card pad" style={{ flex: 2 }}>
-            {PHASES.map(([t, d, k, c]) => (
-              <div key={t} className={`phase ${k}`}>
-                <span className="pn">{k === 'live' ? '✓' : k === 'next' ? '…' : '→'}</span>
-                <div style={{ flex: 1 }}><b style={{ fontSize: 15 }}>{t}</b><p style={{ fontSize: 13, color: 'var(--muted)' }}>{d}</p></div>
-                <span className={`chip ${c}`}>{c}</span>
-              </div>
+        <section className="rm2-journey reveal" aria-labelledby="journey-h">
+          <h2 id="journey-h">From a spreadsheet to structured answers — in eight steps.</h2>
+          <p className="rm2-lane-sub">What you do, what Sarathi does, and one practical tip per step.</p>
+          <ol className="rm2-timeline">
+            {STEPS.map((st, i) => (
+              <li className="rm2-step" key={st.t}>
+                <span className="rm2-node" aria-hidden="true">{i + 1}</span>
+                <div className="rm2-step-body">
+                  <h3>{st.t}</h3>
+                  <dl className="rm2-cols">
+                    <div className="rm2-col rm2-you">
+                      <dt>You do</dt>
+                      <dd>{st.you}</dd>
+                    </div>
+                    <div className="rm2-col rm2-sarathi">
+                      <dt>Sarathi does</dt>
+                      <dd>{st.sarathi}</dd>
+                    </div>
+                    <div className="rm2-col rm2-tip">
+                      <dt>Good to know</dt>
+                      <dd>{st.tip}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ol>
+        </section>
 
-        <h2 style={{ fontFamily: 'var(--font-d)', fontSize: 24, fontWeight: 600, margin: '46px 0 6px' }}>Under the hood — every single turn</h2>
-        <p style={{ color: 'var(--muted)', maxWidth: 640, lineHeight: 1.7 }}>This loop runs many times per call. Speed here is why Sarathi doesn’t sound like a robot.</p>
-        <div className="card pad" style={{ marginTop: 18 }}>
-          <div className="pipe">
-            {PIPE.map((p, i) => (
-              <React.Fragment key={p[1]}>
-                {i > 0 && <div className="pflow"></div>}
-                <div className="pnode hot" style={{ animationDelay: `${i * 0.2}s` }}>
-                  <div className="ic" style={{ fontSize: 19, fontFamily: 'var(--font-m)' }}>{p[0]}</div>
-                  <small>{p[1]}</small>
+        <section className="rm2-loop reveal" aria-labelledby="loop-h">
+          <h2 id="loop-h">Every turn, in under a second.</h2>
+          <p className="rm2-lane-sub">
+            This loop runs many times per call. Speed here is why Sarathi doesn&apos;t sound like a robot —
+            and callers can interrupt mid-sentence and be heard.
+          </p>
+          <div className="rm2-pipe">
+            {LOOP.map(([t, d], i) => (
+              <React.Fragment key={t}>
+                {i > 0 && <div className="rm2-flow" aria-hidden="true" />}
+                <div className="rm2-pnode">
+                  <span className="rm2-pnum" aria-hidden="true">{i + 1}</span>
+                  <b>{t}</b>
+                  <small>{d}</small>
                 </div>
               </React.Fragment>
             ))}
           </div>
-          <p className="hint" style={{ marginTop: 6 }}>Streaming audio both ways means barge-in works — callers can interrupt mid-sentence and be heard.</p>
-        </div>
+          <div className="rm2-targets">
+            <span><b>≤ 900 ms</b> median reply</span>
+            <span><b>≤ 1.5 s</b> slowest 5%</span>
+            <span><b>₹8.50</b> per minute</span>
+          </div>
+        </section>
+
+        <section className="rm2-cta reveal" aria-labelledby="cta-h">
+          <h2 id="cta-h">Start free. Scale when it works.</h2>
+          <p>Create an agent, run your first calls on us, and only pay when you take it live.</p>
+          <div className="rm2-hero-cta">
+            <Link to="/login" className="rm2-btn-primary">Start free</Link>
+            <Link to="/#demo" className="rm2-btn-ghost">See the demo</Link>
+          </div>
+        </section>
       </main>
 
       <footer>
-        <div className="f-in" style={{ maxWidth: 1120, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 13, color: 'var(--dim)' }}>
+        <div className="f-in">
           <span>&copy; {new Date().getFullYear()} Echo Sarathi Labs</span>
           <div className="f-links">
             <Link to="/">Home</Link>
