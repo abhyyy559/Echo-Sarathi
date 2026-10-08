@@ -27,6 +27,11 @@
 }
 .rm2 a { color: inherit; }
 .rm2 button { font-family: inherit; }
+/* Anchors with button classes must beat the generic .rm2 a rule above;
+ * otherwise Start free renders as white-on-pearl (invisible text). */
+.rm2 a.rm2-btn-primary { color: #0a0a0b; }
+.rm2 a.rm2-btn-ghost { color: var(--rm-fg); }
+html[data-theme="light"] .rm2 a.rm2-btn-primary { color: #faf7f1; }
 
 /* ---------- nav (was styled by the retired od-roadmap.css) ---------- */
 .rm2 nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; padding: 16px 32px; transition: padding 0.4s cubic-bezier(0.16,1,0.3,1); }

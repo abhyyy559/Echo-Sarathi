@@ -105,3 +105,5 @@ frontend/dist/
 .superpowers/sdd/task-*
 .hive/
 .hive2/
+
+.vercel
