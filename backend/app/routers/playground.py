@@ -1143,10 +1143,11 @@ def _is_hard_quota_exhausted(text: str) -> bool:
     Gemini answers "You exceeded your current quota, please check your plan and
     billing details". Retrying that three times with backoff just burns three
     round trips (~1.5s of the caller's life) for a certainty. A per-minute rate
-    limit is worth retrying; an exhausted plan is not.
+    limit is worth retrying; an exhausted plan is not. DeepSeek answers 402
+    "Insufficient Balance" on an empty account - same shape, same treatment.
     """
     lowered = str(text or "").lower()
-    return "current quota" in lowered or "check your plan" in lowered or "billing" in lowered
+    return "current quota" in lowered or "check your plan" in lowered or "billing" in lowered or "insufficient balance" in lowered
 
 
 def _member_body(base: dict[str, Any], model: str) -> dict[str, Any]:
@@ -1503,13 +1504,18 @@ async def _groq_chat(
                     )
                     break
                 if _is_hard_quota_exhausted(getattr(response, "text", "")):
-                    # Plan/quota exhausted: retrying cannot help.
+                    # Plan/quota exhausted: retrying cannot help. Skip the whole
+                    # provider for the rest of the SESSION, not just this turn:
+                    # a zero-balance DeepSeek 402s identically on every turn,
+                    # and paying ~3s per turn to re-learn that would wreck a
+                    # call's latency for zero information.
+                    exhausted_providers.add(name)
                     telemetry.record(
                         "llm_quota_exhausted",
                         level="error",
                         provider=name,
                         model=model,
-                        status=429,
+                        status=response.status_code,
                         message="provider quota/plan exhausted; not retrying",
                         call_id=call_id,
                     )

@@ -463,7 +463,9 @@ def test_shared_quota_error_is_detected() -> None:
 
 def test_shared_quota_skips_the_rest_of_that_provider(flaky_client, monkeypatch):
     """Two Groq keys, one other provider: an org-level TPM rejection must move
-    to the other provider instead of re-trying the second key."""
+    to the other provider instead of re-trying the second key. (Both keys ride
+    the explicit chain here so they lead the order; the skip logic is
+    provider-agnostic.)"""
     import asyncio as _asyncio
 
     from app.config import Settings as _S
@@ -475,9 +477,13 @@ def test_shared_quota_skips_the_rest_of_that_provider(flaky_client, monkeypatch)
     ]
     _FlakyAsyncClient.requests = []
     settings = _S(
-        groq_api_key="k1",
-        groq_api_keys="k1,k2",
-        llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
+        groq_api_key="",
+        groq_api_keys="",
+        llm_fallback_chain=(
+            "groq|https://api.groq.com/openai/v1|k1|llama-3.3-70b,"
+            "groq|https://api.groq.com/openai/v1|k2|llama-3.3-70b,"
+            "cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b"
+        ),
         database_url="sqlite://",
         _env_file=None,
     )
@@ -521,9 +527,15 @@ def test_chain_fails_over_and_hands_over_context(flaky_client):
             _FlakyResponse(200, {"choices": [{"message": {"role": "assistant", "content": "noted"}}]}),
         ]
         _FlakyAsyncClient.requests = []
+        # Groq leads via the explicit chain (owner-ordered) so the failover
+        # under test is groq -> gemini, exactly as before.
         settings = _S(
-            groq_api_key="k1",
-            llm_fallback_chain="gemini|https://x/v1|gk|gemini-flash-latest",
+            groq_api_key="",
+            groq_api_keys="",
+            llm_fallback_chain=(
+                "groq|https://api.groq.com/openai/v1|k1|qwen/qwen3.8-27b,"
+                "gemini|https://x/v1|gk|gemini-flash-latest"
+            ),
             database_url="sqlite://",
             _env_file=None,
         )
@@ -858,6 +870,35 @@ def test_shorthand_keys_extend_the_chain_in_order() -> None:
     ]
 
 
+def test_explicit_chain_leads_then_deepseek_then_groq() -> None:
+    """Owner-ordered chain: explicit entries first in listed order, DeepSeek
+    shorthand second, Groq keys as the bulk fallback."""
+    from app.config import Settings
+
+    settings = Settings(
+        database_url="sqlite://",
+        groq_api_key="gsk_real",
+        deepseek_api_key="sk-ds",
+        llm_fallback_chain="gemini|https://x/v1|gk|gemini-flash-latest",
+        _env_file=None,
+    )
+    assert [(n, m) for n, _u, _k, m in settings.llm_chain] == [
+        ("gemini", "gemini-flash-latest"),
+        ("deepseek", "deepseek-chat"),
+        ("groq", settings.groq_model),
+    ]
+
+
+def test_insufficient_balance_is_hard_quota() -> None:
+    """DeepSeek's empty-account 402 must skip retries exactly like an
+    exhausted Gemini quota - same shape, same treatment."""
+    from app.routers.playground import _is_hard_quota_exhausted
+
+    assert _is_hard_quota_exhausted("Insufficient Balance") is True
+    assert _is_hard_quota_exhausted("You exceeded your current quota, check your plan") is True
+    assert _is_hard_quota_exhausted("Rate limit reached, retry after 60s") is False
+
+
 def test_never_stated_date_is_refused(groq_client, session_factory):
     """Regression from the first live test call: caller answered 'hlooo' and
     the agent recorded expected_return_date='tomorrow at 8am' at 95%."""
@@ -947,6 +988,10 @@ def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_fact
     fresh = create_app(
         make_settings(
             groq_api_key="k1",
+            # Explicit groq-k1 duplicates the shorthand key, so the dedup drops
+            # it there and the owner-ordered chain reads cerebras -> groq: the
+            # 429-retry behaviour under test is unchanged, just led by the
+            # explicit entry.
             llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
         )
     )
@@ -966,9 +1011,11 @@ def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_fact
         assert resp.status_code == 200, resp.text
         assert resp.json()["reply_text"] == "still here"
         bearers = [r["headers"]["Authorization"] for r in _FlakyAsyncClient.requests]
-        assert bearers == ["Bearer k1"] * 3 + ["Bearer ck1"]
+        # Owner-ordered chain leads with the explicit entry: cerebras retried,
+        # then groq answers. Same retry-then-failover behaviour, new order.
+        assert bearers == ["Bearer ck1"] * 3 + ["Bearer k1"]
         assert _FlakyAsyncClient.requests[-1]["url"] == (
-            "https://api.cerebras.ai/v1/chat/completions"
+            "https://api.groq.com/openai/v1/chat/completions"
         )
     _FlakyAsyncClient.planned = []
     _FlakyAsyncClient.requests = []

@@ -385,7 +385,11 @@ class _FallbackStream(llm.LLMStream):
             raise
         except Exception as exc:  # noqa: BLE001 — classify, then maybe fail over
             status = getattr(exc, "status_code", None)
-            if status not in _RETRYABLE_LLM_STATUS:
+            # 402 is a dead account (DeepSeek "Insufficient Balance"), not a
+            # dead provider: cool the member and move on exactly like any
+            # other per-member failure. Raising it raw would end the turn in
+            # silence with a working Groq pool sitting behind it.
+            if status not in _RETRYABLE_LLM_STATUS and status != 402:
                 raise
             if status == 429:
                 # Shared bucket: skip the provider's remaining keys now.
@@ -610,10 +614,15 @@ def build_providers(
                 )
             )
     if groq_llms:
-        chain: list[Any] = list(groq_llms)
-        chain_providers: list[str] = ["groq"] * len(groq_llms)
-        # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN, Cerebras,
-        # OpenRouter). Same-tier, different provider: Groq's free tier caps
+        # Owner-ordered chain: explicit LLM_FALLBACK_CHAIN entries (and the
+        # DeepSeek shorthand) serve FIRST, Groq keys are the bulk fallback.
+        # Groq-first was the old default; the owner sets priority by listing,
+        # so "gemini|...|..." + DEEPSEEK_API_KEY reads gemini -> deepseek ->
+        # groq on voice calls, mirroring the backend text chain.
+        chain: list[Any] = []
+        chain_providers: list[str] = []
+        # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN, DeepSeek,
+        # Cerebras, OpenRouter). Same-tier, different provider: Groq's free tier caps
         # out mid-call, and the wrapper re-issues the identical request on the
         # next member instead of leaving the caller in silence.
         for name, base_url, api_key, model in settings.llm_fallback_chain:
@@ -632,16 +641,16 @@ def build_providers(
                 logger.info("LLM chain member armed: %s (%s)", name, model)
             except Exception as exc:  # noqa: BLE001 — never block the chain
                 logger.warning("LLM chain member %s rejected: %s", name, exc)
+        chain.extend(groq_llms)
+        chain_providers.extend(["groq"] * len(groq_llms))
         if len(chain) > 1:
             logger.info(
-                "LLM chain armed (%d members): %s (Groq x%d) + %s",
+                "LLM chain armed (%d members): %s",
                 len(chain),
-                groq_model,
-                len(groq_llms),
                 ", ".join(
-                    f"{name}:{model}" for name, _u, _k, model in settings.llm_fallback_chain
-                )
-                or "no extra members",
+                    f"{name}:{getattr(m, 'model', '?')}"
+                    for name, m in zip(chain_providers, chain)
+                ),
             )
             bundle.llm = FallbackLLM(chain, provider_names=chain_providers)
         else:

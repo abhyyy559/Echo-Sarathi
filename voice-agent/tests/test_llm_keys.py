@@ -1,4 +1,4 @@
-"""Multi-key LLM rotation: GROQ_API_KEY + GROQ_API_KEYS combine, and the
+﻿"""Multi-key LLM rotation: GROQ_API_KEY + GROQ_API_KEYS combine, and the
 FallbackLLM chain cools down only the failed key while turns keep flowing.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ def test_settings_from_env_combines_groq_keys(monkeypatch) -> None:
 
 
 def test_settings_from_env_extra_keys_only(monkeypatch) -> None:    # Blank (not delete): from_env() loads the repo .env, which may carry a
-    # real GROQ_API_KEY — load_dotenv never overrides an existing var, so an
+    # real GROQ_API_KEY â€” load_dotenv never overrides an existing var, so an
     # explicit blank wins and _get() treats "" as unset.
     monkeypatch.setenv("GROQ_API_KEY", "")
     monkeypatch.setenv("GROQ_API_KEYS", "k9")
@@ -156,6 +156,7 @@ def test_build_providers_builds_one_groq_client_per_key(monkeypatch) -> None:
 def test_llm_fallback_chain_parses_pasted_providers(monkeypatch) -> None:
     """A key pasted once into LLM_FALLBACK_CHAIN must arm voice mode too."""
     monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "your_deepseek_key")
     monkeypatch.setenv("LLM_FALLBACK_CHAIN", "cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b")
     settings = Settings.from_env()
     assert settings.llm_fallback_chain == (
@@ -165,11 +166,21 @@ def test_llm_fallback_chain_parses_pasted_providers(monkeypatch) -> None:
 
 def test_llm_fallback_chain_ignores_placeholder_keys(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "your_deepseek_key")
     monkeypatch.setenv(
         "LLM_FALLBACK_CHAIN", "cerebras|https://api.cerebras.ai/v1|your_cerebras_key_here|llama-3.3-70b"
     )
     settings = Settings.from_env()
     assert settings.llm_fallback_chain == ()
+
+
+def test_deepseek_shorthand_arms_voice_chain_second(monkeypatch) -> None:
+    """DEEPSEEK_API_KEY arms voice mode right after the explicit entries."""
+    monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "gemini|https://x/v1|gk|gemini-flash-latest")
+    settings = Settings.from_env()
+    assert [m[0] for m in settings.llm_fallback_chain] == ["gemini", "deepseek"]
 
 
 def test_llm_fallback_chain_skips_malformed_entries() -> None:
@@ -464,3 +475,4 @@ def test_norm_institution_ignores_ampersand_variant() -> None:
     tokens = {"[Institution Name]": "CMR College of Engineering & Technology"}
     opening = build_opening_line(config, tokens, {})
     assert opening.count("CMR College") == 1, f"college repeated: {opening}"
+

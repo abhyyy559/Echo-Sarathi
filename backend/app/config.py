@@ -153,16 +153,23 @@ class Settings(BaseSettings):
     llm_fallback_chain: str = ""
     openrouter_api_key: str = ""
     cerebras_api_key: str = ""
+    # DeepSeek chat (OpenAI-compatible https://api.deepseek.com/v1, model
+    # deepseek-chat). NOTE: DeepSeek API is billed, not free - a zero balance
+    # answers 402 "Insufficient Balance", which the chain treats as an
+    # exhausted provider (fails over, then skips it for the session).
+    deepseek_api_key: str = ""
 
     @property
     def llm_chain(self) -> list[tuple[str, str, str, str]]:
         """Ordered ``(name, base_url, api_key, model)`` provider members.
 
-        Defaults to the configured Groq key so existing setups are unchanged.
+        Explicit LLM_FALLBACK_CHAIN entries go FIRST in listed order, then the
+        DeepSeek shorthand, then the Groq keys, then the remaining shorthands.
+        The owner sets priority by listing: "gemini|...|...,deepseek|..." puts
+        Gemini first and DeepSeek second with Groq as the bulk fallback.
         """
         members: list[tuple[str, str, str, str]] = []
-        for key in self.groq_api_key_list:
-            members.append(("groq", self.groq_base_url, key, self.groq_model))
+        # 1. Explicit chain entries first, in the owner's listed order.
         for entry in self.llm_fallback_chain.split(","):
             entry = entry.strip()
             if not entry:
@@ -185,6 +192,19 @@ class Settings(BaseSettings):
             if name == "groq" and api_key in self.groq_api_key_list:
                 continue  # already added from GROQ_API_KEY(S)
             members.append((name, base_url, api_key, model))
+        # 2. DeepSeek shorthand: fast cheap tier, second priority by default.
+        if self.deepseek_api_key and not _looks_like_template(self.deepseek_api_key):
+            members.append(
+                (
+                    "deepseek",
+                    "https://api.deepseek.com/v1",
+                    self.deepseek_api_key,
+                    "deepseek-chat",
+                )
+            )
+        # 3. Groq keys: the bulk fallback pool.
+        for key in self.groq_api_key_list:
+            members.append(("groq", self.groq_base_url, key, self.groq_model))
         # Shorthand keys append to the chain. A template leftover (the
         # shipped OPENAI_API_KEY=your_openai_api_key) must never occupy a slot:
         # it would 401 on every turn and look like a provider outage.

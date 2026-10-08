@@ -101,17 +101,19 @@ class Settings:
     llm_fallback_chain_raw: str = ""
     cerebras_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
+    # DeepSeek chat (OpenAI-compatible https://api.deepseek.com/v1). Billed,
+    # not free: a zero balance 402s, which the chain treats as an exhausted
+    # member (cools down, fails over) rather than a dead turn.
+    deepseek_api_key: Optional[str] = None
 
     @property
     def llm_fallback_chain(self) -> tuple[tuple[str, str, str, str], ...]:
-        """``(name, base_url, api_key, model)`` members after the Groq keys.
+        """``(name, base_url, api_key, model)`` members, owner-ordered first.
 
-        Same format the backend reads, so a key pasted once covers text and
-        voice. Entries are ``name|base_url|key|model``; a legacy
-        ``name:base_url:key:model`` is still accepted, but ``|`` is preferred
-        because OpenRouter model ids carry a colon suffix (``:free``) that the
-        colon form cannot represent. Malformed entries are skipped rather than
-        crashing the worker at boot.
+        Explicit entries keep the owner's listed order, then the DeepSeek
+        shorthand, then the remaining shorthands. The pipeline prepends these
+        BEFORE the Groq keys, so "gemini|...|..." in LLM_FALLBACK_CHAIN plus
+        DEEPSEEK_API_KEY yields gemini -> deepseek -> groq on voice calls.
         """
         members: list[tuple[str, str, str, str]] = []
         for entry in (self.llm_fallback_chain_raw or "").split(","):
@@ -138,6 +140,17 @@ class Settings:
             if name == "groq" and api_key in self.groq_api_keys:
                 continue  # already armed from GROQ_API_KEY(S)
             members.append((name, base_url, api_key, model))
+        # DeepSeek second: right after the owner's explicit entries, before the
+        # remaining shorthands, so the order reads gemini -> deepseek -> rest.
+        if self.deepseek_api_key and not _looks_like_placeholder(self.deepseek_api_key):
+            members.append(
+                (
+                    "deepseek",
+                    "https://api.deepseek.com/v1",
+                    self.deepseek_api_key,
+                    "deepseek-chat",
+                )
+            )
         if self.openai_api_key and not any(m[0] == "openai" for m in members):
             if self.openai_base_url and not _looks_like_placeholder(self.openai_api_key):
                 members.append(
@@ -200,6 +213,7 @@ class Settings:
             llm_fallback_chain_raw=_get("LLM_FALLBACK_CHAIN") or "",
             cerebras_api_key=_get("CEREBRAS_API_KEY"),
             openrouter_api_key=_get("OPENROUTER_API_KEY"),
+            deepseek_api_key=_get("DEEPSEEK_API_KEY"),
             log_level=os.getenv("LOG_LEVEL", "info").lower(),
         )
 

@@ -78,3 +78,42 @@ def test_final_member_also_fails_fast() -> None:
         await llm.LLMStream.aclose(stream)
 
     asyncio.run(scenario())
+
+
+class _FailingStream(_PrimaryStream):
+    def __init__(self, chat_ctx: llm.ChatContext, status: int) -> None:
+        super().__init__(chat_ctx)
+        self._status = status
+
+    async def __anext__(self) -> Any:
+        exc = RuntimeError("boom")
+        exc.status_code = self._status  # type: ignore[attr-defined]
+        raise exc
+
+
+def test_402_marks_member_down_instead_of_killing_the_turn() -> None:
+    """Live gap: a zero-balance DeepSeek answers 402, which was not in the
+    retryable set, so voice raised it raw - the turn died in silence with a
+    working pool behind it. Now 402 cools the member down and the session's
+    retry serves the next member."""
+    import time
+
+    async def scenario() -> None:
+        first = _RecordingLLM()
+        last = _RecordingLLM()
+        owner = FallbackLLM([first, last])
+        failing = _FailingStream(llm.ChatContext.empty(), 402)
+        stream = _FallbackStream(owner, failing, 0)
+        try:
+            await stream.__anext__()
+            raise AssertionError("expected the 402 to propagate after cooldown")
+        except RuntimeError:
+            pass
+        assert owner._down_until[0] > time.monotonic()
+        # The session retry now lands on the next member, not the dead one.
+        retry = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
+        assert isinstance(retry, _FallbackStream)
+        assert retry._member_index == 1
+        await llm.LLMStream.aclose(retry)
+
+    asyncio.run(scenario())
