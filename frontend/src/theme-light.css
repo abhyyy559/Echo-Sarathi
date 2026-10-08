@@ -1,0 +1,149 @@
+/* Light mode — override-only stylesheet, loaded LAST so it wins without
+ * touching the generated files (od-landing/od-pricing say do-not-hand-edit).
+ * Everything keys off <html data-theme="light">, set by src/theme.js.
+ * Warm-paper palette keeps the pearl/bronze brand identity in daylight.
+ */
+
+/* ============ global app tokens (styles.css :root) ============ */
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf7f1;
+  --bg2: #f1ece1;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #ffffff;
+  --surface2: #f4f0e6;
+  --border: rgba(28, 25, 23, 0.12);
+  --border-strong: rgba(28, 25, 23, 0.22);
+  --fg: #1c1917;
+  --text: #1c1917;
+  --muted: #6f6558;
+  --dim: #9a8f7f;
+  --brand: #57503f;
+  --brand-soft: rgba(87, 80, 63, 0.1);
+  --brand-glow: rgba(87, 80, 63, 0.22);
+  --accent: #57503f;
+  --accent2: #6f6558;
+  --cyan: #6b6257;
+  --cyan-soft: rgba(107, 98, 87, 0.1);
+  --gold: #4a4438;
+  --gold-soft: rgba(74, 68, 56, 0.08);
+  --green: #3e7d5b;
+  --success: #3e7d5b;
+  --red: #c14a3c;
+  --danger: #c14a3c;
+  --amber: #a5762a;
+  --warn: #a5762a;
+  --line: rgba(28, 25, 23, 0.1);
+  --line2: rgba(28, 25, 23, 0.2);
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --shadow-lg: 0 18px 44px rgba(28, 25, 23, 0.12);
+  --glow: 0 0 0 1px var(--line), 0 12px 40px rgba(28, 25, 23, 0.1);
+  --glow-accent: radial-gradient(closest-side, rgba(87, 80, 63, 0.12), transparent);
+}
+
+html[data-theme="light"] body {
+  background:
+    radial-gradient(1000px 460px at 85% -180px, rgba(87, 80, 63, 0.07), transparent),
+    var(--bg);
+}
+
+html[data-theme="light"] ::placeholder { color: #a39a8e; }
+html[data-theme="light"] ::selection { background: rgba(87, 80, 63, 0.25); color: #1c1917; }
+
+/* ============ theme toggle button (both modes) ============ */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 50%; flex: none;
+  border: 1px solid var(--line2, rgba(128, 128, 128, 0.35));
+  color: inherit; background: transparent; cursor: pointer;
+  transition: background 0.25s, transform 0.2s;
+}
+.theme-toggle:hover { background: rgba(128, 128, 128, 0.14); }
+.theme-toggle:active { transform: scale(0.94); }
+.theme-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* ============ landing page scope ============ */
+html[data-theme="light"] .od-landing {
+  --bg: #faf7f1;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #ffffff;
+  --fg: #1c1917;
+  --muted: #6f6558;
+  --dim: #9a8f7f;
+  --violet: #57503f;
+  --violet-soft: rgba(87, 80, 63, 0.1);
+  --violet-glow: rgba(87, 80, 63, 0.22);
+  --cyan: #6b6257;
+  --cyan-soft: rgba(107, 98, 87, 0.1);
+  --gold: #4a4438;
+  --gold-soft: rgba(74, 68, 56, 0.08);
+  --red: #c14a3c;
+  --border: rgba(28, 25, 23, 0.12);
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-border: rgba(28, 25, 23, 0.12);
+}
+html[data-theme="light"] .od-landing { background: #faf7f1; color: #1c1917; }
+html[data-theme="light"] .od-landing .hero {
+  background: radial-gradient(ellipse 70% 55% at 50% 40%, rgba(87, 80, 63, 0.06) 0%, transparent 70%), var(--bg);
+}
+html[data-theme="light"] .od-landing nav::before { background: rgba(250, 247, 241, 0.6); }
+html[data-theme="light"] .od-landing nav.scrolled::before { background: rgba(250, 247, 241, 0.92); }
+html[data-theme="light"] .od-landing .mobile-drawer { background: rgba(250, 247, 241, 0.97); }
+/* Chat bubbles carry hardcoded near-white text — re-ink for paper. */
+html[data-theme="light"] .od-landing .bub.user { background: rgba(87, 80, 63, 0.1); color: #1c1917; }
+html[data-theme="light"] .od-landing .bub.agent { background: rgba(87, 80, 63, 0.16); color: #1c1917; }
+html[data-theme="light"] .od-landing .s-bubble.agent { background: rgba(87, 80, 63, 0.1); color: #1c1917; }
+html[data-theme="light"] .od-landing .s-bubble.caller { background: rgba(28, 25, 23, 0.04); color: #6f6558; }
+html[data-theme="light"] .od-landing .hero h1 .accent {
+  background: linear-gradient(120deg, #57503f 10%, #a39a8e 55%, #4a4438 90%);
+  -webkit-background-clip: text; background-clip: text;
+}
+html[data-theme="light"] .od-landing .nav-link:hover { background: rgba(28, 25, 23, 0.06); }
+html[data-theme="light"] .od-landing .problem-item::after { background: rgba(255, 255, 255, 0.6); }
+html[data-theme="light"] .od-landing .voice-line { color: #3a352d; }
+/* Dark glass widgets (hero visual, demo box) stay dark by design — they read
+ * as embedded terminals on the light page. */
+
+/* ============ pricing page scope ============ */
+html[data-theme="light"] .od-pricing {
+  --bg: #faf7f1;
+  --fg: #1c1917;
+  --muted: #6f6558;
+  --dim: #9a8f7f;
+  --pearl: #57503f;
+  --stone: #6b6257;
+  --ivory: #1c1917;
+  --border: rgba(28, 25, 23, 0.12);
+}
+html[data-theme="light"] .od-pricing { background: #faf7f1; color: #1c1917; }
+html[data-theme="light"] .od-pricing nav::before { background: rgba(250, 247, 241, 0.6); }
+html[data-theme="light"] .od-pricing nav.scrolled::before { background: rgba(250, 247, 241, 0.92); }
+html[data-theme="light"] .od-pricing .mobile-drawer { background: rgba(250, 247, 241, 0.97); }
+html[data-theme="light"] .od-pricing .nav-cta { background: #1c1917; color: #faf7f1; }
+html[data-theme="light"] .od-pricing .mobile-drawer .drawer-cta { background: #1c1917; color: #faf7f1; }
+html[data-theme="light"] .od-pricing .nav-link:hover { background: rgba(28, 25, 23, 0.06); }
+html[data-theme="light"] .od-pricing .logo-text { color: #1c1917; }
+
+/* ============ roadmap v2 scope ============ */
+html[data-theme="light"] .rm2 {
+  --rm-bg: #faf7f1;
+  --rm-fg: #1c1917;
+  --rm-muted: #6f6558;
+  --rm-dim: #9a8f7f;
+  --rm-brand: #57503f;
+  --rm-brand-soft: rgba(87, 80, 63, 0.1);
+  --rm-line: rgba(28, 25, 23, 0.1);
+  --rm-line2: rgba(28, 25, 23, 0.2);
+  --rm-surface: rgba(255, 255, 255, 0.72);
+  --rm-green: #3e7d5b;
+  --rm-green-soft: rgba(62, 125, 91, 0.1);
+  --rm-amber: #a5762a;
+  --rm-amber-soft: rgba(165, 118, 42, 0.1);
+}
+html[data-theme="light"] .rm2 { background: var(--rm-bg); color: var(--rm-fg); }
+html[data-theme="light"] .rm2-btn-primary { background: #1c1917; color: #faf7f1; }
+html[data-theme="light"] .rm2-pnode { background: rgba(255, 255, 255, 0.7); }
+html[data-theme="light"] .rm2-node { background: rgba(255, 255, 255, 0.7); }
+html[data-theme="light"] .rm2-cta {
+  background: radial-gradient(600px 300px at 20% 0%, rgba(87, 80, 63, 0.07), transparent 65%), var(--rm-surface);
+}

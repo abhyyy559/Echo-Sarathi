@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import '../od-pricing.css';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
-/* Pricing — ported from frontend by opendesign/pricing.html.
+/* Pricing â€” ported from frontend by opendesign/pricing.html.
  * Public page: no auth, no backend calls. Estimator is local state.
  */
 export default function PricingPage() {
@@ -33,7 +34,7 @@ export default function PricingPage() {
     return () => io.disconnect();
   }, []);
 
-  // Billed in rupees: ₹8.50/min (≈ $0.10 × 85). Indian digit grouping.
+  // Billed in rupees: â‚¹8.50/min (â‰ˆ $0.10 Ã— 85). Indian digit grouping.
   const cost = (minutes * 8.5).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
   return (
@@ -52,6 +53,7 @@ export default function PricingPage() {
           <div className="nav-right">
             <Link to="/playground" className="nav-link">Playground</Link>
             <Link to="/roadmap" className="nav-link">Roadmap</Link>
+            <ThemeToggle />
             <Link to="/login" className="nav-cta">Start free</Link>
             <div className={`hamburger${mobileOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-label="Menu"
               onClick={() => setMobileOpen((v) => !v)}
@@ -73,12 +75,12 @@ export default function PricingPage() {
       <main className="page">
         <span className="kick reveal">Pricing</span>
         <h1 className="reveal">Two ways to start.<br />Both simple.</h1>
-        <p className="sub reveal">Explore on us. Scale by the second. No seats, no platform fee, no surprise line items — your live spend always sits on your dashboard.</p>
+        <p className="sub reveal">Explore on us. Scale by the second. No seats, no platform fee, no surprise line items â€” your live spend always sits on your dashboard.</p>
 
         <div className="grid">
           <div className="pcard reveal">
             <div className="tier"><i></i>Free</div>
-            <div className="pline"><span className="amt">₹0</span><span className="unit">forever</span></div>
+            <div className="pline"><span className="amt">â‚¹0</span><span className="unit">forever</span></div>
             <p className="ptag">One agent, real conversations, real structured data. Everything you need to hear the difference before spending anything.</p>
             <ul className="feats">
               <li><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg><span><b>1 voice agent</b> with full builder access</span></li>
@@ -93,14 +95,14 @@ export default function PricingPage() {
           <div className="pcard featured reveal" style={{ transitionDelay: '.12s' }}>
             <span className="rec"><i></i>Recommended</span>
             <div className="tier"><i style={{ background: 'var(--pearl)' }}></i>Pay as you go</div>
-            <div className="pline"><span className="amt">₹8.50</span><span className="unit">per minute · billed by the second</span></div>
-            <p className="ptag">Unlimited agents and campaigns. Metered to the second — watch spend tick live while your campaigns run.</p>
+            <div className="pline"><span className="amt">â‚¹8.50</span><span className="unit">per minute Â· billed by the second</span></div>
+            <p className="ptag">Unlimited agents and campaigns. Metered to the second â€” watch spend tick live while your campaigns run.</p>
             <div className="est">
               <span className="est-h">Estimate your month</span>
               <input type="range" min="100" max="5000" step="50" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} aria-label="Estimated minutes per month" />
               <div className="est-row">
                 <span className="est-min"><b>{minutes.toLocaleString('en-IN')}</b> minutes / mo</span>
-                <span className="est-cost"><span>₹{cost}</span> <small>/ month est.</small></span>
+                <span className="est-cost"><span>â‚¹{cost}</span> <small>/ month est.</small></span>
               </div>
             </div>
             <ul className="feats">
@@ -123,7 +125,7 @@ export default function PricingPage() {
 
         <div className="mini-cta reveal">
           <h2>Start free. Scale when it works.</h2>
-          <p>Create an agent, run your first calls on us, and only pay when you take it live — ₹8.50 per minute, metered to the second, billed in rupees.</p>
+          <p>Create an agent, run your first calls on us, and only pay when you take it live â€” â‚¹8.50 per minute, metered to the second, billed in rupees.</p>
           <div className="btns">
             <Link to="/login" className="btn-p">Start free</Link>
             <Link to="/#demo" className="btn-g">See the demo</Link>
@@ -146,3 +148,4 @@ export default function PricingPage() {
     </div>
   );
 }
+
