@@ -59,8 +59,15 @@ $null = Check "POST /api/auth/login (demo user)" {
 
 $null = Check "GET /api/agents (seed present)" {
     $headers = @{ Authorization = "Bearer $script:token" }
-    $agents = Invoke-RestMethod -Uri "$renderUrl/api/agents" -Headers $headers -TimeoutSec 60
-    if (@($agents).Count -lt 1) { throw "no seeded agent" }
+    $payload = Invoke-RestMethod -Uri "$renderUrl/api/agents" -Headers $headers -TimeoutSec 60
+    # Today this endpoint returns a JSON array; accept {value: [...]} too.
+    $payload = Invoke-RestMethod -Uri "$renderUrl/api/agents" -Headers $headers -TimeoutSec 60
+    $agents = @($payload)
+    if ($payload -is [System.Management.Automation.PSCustomObject] -and
+        $payload.PSObject.Properties.Name -contains "value") {
+        $agents = @($payload.value)
+    }
+    if ($agents.Count -lt 1) { throw "no seeded agent" }
     Write-Host ("        agents: " + ((@($agents) | ForEach-Object { $_.name }) -join ", "))
     $true
 }
