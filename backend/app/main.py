@@ -1,4 +1,4 @@
-"""FastAPI application factory — mounts every router (enterprise platform).
+"""FastAPI application factory â€” mounts every router (enterprise platform).
 
 Module path: ``app.main:app`` (see infra/docker-compose.yml). The legacy
 ``backend/main.py`` remains as a thin re-export so ``uvicorn main:app`` keeps
@@ -33,7 +33,7 @@ def _provider_configured(settings: Settings) -> bool:
     """True when the selected (or auto-detected) provider has credentials.
 
     The explicit ``telephony_provider`` setting wins; auto-detection prefers
-    Plivo (cheaper India legs) over Twilio. Never true without credentials —
+    Plivo (cheaper India legs) over Twilio. Never true without credentials â€”
     the guardrail that stops the dialer from trying to place real calls.
     """
     provider = settings.telephony_provider
@@ -68,7 +68,7 @@ def _build_telephony(settings: Settings) -> TelephonyClient:
 
 
 def _should_run_dialer(settings: Settings) -> bool:
-    """The dialer places REAL calls — run it only with real telephony configured."""
+    """The dialer places REAL calls â€” run it only with real telephony configured."""
     return bool(settings.dialer_enabled and _provider_configured(settings))
 
 
@@ -95,13 +95,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fast_app.state.engine = engine
     fast_app.state.session_factory = session_factory
     fast_app.state.telephony = _build_telephony(app_settings)
-
-    # The Groq response interceptor writes snapshots outside the request's
-    # dependency scope; bind the same factory the routes use. Tests rebind
-    # app.state.session_factory, so this is refreshed in the lifespan below.
-    from app.services import usage as usage_service
-
-    usage_service.configure_session_factory(session_factory)
 
     fast_app.add_middleware(
         CORSMiddleware,
@@ -161,12 +154,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logging.basicConfig(level=app_settings.log_level.upper())
 
-        # Tests (and callers that rebind app.state.session_factory) must point
-        # the response interceptor at the same database as the routes.
-        from app.services import usage as usage_service
-
-        usage_service.configure_session_factory(app.state.session_factory)
-
         # Sync /domain-configs/*.json into the legacy table (best effort; only
         # when the schema exists).
         if schema_ready(session_factory):
@@ -174,28 +161,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             try:
                 sync_domain_configs(session_factory(), app_settings.domain_configs_dir)
-            except Exception:  # noqa: BLE001 — never block startup on config sync
+            except Exception:  # noqa: BLE001 â€” never block startup on config sync
                 logger.exception("domain config sync failed at startup")
         else:
-            logger.info("schema not ready at startup — skipping domain config sync")
+            logger.info("schema not ready at startup â€” skipping domain config sync")
 
         if not app_settings.internal_api_token:
             logger.warning(
-                "INTERNAL_API_TOKEN is empty — /internal/* endpoints reject all calls"
+                "INTERNAL_API_TOKEN is empty â€” /internal/* endpoints reject all calls"
             )
         if app_settings.jwt_secret == "change_me":
             logger.warning(
-                "JWT_SECRET is the default value — tokens are forgeable; "
+                "JWT_SECRET is the default value â€” tokens are forgeable; "
                 "set a long random secret in production"
             )
         if app_settings.allow_public_registration:
             logger.warning(
-                "ALLOW_PUBLIC_REGISTRATION is on — anyone can self-register "
+                "ALLOW_PUBLIC_REGISTRATION is on â€” anyone can self-register "
                 "an owner org; set false on exposed deployments"
             )
         if app_settings.allow_any_outbound_number:
             logger.warning(
-                "ALLOW_ANY_OUTBOUND_NUMBER is on — test calls are not limited to "
+                "ALLOW_ANY_OUTBOUND_NUMBER is on â€” test calls are not limited to "
                 "TEST_PHONE_NUMBERS, so any signed-in user can place billable "
                 "calls to any number"
             )
@@ -213,11 +200,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "(no outbound calls will be placed)"
             )
 
-        from app.services.usage_collector import usage_refresh_loop
-
-        usage_task = asyncio.create_task(
-            usage_refresh_loop(app_settings, app.state.session_factory)
-        )
         try:
             yield
         finally:
@@ -227,11 +209,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await dialer_task
                 except asyncio.CancelledError:
                     pass
-            usage_task.cancel()
-            try:
-                await usage_task
-            except asyncio.CancelledError:
-                pass
 
     fast_app.router.lifespan_context = lifespan
 
@@ -244,7 +221,7 @@ def db_ping(session_factory: sessionmaker) -> bool:
         with session_factory() as db:
             db.execute(text("SELECT 1"))
         return True
-    except Exception:  # noqa: BLE001 — health checks must never raise
+    except Exception:  # noqa: BLE001 â€” health checks must never raise
         return False
 
 
@@ -255,7 +232,7 @@ def schema_ready(session_factory: sessionmaker) -> bool:
 
         inspector = inspect(session_factory.kw["bind"])
         return inspector.has_table("domain_configs")
-    except Exception:  # noqa: BLE001 — readiness probes never raise
+    except Exception:  # noqa: BLE001 â€” readiness probes never raise
         return False
 
 
