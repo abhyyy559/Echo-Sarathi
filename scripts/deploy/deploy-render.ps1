@@ -74,9 +74,16 @@ Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 
 Add-EnvVar "TELEPHONY_PROVIDER" "vobiz"
 Add-EnvVar "CONSENT_ENFORCEMENT" "true"
+# Written out rather than left to config.py's default: this PUT replaces the
+# whole service environment, and an unset gate would let the test-call route
+# dial any number the operator types (see the 2026 misdial).
+Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" "false"
 Add-EnvVar "DIALER_ENABLED" "true"
 Add-EnvVar "DEFAULT_CPS_LIMIT" "1"
-Add-EnvVar "DEFAULT_CONCURRENCY_LIMIT" "2"
+# One live call at a time. A second leg dialled while the single cold-starting
+# worker is still busy rings with nobody answering, and the campaign is being
+# validated as sequential right now; raise this once multi-job capacity is proven.
+Add-EnvVar "DEFAULT_CONCURRENCY_LIMIT" "1"
 Add-EnvVar "RETRY_MAX_ATTEMPTS" "3"
 Add-EnvVar "RETRY_BACKOFF_MINUTES" "15"
 Add-EnvVar "TIMEZONE" "Asia/Kolkata"

@@ -83,12 +83,18 @@ services:
         sync: false
       - key: CONSENT_ENFORCEMENT
         value: "true"
+      # The test-call route refuses numbers that are not in TEST_PHONE_NUMBERS
+      # while this stays false. Real outbound is only ever campaign dialing of
+      # consented contacts plus the approved test allowlist.
+      - key: ALLOW_ANY_OUTBOUND_NUMBER
+        value: "false"
       - key: DIALER_ENABLED
         value: "true"
       - key: DEFAULT_CPS_LIMIT
         value: "1"
+      # One live call at a time until multi-job worker capacity is proven.
       - key: DEFAULT_CONCURRENCY_LIMIT
-        value: "2"
+        value: "1"
       - key: TIMEZONE
         value: Asia/Kolkata
       - key: CALLING_HOURS_START
