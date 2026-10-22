@@ -96,6 +96,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fast_app.state.session_factory = session_factory
     fast_app.state.telephony = _build_telephony(app_settings)
 
+    # The Groq response interceptor writes snapshots outside the request's
+    # dependency scope; bind the same factory the routes use. Tests rebind
+    # app.state.session_factory, so this is refreshed in the lifespan below.
+    from app.services import usage as usage_service
+
+    usage_service.configure_session_factory(session_factory)
+
     fast_app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origin_list,
@@ -154,6 +161,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logging.basicConfig(level=app_settings.log_level.upper())
 
+        # Tests (and callers that rebind app.state.session_factory) must point
+        # the response interceptor at the same database as the routes.
+        from app.services import usage as usage_service
+
+        usage_service.configure_session_factory(app.state.session_factory)
+
         # Sync /domain-configs/*.json into the legacy table (best effort; only
         # when the schema exists).
         if schema_ready(session_factory):
@@ -180,6 +193,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ALLOW_PUBLIC_REGISTRATION is on — anyone can self-register "
                 "an owner org; set false on exposed deployments"
             )
+        if app_settings.allow_any_outbound_number:
+            logger.warning(
+                "ALLOW_ANY_OUTBOUND_NUMBER is on — test calls are not limited to "
+                "TEST_PHONE_NUMBERS, so any signed-in user can place billable "
+                "calls to any number"
+            )
 
         dialer_task: asyncio.Task | None = None
         if _should_run_dialer(app_settings):
@@ -193,6 +212,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "dialer NOT started: telephony credentials missing "
                 "(no outbound calls will be placed)"
             )
+
+        from app.services.usage_collector import usage_refresh_loop
+
+        usage_task = asyncio.create_task(
+            usage_refresh_loop(app_settings, app.state.session_factory)
+        )
         try:
             yield
         finally:
@@ -202,6 +227,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await dialer_task
                 except asyncio.CancelledError:
                     pass
+            usage_task.cancel()
+            try:
+                await usage_task
+            except asyncio.CancelledError:
+                pass
 
     fast_app.router.lifespan_context = lifespan
 

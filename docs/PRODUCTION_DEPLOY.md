@@ -285,6 +285,12 @@ Free-tier gotchas that were deliberately designed around:
   password in the source); clearing `DEMO_PASSWORD` and re-deploying removes it.
 - `CONSENT_ENFORCEMENT=true` and `TEST_PHONE_NUMBERS` limits outbound calls to
   numbers you own.
+- `ALLOW_ANY_OUTBOUND_NUMBER=true` lifts the sandbox allowlist for **test
+  calls** on this deployment: any signed-in user can dial any valid number.
+  Campaign dialing still requires per-contact consent, and the startup log
+  prints a warning while this is on. Set it back to false (or delete the var)
+  to restore the allowlist; rotating `TEST_PHONE_NUMBERS` is not enough while
+  the override is on.
 - `/api/health` exposes only booleans, model names, and TCP reachability —
   never key values.
 - `/docs`, `/redoc` and `/openapi.json` are off when `ENVIRONMENT=production`.

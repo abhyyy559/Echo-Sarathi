@@ -56,14 +56,16 @@ def place_test_call(
         target = allowlist[0]
     else:
         raise HTTPException(
-            status_code=422, detail="no 'to' given and TEST_PHONE_NUMBERS is empty"
+            status_code=422,
+            detail="no 'to' given and TEST_PHONE_NUMBERS is empty; pass a number explicitly",
         )
 
     # An explicitly requested number is allowed only when it belongs to a
     # consenting contact in the caller's own org (e.g. a roster number the
     # faculty uploaded) — the request itself is NOT authorization for
     # arbitrary dialing. Anything else stays behind the TEST_PHONE_NUMBERS
-    # gate so one authenticated user cannot place billable calls anywhere.
+    # gate so one authenticated user cannot place billable calls anywhere,
+    # unless the operator turned that gate off explicitly.
     roster_match = None
     if payload.to and target:
         roster_match = db.scalar(
@@ -76,10 +78,17 @@ def place_test_call(
             )
         )
     if not (payload.to and target and roster_match is not None):
-        if settings.consent_enforcement and target not in allowlist:
+        if (
+            settings.consent_enforcement
+            and not settings.allow_any_outbound_number
+            and target not in allowlist
+        ):
             raise HTTPException(
                 status_code=422,
-                detail=f"{target} is not in TEST_PHONE_NUMBERS; consent enforcement is on",
+                detail=(
+                    f"{target} is not in TEST_PHONE_NUMBERS; consent enforcement "
+                    "is on. Set ALLOW_ANY_OUTBOUND_NUMBER=true to dial any number."
+                ),
             )
 
     if payload.agent_version_id is not None:

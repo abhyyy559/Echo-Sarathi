@@ -88,7 +88,7 @@ export default function TestCallPanel({ versionId, contactCard }) {
             inputMode="tel"
           />
           <small className="dp-sub" style={{ display: 'block', marginTop: 4 }}>
-            Leave blank to dial the configured sandbox number.
+            Leave blank to dial the first configured sandbox number, if there is one.
           </small>
         </div>
         <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={placeCall}>

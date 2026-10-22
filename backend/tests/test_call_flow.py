@@ -162,3 +162,49 @@ def test_latest_org_version_used_when_omitted(
     with session_factory() as db:
         call = db.get(Call, body["call_id"])
         assert call.agent_version_id == version_id
+
+def test_any_number_allowed_when_override_is_on(
+    app, client, session_factory, fake_telephony
+):
+    """ALLOW_ANY_OUTBOUND_NUMBER=true lifts the TEST_PHONE_NUMBERS gate.
+
+    The sandbox allowlist exists so a leaked login cannot place billable calls
+    anywhere; a production deployment that really dials recipients opts out of
+    it explicitly instead of silently allowing every number.
+    """
+    app.state.settings.allow_any_outbound_number = True
+    token, user = register(client)
+    with session_factory() as db:
+        dc_id, version_id = _seed_domain_and_agent(db, user["org_id"])
+    target = "+917842594002"
+    resp = _post(
+        client,
+        token,
+        {"to": target, "domain_config_id": dc_id, "agent_version_id": version_id},
+    )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        from app.models import Contact
+
+        call = db.get(Call, resp.json()["call_id"])
+        contact = db.get(Contact, call.contact_id)
+        assert contact is not None
+        assert contact.phone == target
+
+
+def test_unknown_number_still_gated_by_default(client, session_factory):
+    """The default stays deny-by-default: no allowlist entry, no call."""
+    token, user = register(client)
+    with session_factory() as db:
+        dc_id, version_id = _seed_domain_and_agent(db, user["org_id"])
+    resp = _post(
+        client,
+        token,
+        {
+            "to": "+917842594002",
+            "domain_config_id": dc_id,
+            "agent_version_id": version_id,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "not in TEST_PHONE_NUMBERS" in resp.json()["detail"]

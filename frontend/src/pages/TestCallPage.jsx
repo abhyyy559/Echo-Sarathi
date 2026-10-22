@@ -169,7 +169,7 @@ export default function TestCallPage() {
             onChange={(e) => setTo(e.target.value)}
           />
           <p className="hint">
-            Leave blank to dial the configured sandbox/test number. Only use numbers you are authorized to call.
+            Any valid number works when the deployment allows it; leaving this blank dials the first configured sandbox number. Only call numbers you are authorized to call, and make sure the recipient has consented.
           </p>
         </div>
 

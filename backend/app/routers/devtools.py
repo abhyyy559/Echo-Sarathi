@@ -181,6 +181,8 @@ def dev_status(
         "dialer_enabled": settings.dialer_enabled,
         "recording_retention_days": settings.recording_retention_days,
         "consent_enforcement": settings.consent_enforcement,
+        "allow_any_outbound_number": settings.allow_any_outbound_number,
+        "sandbox_numbers": len(settings.test_phone_number_list),
         "alembic": alembic,
         "providers": settings.provider_presence,
     }

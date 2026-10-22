@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     redis_url: str = ""
     environment: str = "development"
     log_level: str = "info"
+    # Daily Deepgram/Cartesia poll cadence. Zero disables the background task.
+    usage_refresh_interval_hours: int = 24
 
     # --- telephony (provider selection) -----------------------------------
     # "", "twilio", "plivo" or "vobiz". Empty = auto-select (Plivo wins when
@@ -134,8 +136,14 @@ class Settings(BaseSettings):
 
     # --- compliance --------------------------------------------------------
     consent_enforcement: bool = True
-    # Comma-separated allowlist of phone numbers that bypass consent enforcement.
+    # Comma-separated allowlist of phone numbers that bypass consent enforcement
+    # for test calls and campaign dialing.
     test_phone_numbers: str = ""
+    # Test calls are normally capped to TEST_PHONE_NUMBERS plus consenting
+    # roster contacts, so a leaked login cannot place billable calls anywhere.
+    # Set true on a deployment that genuinely dials real recipients; campaign
+    # dialing still requires per-contact consent either way.
+    allow_any_outbound_number: bool = False
     recording_retention_days: int = 90
     retention_job_enabled: bool = True
 
@@ -169,7 +177,16 @@ class Settings(BaseSettings):
     # --- voice pipeline provider keys (presence-only checks by /api/health) ---
     # Consumed by the voice-agent worker; the backend never sends these anywhere.
     deepgram_api_key: str = ""
+    # Optional: enables the daily Deepgram usage poll. Deepgram's usage API is
+    # project-scoped, so the key alone is not enough.
+    deepgram_project_id: str = ""
     cartesia_api_key: str = ""
+    # Admin-scoped Cartesia key for GET /usage/credits. The standard key is
+    # intentionally not used here.
+    cartesia_admin_api_key: str = ""
+    # Sarvam has no usage API. The key is only used to decide whether the
+    # dashboard should show the locally-counted character bucket.
+    sarvam_tts_api: str = ""
     groq_api_key: str = ""
     # Extra comma-separated Groq keys. The text-playground path rotates
     # through groq_api_key_list on 429s; the voice worker (voice-agent)
