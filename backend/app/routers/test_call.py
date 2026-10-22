@@ -141,19 +141,31 @@ def place_test_call(
         select(Contact).where(Contact.campaign_id == campaign.id, Contact.phone == target)
     )
     if contact is None:
+        # Placing the dial and RECORDING CONSENT are different authorizations.
+        # ALLOW_ANY_OUTBOUND_NUMBER turns the dialing gate off for testing; it
+        # does not make a stranger a consenting contact. The flag minted here
+        # used to be unconditional, so one mistyped test number permanently
+        # entered the campaign dialer as consent=True (campaigns.py trusts it).
+        on_allowlist = target in allowlist
         contact = Contact(
             campaign_id=campaign.id,
             name=(payload.contact.get("name") if payload.contact else None)
             or f"Test Call ({target})",
             phone=target,
             status="pending_review",
-            consent=True,
+            consent=on_allowlist or roster_match is not None,
             consent_source=(
                 "manual_roster_call"
                 if roster_match is not None
-                else ("manual_test_call" if payload.to else "test_allowlist")
+                else ("test_allowlist" if on_allowlist else None)
             ),
         )
+        if not contact.consent:
+            logger.warning(
+                "test call to %s dialed with the outbound gate off; contact "
+                "recorded WITHOUT consent",
+                target,
+            )
         db.add(contact)
         db.flush()
 

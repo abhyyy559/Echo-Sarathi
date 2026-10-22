@@ -134,3 +134,64 @@ def test_test_call_explicit_unknown_number_rejected_without_allowlist(
             headers=auth_headers(token),
         )
     assert resp.status_code == 422, resp.text
+
+
+def test_gate_off_dial_records_no_consent(client, session_factory, monkeypatch):
+    """ALLOW_ANY_OUTBOUND_NUMBER authorizes the dial, not a consent record.
+
+    A mistyped test number used to be stored with consent=True /
+    consent_source='manual_test_call', and the campaign dialer trusts that flag
+    - so one typo permanently enrolled a stranger as a consenting contact.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.models import Call, Contact
+    from test_call_flow import FakeTelephony
+
+    monkeypatch.setattr(
+        "app.routers.test_call._get_telephony", lambda request: FakeTelephony()
+    )
+    token, _user = register(client)
+    ids = _make_agent_and_version(client, token)
+    fresh = create_app(
+        make_settings(test_phone_numbers="", allow_any_outbound_number=True)
+    )
+    fresh.state.session_factory = session_factory
+    with TestClient(fresh) as open_app:
+        resp = open_app.post(
+            "/api/test-call",
+            json={"to": "+919812345677", "agent_version_id": ids["version"]["id"]},
+            headers=auth_headers(token),
+        )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        contact = db.get(Contact, db.get(Call, resp.json()["call_id"]).contact_id)
+        assert contact.consent is False
+        assert contact.consent_source is None
+
+
+def test_allowlisted_test_call_still_records_consent(client, session_factory, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.models import Call, Contact
+    from test_call_flow import FakeTelephony
+
+    monkeypatch.setattr(
+        "app.routers.test_call._get_telephony", lambda request: FakeTelephony()
+    )
+    token, _user = register(client)
+    ids = _make_agent_and_version(client, token)
+    with TestClient(_test_number_app(session_factory)) as numbered:
+        resp = numbered.post(
+            "/api/test-call",
+            json={"to": "+919812345601", "agent_version_id": ids["version"]["id"]},
+            headers=auth_headers(token),
+        )
+    assert resp.status_code == 200, resp.text
+    with session_factory() as db:
+        contact = db.get(Contact, db.get(Call, resp.json()["call_id"]).contact_id)
+        assert contact.consent is True
+        assert contact.consent_source == "test_allowlist"
+
