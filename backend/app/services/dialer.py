@@ -171,10 +171,15 @@ class DialerService:
                     in_flight < self.settings.default_concurrency_limit
                     and self._cps_slots_available(now)
                 ):
-                    if not self._process_next(db, campaign, now):
+                    outcome = self._process_next(db, campaign, now)
+                    if outcome == "idle":
                         break
-                    in_flight += 1
-                    placed += 1
+                    if outcome == "dialled":
+                        in_flight += 1
+                        placed += 1
+                    # "skipped" consumed a pick without a leg: keep looping so a
+                    # non-dialable contact cannot stall the campaign, but never
+                    # count it as a dial or occupy a concurrency slot.
                 maybe_complete_campaign(db, campaign.id)
                 db.commit()
             self._sweep_stale_ringing(db, now)
@@ -218,17 +223,21 @@ class DialerService:
                 logger.exception("stale ringing sweep failed for call %s", call.id)
         return synced
 
-    def _process_next(self, db: Session, campaign: Campaign, now: datetime) -> bool:
-        """Pick and dial the next eligible contact. False when nothing to do."""
+    def _process_next(self, db: Session, campaign: Campaign, now: datetime) -> str:
+        """Pick the next contact: ``"dialled"``, ``"skipped"``, or ``"idle"``.
+
+        ``"skipped"`` means a contact was retired without a leg (no consent);
+        the caller must keep going, but the campaign placed no call.
+        """
         contact = self._next_eligible_contact(db, campaign.id, now)
         if contact is None:
-            return False
+            return "idle"
         if not self._consent_ok(contact):
             logger.info(
                 "dialer: contact %s opted out (no consent, not a test number)", contact.id
             )
             contact.status = "opted_out"
             db.commit()
-            return True  # consumed a pick; loop continues to next contact
+            return "skipped"
         self._place(db, contact, campaign, now)
-        return True
+        return "dialled"
