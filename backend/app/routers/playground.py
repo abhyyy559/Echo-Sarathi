@@ -36,6 +36,7 @@ from app.schemas import DryRunCreate
 from app.timeutil import utcnow
 from app.services.telemetry import recorder as telemetry
 from app.services.token_substitution import apply_token_substitution, build_token_map
+from app.services.usage import record_response as record_provider_response
 
 logger = logging.getLogger(__name__)
 
@@ -1343,6 +1344,23 @@ _EXHAUSTED_PROVIDERS: dict[int, tuple[float, set[str]]] = {}
 _EXHAUSTED_TTL_S = 2 * 3600
 
 
+def _record_llm_response(
+    settings: Settings, name: str, api_key: str, model: str, response: Any
+) -> None:
+    """Persist rate-limit headers from one LLM attempt (never raises)."""
+    provider = "groq" if str(name).startswith("groq") else str(name)
+    try:
+        record_provider_response(
+            response,
+            provider=provider,
+            api_key=api_key,
+            model=model,
+            settings=settings,
+        )
+    except Exception:  # noqa: BLE001 - usage must never break a chat turn
+        logger.debug("provider usage capture failed", exc_info=True)
+
+
 def _session_exhausted(call_id: Optional[int]) -> set[str]:
     """Live set of providers to skip for this call (mutate to record more)."""
     if call_id is None:
@@ -1447,6 +1465,10 @@ async def _groq_chat(
                         json=member_body,
                         headers=headers,
                     )
+                    # Groq reports quota only in response headers; persist them
+                    # so the dashboard can show which key dies first. Never
+                    # raises, never blocks the turn.
+                    _record_llm_response(settings, name, api_key, model, response)
                     telemetry.record(
                         "llm_attempt",
                         level="info" if response.status_code == 200 else "warn",
@@ -1514,6 +1536,7 @@ async def _groq_chat(
                         json=member_body,
                         headers=headers,
                     )
+                    _record_llm_response(settings, name, api_key, model, response)
                     if response.status_code == 200:
                         return _message_or_raise(response, served_by=(name, model))
                 # Hard-quota FIRST, on ANY status: a DeepSeek 402 ("Insufficient

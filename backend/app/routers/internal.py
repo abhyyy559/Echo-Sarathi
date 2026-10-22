@@ -46,6 +46,7 @@ from app.services.calls_service import (
     log_call_event,
     maybe_complete_campaign,
 )
+from app.services.token_substitution import is_bracket_placeholder
 from app.timeutil import parse_iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,47 @@ def post_telemetry_events(payload: dict[str, Any]) -> dict[str, Any]:
     return {"recorded": recorded, "latest_seq": telemetry.latest_seq()}
 
 
+@router.post("/usage")
+def post_usage(payload: dict[str, Any], db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Record worker-side provider usage (Sarvam characters/requests, Groq headers).
+
+    The body is ``{"snapshots": [{"provider", "key_id", "model", "metric",
+    "value", "timestamp"?}, ...]}``. Keys are masked here even if the worker
+    already masked them, so a future worker change can never persist a raw
+    secret. Invalid rows are skipped, not 422s: usage accounting must never
+    block a call.
+    """
+    from app.services.usage import record_snapshot
+
+    rows = payload.get("snapshots") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="snapshots must be a list")
+    written = 0
+    for item in rows[:500]:
+        if not isinstance(item, dict):
+            continue
+        timestamp = None
+        if item.get("timestamp"):
+            try:
+                timestamp = parse_iso(str(item["timestamp"]))
+            except ValueError:
+                timestamp = None
+        row = record_snapshot(
+            db,
+            provider=str(item.get("provider") or ""),
+            key_id=str(item.get("key_id") or ""),
+            model=str(item.get("model") or ""),
+            metric=str(item.get("metric") or ""),
+            value=item.get("value"),
+            timestamp=timestamp,
+        )
+        if row is not None:
+            written += 1
+    if written:
+        db.commit()
+    return {"written": written}
+
+
 @router.get("/calls/{call_id}/context")
 def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     call = db.get(Call, call_id)
@@ -136,7 +178,14 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
         if isinstance(company_context, dict):
             for key in ("institution", "institution_name"):
                 value = company_context.get(key)
-                if isinstance(value, str) and value.strip():
+                # A preset's unfilled "[Institution Name]" is not a name: holding
+                # it here made the agent say "I am from ." on every call, so fall
+                # through to the org (the tenant's real name).
+                if (
+                    isinstance(value, str)
+                    and value.strip()
+                    and not is_bracket_placeholder(value)
+                ):
                     institution_name = value.strip()
                     break
     if not institution_name and org_id is not None:

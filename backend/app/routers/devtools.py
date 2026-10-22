@@ -186,3 +186,18 @@ def dev_status(
         "alembic": alembic,
         "providers": settings.provider_presence,
     }
+
+
+@router.post("/api/dev/usage/refresh")
+async def refresh_usage(request: Request, user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """Pull the Deepgram/Cartesia balances now instead of waiting for the daily poll.
+
+    Only those two providers need polling: Groq publishes quota in response
+    headers and Sarvam has no usage API, so both are reported by the voice
+    worker inline. Never raises — a provider outage returns
+    ``written: 0`` with the collector's status.
+    """
+    from app.services.usage_collector import refresh_provider_usage
+
+    settings = request.app.state.settings
+    return await refresh_provider_usage(settings, request.app.state.session_factory)

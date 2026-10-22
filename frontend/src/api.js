@@ -226,11 +226,15 @@ export const devApi = {
   /** No auth required by design — safe to poll before login. */
   health: () => apiFetch('/api/health'),
   status: () => apiFetch('/api/dev/status'),
+  /** Poll the Deepgram/Cartesia balances now instead of waiting for the daily poll. */
+  refreshUsage: () => apiFetch('/api/dev/usage/refresh', { method: 'POST' }),
 };
 
 export const analyticsApi = {
   summary: () => apiFetch('/api/analytics/summary'),
   costs: () => apiFetch('/api/analytics/costs'),
+  /** Per-key provider quota state ("which limit gets exhausted first"). */
+  usage: () => apiFetch('/api/analytics/usage'),
 };
 
 // Legacy flat surface kept for existing pages (campaigns / contacts / calls).

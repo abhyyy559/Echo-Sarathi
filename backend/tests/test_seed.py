@@ -1,7 +1,7 @@
 """Seed-script tests: clean beta tenant bootstrap + sample-data purge."""
 from __future__ import annotations
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.auth import verify_password
@@ -24,14 +24,25 @@ def test_seed_demo_creates_clean_beta_tenant(tmp_path):
         org = db.get(type(user).organization.property.mapper.class_, user.org_id)
         assert org.slug == result["org_slug"]
 
-        agent = db.scalars(select(Agent)).first()
-        assert agent is not None
+        agents = db.scalars(select(Agent)).all()
+        assert {a.name for a in agents} == {
+            "Absent Student Follow-up",
+            "Absent Student Follow-up (Telugu)",
+        }, "beta policy seeds exactly the English + Telugu starters"
+
+        agent = next(a for a in agents if a.name == "Absent Student Follow-up")
         version = db.get(AgentVersion, agent.current_version_id)
         assert version is not None
         assert version.version == 1
         assert version.disclosure_script.lower().startswith(
             "hello"
         ), "disclosure script should come from absent-student.json"
+
+        telugu = next(a for a in agents if a.name.endswith("(Telugu)"))
+        telugu_version = db.get(AgentVersion, telugu.current_version_id)
+        assert telugu_version is not None
+        assert telugu_version.voice_settings.get("language") == "te"
+        assert "నమస్కారం" in telugu_version.disclosure_script
 
         # Beta policy: no campaigns, no contacts — testers bring their own data.
         assert "campaign_id" not in result
@@ -46,11 +57,44 @@ def test_seed_demo_is_idempotent(tmp_path):
     second = seed_demo(db_url)
     assert second["status"] == "already_seeded"
     assert first["status"] != "already_seeded"
+    assert second["agents_added"] == [], "a satisfied demo tenant adds no agents"
 
     engine = create_engine(db_url)
     with sessionmaker(bind=engine)() as db:
         assert len(db.scalars(select(User)).all()) == 1, "must not duplicate users"
+        assert len(db.scalars(select(Agent)).all()) == 2, "must not duplicate agents"
         assert len(db.scalars(select(Contact)).all()) == 0, "seed must not add contacts"
+
+
+def test_seed_backfills_a_new_starter_agent_into_existing_tenant(tmp_path):
+    """A demo tenant provisioned before the Telugu starter existed must gain it."""
+    db_url = f"sqlite:///{tmp_path / 'demo.db'}"
+    seed_demo(db_url)
+
+    # Simulate the pre-Telugu deployment: only the English starter exists.
+    engine = create_engine(db_url)
+    with sessionmaker(bind=engine)() as db:
+        telugu = db.scalar(
+            select(Agent).where(Agent.name == "Absent Student Follow-up (Telugu)")
+        )
+        assert telugu is not None
+        # Core deletes, not ORM deletes: Agent <-> AgentVersion reference each
+        # other, so the ORM would try to null a NOT NULL agent_id.
+        db.execute(delete(AgentVersion).where(AgentVersion.agent_id == telugu.id))
+        db.execute(delete(Agent).where(Agent.id == telugu.id))
+        db.commit()
+
+    result = seed_demo(db_url)
+    assert result["status"] == "already_seeded"
+    assert result["agents_added"] == ["Absent Student Follow-up (Telugu)"]
+
+    with sessionmaker(bind=engine)() as db:
+        names = {a.name for a in db.scalars(select(Agent)).all()}
+        assert names == {
+            "Absent Student Follow-up",
+            "Absent Student Follow-up (Telugu)",
+        }
+    engine.dispose()
 
 
 def test_purge_sample_data_removes_campaigns_contacts_calls(tmp_path):
@@ -110,7 +154,7 @@ def test_purge_sample_data_removes_campaigns_contacts_calls(tmp_path):
         assert remaining[0].org_id != seed_result["org_id"], "foreign-org call must survive"
         assert db.scalar(select(func.count()).select_from(Transcript)) == 0
         # Agents and users are preserved by design.
-        assert db.scalar(select(func.count()).select_from(Agent)) == 1
+        assert db.scalar(select(func.count()).select_from(Agent)) == 2
         assert db.scalar(select(func.count()).select_from(User)) == 1
     engine.dispose()
 

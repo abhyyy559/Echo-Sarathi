@@ -19,7 +19,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import Agent, AgentVersion, Call, Campaign, ExtractedField, Transcript, User
-from app.schemas import AnalyticsCostsOut, AnalyticsSummaryOut
+from app.schemas import AnalyticsCostsOut, AnalyticsSummaryOut, UsageSummaryOut
+from app.services.usage import (
+    LOW_BALANCE_FRACTION,
+    WARN_BALANCE_FRACTION,
+    latest_snapshots,
+    summarize_sarvam,
+)
 from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -191,4 +197,125 @@ def analytics_costs(
         "est_cost_usd": round(total_minutes * _RATE_PER_MINUTE_USD, 4),
         "per_call": per_call,
         "monthly": monthly,
+    }
+
+
+# --- provider key utilization -------------------------------------------------
+
+#: Display ordering so the tier that actually limits calls (Groq) reads first.
+_PROVIDER_ORDER = {
+    "groq": 0,
+    "groq-secondary": 1,
+    "deepgram": 2,
+    "cartesia": 3,
+    "sarvam": 4,
+}
+
+#: Groq's free tier is metered per MINUTE (tokens) and per DAY (requests), and
+#: the token bucket is shared across every key in the organization. The tighter
+#: of the two is what decides when a key stops answering, so both are compared.
+_QUOTA_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("limit_tokens", "remaining_tokens", "tokens/min"),
+    ("limit_requests", "remaining_requests", "requests/day"),
+)
+
+
+def _key_status(metrics: dict[str, float]) -> tuple[str, Optional[float], str]:
+    """Return ``(status, remaining_fraction, headline)`` for one key.
+
+    The fraction is the tightest of the provider's quota pairs — one number the
+    UI can sort by and colour. ``unknown`` when the provider published nothing
+    (a key that has not served a request yet, or a non-metered provider).
+    """
+    candidates: list[tuple[float, str]] = []
+    for limit_key, remaining_key, label in _QUOTA_PAIRS:
+        limit = metrics.get(limit_key)
+        remaining = metrics.get(remaining_key)
+        if not limit or limit <= 0 or remaining is None:
+            continue
+        fraction = max(0.0, remaining / limit)
+        candidates.append(
+            (fraction, f"{int(remaining):,} of {int(limit):,} {label}")
+        )
+    if not candidates:
+        return "unknown", None, "no quota data yet"
+    fraction, detail = min(candidates, key=lambda item: item[0])
+    if fraction <= 0:
+        return "critical", fraction, f"exhausted — {detail} left"
+    if fraction <= LOW_BALANCE_FRACTION:
+        return "critical", fraction, f"{fraction * 100:.0f}% left — {detail}"
+    if fraction <= WARN_BALANCE_FRACTION:
+        return "warn", fraction, f"{fraction * 100:.0f}% left — {detail}"
+    return "ok", fraction, f"{fraction * 100:.0f}% left — {detail}"
+
+
+@router.get("/usage", response_model=UsageSummaryOut)
+def analytics_usage(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Latest quota snapshot per provider key (the "which key dies first" view).
+
+    Data comes from two collectors: the voice worker forwards Groq's
+    ``x-ratelimit-*`` headers and its Sarvam character counts on every call,
+    and a daily backend poller refreshes the Deepgram/Cartesia balances. A
+    provider that has never reported is simply absent from ``keys`` — the card
+    renders an empty state rather than inventing numbers.
+    """
+    latest = latest_snapshots(db)
+
+    grouped: dict[tuple[str, str, str], dict[str, float]] = {}
+    stamps: dict[tuple[str, str, str], Any] = {}
+    for (provider, key_id, model, metric), row in latest.items():
+        if provider == "sarvam" and metric == "characters":
+            # Characters are a cumulative local count, not a quota snapshot:
+            # they are summarized separately so they cannot mask the balance.
+            continue
+        marker = (provider, key_id, model)
+        grouped.setdefault(marker, {})[metric] = float(row.value)
+        current = stamps.get(marker)
+        if current is None or row.timestamp > current:
+            stamps[marker] = row.timestamp
+
+    keys: list[dict[str, Any]] = []
+    alerts: list[dict[str, Any]] = []
+    for (provider, key_id, model), metrics in grouped.items():
+        status, fraction, headline = _key_status(metrics)
+        keys.append(
+            {
+                "provider": provider,
+                "key_id": key_id,
+                "model": model,
+                "status": status,
+                "headline": headline,
+                "remaining_fraction": fraction,
+                "metrics": {name: round(value, 4) for name, value in metrics.items()},
+                "updated_at": stamps.get((provider, key_id, model)),
+            }
+        )
+        if status in ("warn", "critical"):
+            alerts.append(
+                {
+                    "level": status,
+                    "provider": provider,
+                    "key_id": key_id,
+                    "message": f"{provider} {key_id or '(default key)'}: {headline}",
+                }
+            )
+
+    keys.sort(
+        key=lambda item: (
+            item["remaining_fraction"] is None,
+            item["remaining_fraction"] if item["remaining_fraction"] is not None else 1.0,
+            _PROVIDER_ORDER.get(item["provider"], 99),
+            item["key_id"],
+        )
+    )
+    alerts.sort(key=lambda item: (item["level"] != "critical", item["provider"]))
+
+    return {
+        "generated_at": utcnow(),
+        "keys": keys,
+        "sarvam": summarize_sarvam(db, latest),
+        "alerts": alerts,
     }

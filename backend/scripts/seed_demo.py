@@ -42,6 +42,13 @@ from domain_config_schema import validate_agent_version_payload  # noqa: E402
 DEMO_EMAIL = os.getenv("DEMO_EMAIL", "demo@example.com").strip().lower()
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo1234")
 
+#: Institution every starter agent speaks for. The org row and each agent
+#: version's company_context must agree on it — a preset ships the unfilled
+#: "[Institution Name]" token for a tenant to fill in, and storing that token
+#: made the demo agent say "I am from ." ("నేను నుండి AI అసిస్టెంట్") on every
+#: call, because an unfilled token is not a name.
+DEMO_INSTITUTION = "CMR College of Engineering & Technology"
+
 
 def _alembic_upgrade_head(database_url: str) -> None:
     """Apply migrations programmatically when the schema is missing."""
@@ -59,6 +66,16 @@ def _load_absent_student_config() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def _load_telugu_preset() -> dict[str, Any]:
+    path = (
+        PROJECT_ROOT
+        / "domain-configs"
+        / "presets"
+        / "absent-student-followup-telugu.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
 def _version_payload_from_config(config: dict[str, Any]) -> dict[str, Any]:
     """Map the legacy domain-config file onto the AgentVersion payload shape."""
     # The file's voice_settings (language, voices, known_context_keys, ...)
@@ -69,7 +86,7 @@ def _version_payload_from_config(config: dict[str, Any]) -> dict[str, Any]:
         voice_settings["known_context_keys"] = config["known_context_keys"]
     return {
         "system_prompt": config["system_prompt"],
-        "company_context": {"institution": "CMR College of Engineering & Technology"},
+        "company_context": {"institution": DEMO_INSTITUTION},
         "question_flow": config["question_flow"],
         "extraction_schema": config["extraction_schema"],
         "disclosure_script": config["mandatory_disclosure"],
@@ -82,6 +99,99 @@ def _demo_org_id(db: Any) -> int | None:
     """Resolve the demo org id from the demo owner user (None if absent)."""
     user = db.scalar(select(User).where(User.email == DEMO_EMAIL))
     return user.org_id if user is not None else None
+
+
+def _create_agent_version(
+    db: Any,
+    *,
+    org_id: int,
+    owner_id: int,
+    name: str,
+    description: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Create one agent + its v1 version. ``None`` when the name already exists.
+
+    Idempotent by (org, name) so re-running the seed on an existing demo tenant
+    adds only the starter agents it is missing — which is how a NEW starter
+    agent (the Telugu variant) reaches the demo account on deploy instead of
+    requiring a manual purge.
+    """
+    existing = db.scalar(
+        select(Agent).where(Agent.org_id == org_id, Agent.name == name)
+    )
+    if existing is not None:
+        return None
+
+    validated = validate_agent_version_payload(payload)
+    agent = Agent(org_id=org_id, name=name, description=description, status="draft")
+    db.add(agent)
+    db.flush()
+
+    version = AgentVersion(
+        agent_id=agent.id,
+        version=1,
+        system_prompt=validated.system_prompt,
+        company_context=validated.company_context,
+        question_flow=[step.model_dump() for step in validated.question_flow],
+        extraction_schema={
+            field_name: field.model_dump()
+            for field_name, field in validated.extraction_schema.items()
+        },
+        disclosure_script=validated.disclosure_script,
+        escalation_rules=[
+            rule if isinstance(rule, str) else rule.model_dump()
+            for rule in validated.escalation_rules
+        ],
+        voice_settings=validated.voice_settings.model_dump(),
+        created_by=owner_id,
+    )
+    db.add(version)
+    db.flush()
+    agent.current_version_id = version.id
+    return {"agent_id": agent.id, "version_id": version.id, "name": name}
+
+
+def _ensure_starter_agents(
+    db: Any, *, org_id: int, owner_id: int
+) -> dict[str, dict[str, Any]]:
+    """Create every starter agent the demo org is missing.
+
+    Keyed by a stable role ("english"/"telugu") rather than list position, so
+    the caller can report the primary agent without guessing which one was new.
+    """
+    config = _load_absent_student_config()
+    preset = _load_telugu_preset()
+    specs = {
+        "english": (
+            config["display_name"] if "display_name" in config else config["name"],
+            "Starter agent — absent student follow-up calls.",
+            _version_payload_from_config(config),
+        ),
+        "telugu": (
+            preset["name"],
+            preset["description"],
+            {
+                **preset["version_payload"],
+                # Override the preset's "[Institution Name]" token: the demo
+                # tenant has a real institution name (see DEMO_INSTITUTION).
+                "company_context": {"institution": DEMO_INSTITUTION},
+            },
+        ),
+    }
+    created: dict[str, dict[str, Any]] = {}
+    for role, (name, description, payload) in specs.items():
+        entry = _create_agent_version(
+            db,
+            org_id=org_id,
+            owner_id=owner_id,
+            name=name,
+            description=description,
+            payload=payload,
+        )
+        if entry is not None:
+            created[role] = entry
+    return created
 
 
 def seed_demo(database_url: str | None = None) -> dict[str, Any]:
@@ -98,9 +208,20 @@ def seed_demo(database_url: str | None = None) -> dict[str, Any]:
     with session_factory() as db:
         existing = db.scalar(select(User).where(User.email == DEMO_EMAIL))
         if existing is not None:
-            return {"status": "already_seeded", "email": DEMO_EMAIL}
+            # An already-provisioned demo tenant still needs any starter agent
+            # it does not have yet, or a new one never reaches the tester.
+            added = _ensure_starter_agents(
+                db, org_id=existing.org_id, owner_id=existing.id
+            )
+            if added:
+                db.commit()
+            return {
+                "status": "already_seeded",
+                "email": DEMO_EMAIL,
+                "agents_added": sorted(entry["name"] for entry in added.values()),
+            }
 
-        org = Organization(name="CMR College of Engineering & Technology", slug="cmr-cet")
+        org = Organization(name=DEMO_INSTITUTION, slug="cmr-cet")
         db.add(org)
         db.flush()
 
@@ -113,50 +234,18 @@ def seed_demo(database_url: str | None = None) -> dict[str, Any]:
         db.add(owner)
         db.flush()
 
-        config = _load_absent_student_config()
-        payload = _version_payload_from_config(config)
-        validated = validate_agent_version_payload(payload)
-
-        agent = Agent(
-            org_id=org.id,
-            name=config["display_name"] if "display_name" in config else config["name"],
-            description="Starter agent — absent student follow-up calls.",
-            status="draft",
-        )
-        db.add(agent)
-        db.flush()
-
-        version = AgentVersion(
-            agent_id=agent.id,
-            version=1,
-            system_prompt=validated.system_prompt,
-            company_context=validated.company_context,
-            question_flow=[step.model_dump() for step in validated.question_flow],
-            extraction_schema={
-                name: field.model_dump()
-                for name, field in validated.extraction_schema.items()
-            },
-            disclosure_script=validated.disclosure_script,
-            escalation_rules=[
-                rule if isinstance(rule, str) else rule.model_dump()
-                for rule in validated.escalation_rules
-            ],
-            voice_settings=validated.voice_settings.model_dump(),
-            created_by=owner.id,
-        )
-        db.add(version)
-        db.flush()
-        agent.current_version_id = version.id
-
+        agents = _ensure_starter_agents(db, org_id=org.id, owner_id=owner.id)
         db.commit()
 
+        english = agents.get("english", {})
         return {
             "status": "seeded",
             "org_slug": org.slug,
             "org_id": org.id,
             "user_id": owner.id,
-            "agent_id": agent.id,
-            "version_id": version.id,
+            "agent_id": english.get("agent_id"),
+            "version_id": english.get("version_id"),
+            "agents": sorted(entry["name"] for entry in agents.values()),
         }
 
 
@@ -263,12 +352,20 @@ def main() -> None:
 
     result = seed_demo()
     if result["status"] == "already_seeded":
-        print(f"Demo tenant already exists ({DEMO_EMAIL}) — nothing to do.")
+        added = result.get("agents_added") or []
+        if added:
+            print(f"Demo tenant already exists ({DEMO_EMAIL}); added starter agents:")
+            for name in added:
+                print(f"  + {name}")
+        else:
+            print(f"Demo tenant already exists ({DEMO_EMAIL}) — nothing to do.")
         return
     print("Demo tenant seeded:")
     print(f"  login    : {DEMO_EMAIL} (password from DEMO_PASSWORD, or the demo default)")
     print(f"  org_id   : {result['org_id']}")
     print(f"  agent_id : {result['agent_id']} (version {result['version_id']})")
+    for name in result.get("agents") or []:
+        print(f"  agent    : {name}")
 
 
 if __name__ == "__main__":

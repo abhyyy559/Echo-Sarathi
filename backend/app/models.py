@@ -360,6 +360,32 @@ class ExtractedField(Base):
     call: Mapped[Call] = relationship(back_populates="extracted_fields")
 
 
+class UsageSnapshot(Base):
+    """One provider quota/credit observation.
+
+    Rows are append-only observations, not counters: the latest row for a
+    ``(provider, key_id, model, metric)`` tuple is the current value. Keeping
+    history makes a sudden drop (or a 429) visible without a second table.
+    ``key_id`` is masked before insertion; no raw credential is ever stored.
+    """
+
+    __tablename__ = "usage_snapshots"
+    __table_args__ = (
+        Index("ix_usage_provider_timestamp", "provider", "timestamp"),
+        Index("ix_usage_key_model_metric", "key_id", "model", "metric"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    key_id: Mapped[str] = mapped_column(String(80), nullable=False, default="", index=True)
+    model: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    metric: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), index=True
+    )
+
+
 class ConsentRecord(Base):
     """Recorded consent basis for a contact/phone (PRD §8)."""
 

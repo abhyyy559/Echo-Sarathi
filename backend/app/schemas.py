@@ -296,6 +296,40 @@ class AnalyticsCostsOut(BaseModel):
     monthly: dict[str, MonthlyCostOut]  # "YYYY-MM" -> totals
 
 
+class UsageKeyOut(BaseModel):
+    """Quota state for ONE provider key, as the dashboard needs it.
+
+    ``status``/``headline`` are computed server-side so the operator does not
+    have to compare fractions by eye: the question the demo account asks is
+    "which key dies first?", not "what is remaining_tokens?".
+    """
+
+    provider: str
+    key_id: str
+    model: str
+    status: str  # ok | warn | critical | unknown
+    headline: str
+    remaining_fraction: Optional[float] = None
+    metrics: dict[str, float]
+    updated_at: Optional[datetime] = None
+
+
+class UsageAlertOut(BaseModel):
+    level: str  # warn | critical
+    provider: str
+    key_id: str
+    message: str
+
+
+class UsageSummaryOut(BaseModel):
+    """Provider key utilization for the dashboard's API-limits card."""
+
+    generated_at: datetime
+    keys: list[UsageKeyOut]
+    sarvam: dict[str, Any]
+    alerts: list[UsageAlertOut]
+
+
 # --- call index (cross-campaign history) --------------------------------------
 
 
