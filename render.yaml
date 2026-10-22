@@ -28,7 +28,7 @@ services:
     buildCommand: pip install -r backend/requirements.txt
     # Applies migrations and creates the demo tenant/agent on every deploy.
     # The script is idempotent and never places a call.
-    preDeployCommand: cd backend && python scripts/seed_demo.py
+    preDeployCommand: cd backend && alembic upgrade head && python scripts/seed_demo.py
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     # `/` is instant; `/api/health` performs live egress probes and can exceed
     # the platform health-check timeout during a provider DNS blip.
