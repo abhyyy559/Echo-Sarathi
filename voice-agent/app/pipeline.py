@@ -42,7 +42,21 @@ from livekit.agents import (
     tts as tts_module,
 )
 from livekit.agents.llm.llm import APIConnectOptions
-from livekit.plugins import cartesia, deepgram, openai, silero
+from livekit.plugins import cartesia, deepgram, openai, sarvam, silero
+
+# LiveKit plugins must be imported/registered on the MAIN thread. The provider
+# builders run inside a job thread, so importing Sarvam lazily there raised
+# "Plugins must be registered on the main thread" on the first live call.
+# Preload the optional noise-cancellation plugins here for the same reason;
+# the lazy imports below then reuse the already-registered modules.
+try:
+    from livekit.plugins import hush as _hush_preload  # noqa: F401
+except ImportError:
+    _hush_preload = None  # type: ignore[assignment]
+try:
+    from livekit.plugins import ai_coustics as _ai_coustics_preload  # noqa: F401
+except Exception:  # optional heavy install; never block worker startup
+    _ai_coustics_preload = None  # type: ignore[assignment]
 
 from app.backend_client import BackendClient, BackendError
 from app.config import Settings
