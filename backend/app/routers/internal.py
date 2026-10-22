@@ -14,6 +14,7 @@ router (503) so a misconfigured deployment never exposes it.
 - POST /internal/calls/{call_id}/extracted-fields — upsert extracted fields.
 - POST /internal/calls/{call_id}/latency-metrics — call-level latency/cost.
 - POST /internal/calls/{call_id}/complete — finalize call state + summary.
+- POST /internal/calls/{call_id}/hangup — drop the carrier leg + release the room.
 - POST /internal/calls/{call_id}/report  — legacy combined report endpoint.
 
 Invalid payloads get a 400/422; these endpoints never 500 for bad input.
@@ -41,6 +42,7 @@ from app.models import (
     Organization,
 )
 from app.schemas import CallActivityIn, CallActivityOut, CallActivityResponse
+from app.services.call_teardown import close_call_media
 from app.services.calls_service import (
     apply_report,
     log_call_event,
@@ -52,6 +54,12 @@ from app.timeutil import parse_iso, utcnow
 logger = logging.getLogger(__name__)
 
 _LATENCY_FIELDS = ("stt_final_ms", "llm_first_token_ms", "tts_first_audio_ms", "e2e_ms")
+
+#: Statuses that mean the call is already over; a hangup for one of these is
+#: cleanup, not a correction.
+_TERMINAL_CALL_STATUSES = frozenset(
+    {"completed", "failed", "canceled", "no_answer", "busy"}
+)
 
 
 def require_internal_token(request: Request) -> None:
@@ -569,6 +577,40 @@ def post_complete(
         "status": call.status,
         "duration_seconds": call.duration_seconds,
     }
+
+
+@router.post("/calls/{call_id}/hangup")
+def post_hangup(
+    call_id: int,
+    request: Request,
+    body: Any = Body(default={}),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Close the live media for a call the agent has finished talking on.
+
+    Called by the worker once the goodbye has been played: the provider leg
+    would otherwise stay up (our answer XML streams with ``keepCallAlive``)
+    until the caller or the carrier gives up.
+    """
+    call = _get_call_or_404(db, call_id)
+    body = body if isinstance(body, dict) else {}
+    room = body.get("room")
+    if room is not None and not isinstance(room, str):
+        raise HTTPException(status_code=400, detail="'room' must be a string")
+    if call.status not in _TERMINAL_CALL_STATUSES:
+        log_call_event(db, call.id, "hangup_request_early", {"status": call.status})
+        db.commit()
+
+    done = close_call_media(
+        request.app.state.settings,
+        getattr(request.app.state, "telephony", None),
+        call,
+        room_name=room or None,
+        reason="agent_end_call",
+    )
+    log_call_event(db, call.id, "hangup", done)
+    db.commit()
+    return {"ok": True, "call_id": call.id, **done}
 
 
 @router.post("/calls/{call_id}/report")

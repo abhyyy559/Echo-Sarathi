@@ -705,7 +705,12 @@ def render_compact_instructions(
         + f"{state} {todo}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
         f"finish with end_call(summary). Valid field names: "
-        f"{', '.join(captured + remaining) or 'none'}."
+        f"{', '.join(captured + remaining) or 'none'}.\n"
+        "NOTHING STILL NEEDED means the call is over: say the goodbye and call "
+        "end_call(summary) in that same turn. end_call hangs up the line, so "
+        "nothing you write after it is heard - do not ask one more question, "
+        "do not add a second farewell. This is information collection, not a "
+        "sales call."
     )
 
 
@@ -899,12 +904,14 @@ def render_system_prompt(
         "- VERIFY-THEN-CONTINUE: identity confirmation STARTS the call — acknowledge "
         "BY NAME and move to the first unfilled goal in the same breath. Never a bare "
         "'thank you', never `end_call` right after verification.\n"
+        "- THIS IS NOT A SALES CALL: your only job is to collect a few facts and "
+        "hand them back. Never pitch, persuade, rebut, or keep the caller on the "
+        "line for their own good. Nothing left to ask means the call is over.\n"
         "- END ONLY WHEN DONE: `end_call` when all REQUIRED goals are covered, caller "
         "says goodbye, or handoff/escalation triggers. Vague answers are NOT confirmation "
         "and NEVER a reason to end — ask a short clarifying question.\n"
-        "- STOP SIGNALS (one closing line, then `end_call`, no further questions): not "
-        "interested / call later / busy / remove number / stop calling / wants a human. "
-        "If busy, offer the callback first.\n"
+        "- STOP SIGNALS (close on the FIRST one, no rebuttal, no callback offer): not "
+        "interested / call later / busy / remove number / stop calling / wants a human.\n"
         "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
         "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
         "\n"
@@ -923,8 +930,9 @@ def render_system_prompt(
         "- Target: DONE in under 2 minutes. One question per turn, no small "
         "talk, no repeating answered goals.\n"
         "- The moment all REQUIRED goals are captured (or a stop/escalation "
-        "signal fires): one warm closing line, then `end_call(summary)` "
-        "immediately. Never linger, never ask 'anything else?' twice."
+        "signal fires): say the goodbye AND call `end_call(summary)` in that "
+        "same turn. `end_call` hangs up the line, so nothing may follow it - "
+        "no second closing line, no 'anything else?', no last question."
     )
 
     # 5. Goals (question flow) as a checklist, woven naturally.
@@ -1010,7 +1018,8 @@ def render_system_prompt(
         fallback_items = [item for item in fallback_items if item]
         if fallback_items:
             sections.append(
-                "WHEN YOU DON'T KNOW (use one of these verbatim, then offer a callback):\n"
+                "WHEN YOU DON'T KNOW (use one of these verbatim, then move to "
+                "the next open goal or close):\n"
                 + "\n".join(f"- {item}" for item in fallback_items)
             )
 

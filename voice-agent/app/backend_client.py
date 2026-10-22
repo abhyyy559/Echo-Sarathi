@@ -197,6 +197,26 @@ class BackendClient:
             return False
         return True
 
+    async def post_hangup(self, call_id: str, room: Optional[str] = None) -> bool:
+        """Tell the backend the agent is done talking: drop the carrier leg.
+
+        Our answer XML streams audio with ``keepCallAlive``, so a call the agent
+        has politely finished stays connected until the caller hangs up. This is
+        the only thing that ends it from our side.
+        """
+        payload: dict[str, Any] = {}
+        if room:
+            payload["room"] = room
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/internal/calls/{call_id}/hangup", json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("post_hangup failed for call %s: %s", call_id, exc)
+            return False
+        return True
+
     async def post_telemetry(self, events: list[Mapping[str, Any]]) -> bool:
         """Send pipeline events to the backend Diagnostics feed.
 

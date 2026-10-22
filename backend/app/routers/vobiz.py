@@ -559,6 +559,20 @@ async def vobiz_media(websocket: WebSocket) -> None:
                             {"provider_unreachable": True},
                         )
                         db.commit()
+                # Safety net for the worker's own hangup request: our answer XML
+                # streams with keepCallAlive, so a leg whose media died but
+                # whose conversation the agent already finished would otherwise
+                # stay connected. Only when the call is truly over - a tunnel
+                # blip mid-conversation must not cut a live caller (Vobiz
+                # retries the stream).
+                if done_call is not None and done_call.status == "completed":
+                    from app.services.call_teardown import hangup_carrier_leg
+
+                    hangup_carrier_leg(
+                        getattr(websocket.app.state, "telephony", None),
+                        done_call,
+                        reason="media_leg_closed",
+                    )
         except Exception:  # noqa: BLE001 â€” finalize best-effort only
             logger.warning("finalize-on-close failed for call %s", call_pk, exc_info=True)
 

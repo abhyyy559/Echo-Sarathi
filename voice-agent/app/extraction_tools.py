@@ -459,7 +459,10 @@ class VoiceAgentTools:
             error=None,
             summary=final_summary or None,
         )
-        return f"Call ended. Summary posted: {final_summary}"
+        return (
+            f"Call ended; the line hangs up now, so nothing you write after "
+            f"this is heard. Summary posted: {final_summary}"
+        )
 
 
 # Alias used by the QA contract suite (Lane E) to discover the escalation

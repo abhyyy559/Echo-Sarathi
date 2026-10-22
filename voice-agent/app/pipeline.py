@@ -29,7 +29,7 @@ import traceback
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import httpx
 from openai import AsyncOpenAI as _OpenAIAsyncClient
@@ -2307,8 +2307,14 @@ class TurnTelemetry:
 class DomainCallAgent(Agent):
     """Config-driven interview agent with extraction + end-call tools."""
 
-    def __init__(self, instructions: str, tools_impl: VoiceAgentTools) -> None:
+    def __init__(
+        self,
+        instructions: str,
+        tools_impl: VoiceAgentTools,
+        on_call_ended: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._tools_impl = tools_impl
+        self._on_call_ended = on_call_ended
         # NOTE: do NOT pass tools= here - livekit-agents auto-collects the
         # @function_tool-decorated methods below; passing them again raises
         # "duplicate function name".
@@ -2362,7 +2368,16 @@ class DomainCallAgent(Agent):
         Args:
             summary: Factual wrap-up summary of the conversation.
         """
-        return await self._tools_impl.end_call(summary)
+        result = await self._tools_impl.end_call(summary)
+        # Nothing else ends a phone call: the carrier leg outlives the
+        # conversation unless we hang it up, so the session arms its own
+        # teardown the moment the model says it is finished.
+        if self._on_call_ended is not None:
+            try:
+                self._on_call_ended()
+            except Exception:  # noqa: BLE001 - the summary is already posted
+                logger.exception("Could not arm call teardown after end_call")
+        return result
 
 
 # --------------------------------------------------------------------------
@@ -2824,6 +2839,70 @@ class _CallEndWatcher:
                     logger.debug("Could not unsubscribe from %s", event, exc_info=True)
 
 
+#: The agent says "goodbye" before or after its ``end_call`` tool call, never
+#: both, so the hangup waits for the line to start (bounded - it may already be
+#: spoken), then for the session to go quiet, then cuts the leg. The hard
+#: deadline is what guarantees a stuck call still ends.
+_GOODBYE_START_SECONDS = _env_float("VOICE_GOODBYE_START_SECONDS", 4.0)
+_GOODBYE_QUIET_SECONDS = _env_float("VOICE_GOODBYE_QUIET_SECONDS", 1.0)
+_HANGUP_DEADLINE_SECONDS = _env_float("VOICE_HANGUP_DEADLINE_SECONDS", 20.0)
+_GOODBYE_POLL_SECONDS = 0.2
+
+
+def _agent_is_busy(session: Any) -> bool:
+    """True while the agent has a speech queued or a reply generating."""
+    try:
+        if getattr(session, "current_speech", None) is not None:
+            return True
+    except Exception:  # noqa: BLE001 - a dead session counts as not busy
+        return False
+    try:
+        state = str(getattr(session, "agent_state", "") or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return state.endswith("speaking") or state.endswith("thinking")
+
+
+async def close_call_after_goodbye(
+    session: Any, backend: BackendClient, call_id: str, room_name: str
+) -> None:
+    """Hang up once the farewell has been heard. Never raises.
+
+    A phone call has no other ending: our answer XML streams with
+    ``keepCallAlive``, so the carrier leg outlives the conversation until the
+    caller hangs up or the carrier times out.
+    """
+    loop = asyncio.get_running_loop()
+    began = loop.time()
+    deadline = began + _HANGUP_DEADLINE_SECONDS
+    started = began + _GOODBYE_START_SECONDS
+    try:
+        while not _agent_is_busy(session) and loop.time() < started:
+            await asyncio.sleep(_GOODBYE_POLL_SECONDS)
+        quiet_since: Optional[float] = None
+        while loop.time() < deadline:
+            if _agent_is_busy(session):
+                quiet_since = None
+            elif quiet_since is None:
+                quiet_since = loop.time()
+            elif loop.time() - quiet_since >= _GOODBYE_QUIET_SECONDS:
+                break
+            await asyncio.sleep(_GOODBYE_POLL_SECONDS)
+        logger.info(
+            "Ending call %s after end_call (room=%s, waited %.1fs)",
+            call_id,
+            room_name,
+            loop.time() - began,
+        )
+        if not await backend.post_hangup(call_id, room=room_name):
+            # Without the backend the leg stays up; still release our own job so
+            # the worker's concurrency slot is free for the next dial.
+            logger.warning("hangup request failed for call %s, closing session only", call_id)
+        await session.aclose()
+    except Exception:  # noqa: BLE001 - teardown must never surface as a turn error
+        logger.exception("Could not close call %s after end_call", call_id)
+
+
 def _attach_audio_probe(room: Any, telemetry: Any) -> None:
     """Report which audio tracks the AGENT can actually see.
 
@@ -2908,6 +2987,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
     call_id: Optional[str] = parsed.call_id if parsed else None
     session: Optional[AgentSession] = None
     telemetry: Optional[TurnTelemetry] = None
+    end_call_task: Optional["asyncio.Task[None]"] = None
 
     try:
         # Metadata may arrive via the room, or slightly later on the joining
@@ -3125,7 +3205,24 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         if not await _is_connected(ctx):
             await ctx.connect()
 
-        agent = DomainCallAgent(instructions=instructions, tools_impl=tools_impl)
+        def _arm_call_teardown() -> None:
+            """Fire once: end_call may be called twice, the leg drops once.
+
+            Phone legs only - a browser playground session is ended by the
+            tab that owns it, and deleting its room would hang up the user.
+            """
+            nonlocal end_call_task
+            if end_call_task is not None or not (is_phone_room and call_id):
+                return
+            end_call_task = asyncio.ensure_future(
+                close_call_after_goodbye(session, backend, call_id, room_name)
+            )
+
+        agent = DomainCallAgent(
+            instructions=instructions,
+            tools_impl=tools_impl,
+            on_call_ended=_arm_call_teardown,
+        )
         # Give telemetry the agent handle so it can swap full instructions for
         # the compact continuation version after the opening exchanges.
         telemetry._agent = agent
@@ -3153,6 +3250,10 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         except Exception:  # pragma: no cover - last resort
             logger.exception("Degradation path also failed (room=%s)", room_name)
     finally:
+        if end_call_task is not None and not end_call_task.done():
+            # The call already ended another way (caller hung up); the leg is
+            # gone, so the farewell wait is pointless.
+            end_call_task.cancel()
         task = locals().get("backchannel_task")
         if task is not None:
             task.cancel()
