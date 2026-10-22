@@ -8,6 +8,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _logger = logging.getLogger(__name__)
@@ -91,6 +92,32 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     # Optional explicit override for the media websocket base (wss://host[:port]).
     public_ws_base_url: str = ""
+    # Render injects this into every web service. When PUBLIC_BASE_URL is not
+    # set explicitly (fresh deploy), deriving it here removes the
+    # chicken-and-egg step of editing env vars after the service URL exists.
+    render_external_url: str = ""
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        """Accept Render/Heroku-style ``postgres://`` URLs.
+
+        SQLAlchemy only understands ``postgresql://``; some providers still
+        hand out the legacy scheme.
+        """
+        if value.startswith("postgres://"):
+            return "postgresql://" + value[len("postgres://"):]
+        return value
+
+    @model_validator(mode="after")
+    def _derive_public_base_url(self) -> "Settings":
+        """Use RENDER_EXTERNAL_URL when no explicit public URL was configured."""
+        current = (self.public_base_url or "").strip().rstrip("/")
+        if not current or current.startswith("http://localhost"):
+            fallback = (self.render_external_url or "").strip().rstrip("/")
+            if fallback:
+                object.__setattr__(self, "public_base_url", fallback)
+        return self
 
     # --- calling hours / dialer -------------------------------------------
     timezone: str = "Asia/Kolkata"

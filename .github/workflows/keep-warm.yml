@@ -1,0 +1,32 @@
+# Optional keep-warm pinger for the Render free web service.
+#
+# Render free instances sleep after 15 minutes without traffic and take up to a
+# minute to wake. Enable this only when you need the API warm around a demo:
+#   Repo Settings -> Secrets and variables -> Actions -> Variables
+#     KEEP_WARM = true
+#     API_URL   = https://<your-service>.onrender.com
+#
+# Warning: a 10-minute pinger keeps one free service running ~730 h/month,
+# which is almost the entire 750-hour free allowance for the workspace.
+# Set KEEP_WARM=false (or delete this workflow) after the demo.
+
+name: keep-warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    if: vars.KEEP_WARM == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping health endpoint
+        run: |
+          set -euo pipefail
+          test -n "${{ vars.API_URL }}" || { echo "API_URL variable is not set"; exit 1; }
+          curl --fail --silent --show-error --max-time 120 "${{ vars.API_URL }}/" > /dev/null
+          curl --fail --silent --show-error --max-time 120 "${{ vars.API_URL }}/api/health" > /dev/null
+          echo "API is awake"

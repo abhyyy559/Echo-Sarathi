@@ -3,6 +3,13 @@
 .env.local
 .env.*.local
 
+# Deployment credentials (local only; the example stays tracked)
+.deploy.env
+.deploy.env.*
+!.deploy.env.example
+.deploy/
+.tools/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -61,6 +68,8 @@ out/
 logs/
 *.log
 tools/cloudflared/tunnel.err
+# Downloaded tool binaries (local dev / deployment helpers)
+tools/livekit/lk/
 
 # Testing
 .coverage

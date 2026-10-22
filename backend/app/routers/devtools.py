@@ -84,8 +84,15 @@ def _pipeline_reachability(settings) -> dict[str, Any]:
     return results
 
 
-def _redis_ping(redis_url: str) -> bool:
-    """True when redis answers PING; any failure means 'down', never a crash."""
+def _redis_ping(redis_url: str) -> bool | None:
+    """True when redis answers PING, False when configured but down.
+
+    ``None`` means Redis is not configured at all — this deployment does not
+    use it (the dialer is Postgres-backed), and reporting a permanent red dot
+    for an optional dependency is misleading.
+    """
+    if not str(redis_url or "").strip():
+        return None
     try:
         import redis as redis_lib
 

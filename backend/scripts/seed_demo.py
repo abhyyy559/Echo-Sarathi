@@ -6,7 +6,8 @@ Usage (from backend/):
 
 Creates (idempotently):
 - organization "CMR College of Engineering & Technology" (slug cmr-cet)
-- owner user demo@example.com / demo1234
+- owner user from DEMO_EMAIL / DEMO_PASSWORD (falls back to
+  demo@example.com / demo1234 for local development only)
 - starter agent "Absent Student Follow-up" with v1 built from
   domain-configs/absent-student.json
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,8 +39,8 @@ from app.database import init_db  # noqa: E402
 from app.models import Agent, AgentVersion, Campaign, Call, Contact, Organization, User  # noqa: E402
 from domain_config_schema import validate_agent_version_payload  # noqa: E402
 
-DEMO_EMAIL = "demo@example.com"
-DEMO_PASSWORD = "demo1234"
+DEMO_EMAIL = os.getenv("DEMO_EMAIL", "demo@example.com").strip().lower()
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo1234")
 
 
 def _alembic_upgrade_head(database_url: str) -> None:
@@ -158,6 +160,30 @@ def seed_demo(database_url: str | None = None) -> dict[str, Any]:
         }
 
 
+def reset_demo_password(database_url: str | None = None) -> dict[str, Any]:
+    """Set the demo user's password to the current ``DEMO_PASSWORD``.
+
+    ``seed_demo`` is idempotent and never touches an existing user, so this is
+    the supported way to rotate the password on an already-seeded deployment.
+    """
+    settings = get_settings()
+    if database_url:
+        settings = settings.model_copy(update={"database_url": database_url})
+    engine, session_factory = init_db(settings)
+
+    inspector = inspect(engine)
+    if not inspector.has_table("organizations"):
+        return {"status": "no_schema", "email": DEMO_EMAIL}
+
+    with session_factory() as db:
+        user = db.scalar(select(User).where(User.email == DEMO_EMAIL))
+        if user is None:
+            return {"status": "no_demo_tenant", "email": DEMO_EMAIL}
+        user.password_hash = hash_password(DEMO_PASSWORD)
+        db.commit()
+        return {"status": "password_reset", "email": DEMO_EMAIL}
+
+
 def purge_sample_data(database_url: str | None = None) -> dict[str, Any]:
     """Wipe every campaign/contact/call row in the demo org (children cascade).
 
@@ -207,7 +233,22 @@ def main() -> None:
         action="store_true",
         help="Delete all demo-org campaigns/contacts/calls instead of seeding.",
     )
+    parser.add_argument(
+        "--reset-password",
+        action="store_true",
+        help="Set the demo user's password to $DEMO_PASSWORD (no other changes).",
+    )
     args = parser.parse_args()
+
+    if args.reset_password:
+        result = reset_demo_password()
+        if result["status"] == "password_reset":
+            print(f"Demo password reset for {result['email']}.")
+        elif result["status"] == "no_demo_tenant":
+            print(f"No demo tenant found ({result['email']}) — run without flags first.")
+        else:
+            print("Schema missing — run the migrations first.")
+        return
 
     if args.purge_sample_data:
         result = purge_sample_data()
@@ -225,7 +266,7 @@ def main() -> None:
         print(f"Demo tenant already exists ({DEMO_EMAIL}) — nothing to do.")
         return
     print("Demo tenant seeded:")
-    print(f"  login    : {DEMO_EMAIL} / {DEMO_PASSWORD}")
+    print(f"  login    : {DEMO_EMAIL} (password from DEMO_PASSWORD, or the demo default)")
     print(f"  org_id   : {result['org_id']}")
     print(f"  agent_id : {result['agent_id']} (version {result['version_id']})")
 

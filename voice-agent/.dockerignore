@@ -1,0 +1,14 @@
+# Keep the LiveKit Cloud build context small and secret-free.
+.env
+.env.*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+qa_*.py
+*.log
+.git/
+.gitignore
+livekit.toml
