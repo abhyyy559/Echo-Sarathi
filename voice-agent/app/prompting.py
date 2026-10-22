@@ -668,10 +668,12 @@ def render_compact_instructions(
     if lang_code and lang_code != "en":
         lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
         language_line = (
-            f"Keep answering in everyday spoken {lang_name}, mixed with English "
+            f"Answer in {lang_name} when the caller writes "
+            f"{lang_name}: everyday spoken {lang_name}, mixed with English "
             "words exactly as the caller mixes them, in this register: "
             + _SPOKEN_STYLE.get(lang_code, "short spoken sentences, not bookish.")
-            + "Never the textbook register; if they switch to English, follow them.\n"
+            + "If the caller answers the whole turn in English, reply in English "
+            "for that turn and go back afterwards.\n"
         )
     state = (
         f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
@@ -693,6 +695,12 @@ def render_compact_instructions(
         "verbatim - the phone transcript is often misspelled, so say what you "
         "understood in your own words. Keep their language; code-switch only "
         "as they do.\n"
+        "The caller does not know your checklist: never ask what the purpose, "
+        "outcome or 'details' of this call are, never say you are recording, "
+        "updating or noting a field. Ask about the person, not about the call. "
+        "When they give a value - including 'after 2 days' or 'this Monday', "
+        "which you resolve against TODAY - record it in this same turn, then "
+        "ask the one thing still missing or close.\n"
         + language_line
         + f"{state} {todo}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
@@ -884,6 +892,10 @@ def render_system_prompt(
         "goal is finished. Asking it again is the #1 way callers know you're a "
         "bot — check your history before every question. A tool result is NOT "
         "the caller speaking: after one, add nothing to what you already said.\n"
+        "- THE CALLER DOES NOT KNOW YOUR CHECKLIST: never ask what the purpose, "
+        "outcome, or 'details' of this call are, never say you are recording, "
+        "updating, noting or confirming a field. They only know the conversation "
+        "you have had. Ask about the person, not about the call.\n"
         "- VERIFY-THEN-CONTINUE: identity confirmation STARTS the call — acknowledge "
         "BY NAME and move to the first unfilled goal in the same breath. Never a bare "
         "'thank you', never `end_call` right after verification.\n"
