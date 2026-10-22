@@ -90,21 +90,32 @@ Write-Host "  VITE_API_URL -> $RenderServiceUrl"
 
 Write-Section "Vercel: /api proxy fallback"
 $vercelJsonPath = Join-Path $script:RepoRoot "frontend\vercel.json"
-$vercelJson = Get-Content -LiteralPath $vercelJsonPath -Raw | ConvertFrom-Json
 $proxyDest = "$RenderServiceUrl/api/`$1"
-$patched = $false
-foreach ($route in @($vercelJson.routes)) {
-    if ($route.src -eq "/api/(.*)") {
-        $route.dest = $proxyDest
-        $patched = $true
-    }
-}
-if (-not $patched) {
-    $vercelJson.routes = @(@{ src = "/api/(.*)"; dest = $proxyDest }) + @($vercelJson.routes)
-}
+$raw = [System.IO.File]::ReadAllText($vercelJsonPath)
+$current = $raw | ConvertFrom-Json
+$proxyRoute = @($current.routes) | Where-Object { $_.src -eq "/api/(.*)" } | Select-Object -First 1
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($vercelJsonPath, ($vercelJson | ConvertTo-Json -Depth 10), $utf8NoBom)
-Write-Host "  proxy -> $proxyDest"
+
+if ($proxyRoute -and $proxyRoute.dest -eq $proxyDest) {
+    Write-Host "  proxy already -> $proxyDest"
+} else {
+    if ($proxyRoute -and $proxyRoute.dest) {
+        # Surgical substitution keeps the committed formatting intact
+        # (ConvertTo-Json on Windows PowerShell reflows the whole file).
+        $updated = $raw.Replace([string]$proxyRoute.dest, $proxyDest)
+    } else {
+        # Unexpected shape: rebuild from the parsed object instead.
+        $current.routes = @(@{ src = "/api/(.*)"; dest = $proxyDest }) + @($current.routes)
+        $updated = $current | ConvertTo-Json -Depth 10
+    }
+    # Never write a file the deploy step cannot parse.
+    $check = @(($updated | ConvertFrom-Json).routes) | Where-Object { $_.src -eq "/api/(.*)" } | Select-Object -First 1
+    if (-not $check -or $check.dest -ne $proxyDest) {
+        throw "Patched frontend/vercel.json does not contain the expected /api rewrite; fix it by hand and re-run."
+    }
+    [System.IO.File]::WriteAllText($vercelJsonPath, $updated, $utf8NoBom)
+    Write-Host "  proxy -> $proxyDest"
+}
 
 if (-not $SkipDeploy) {
     Write-Section "Vercel: production deploy"
