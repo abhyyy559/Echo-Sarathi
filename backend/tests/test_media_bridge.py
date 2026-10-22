@@ -1,6 +1,7 @@
 """Shared phone-bridge helpers: frame building, queue sentinels, track drains."""
 import asyncio
 import inspect
+import math
 from array import array
 
 import pytest
@@ -93,7 +94,12 @@ class _FakeAudioStream:
 
 class TestDrainTrackStats:
     def test_collects_rates_drops_and_peak(self, monkeypatch):
-        pcm = _pcm16(*([1000] * 160 + [-2000] * 160))
+        # A 300Hz tone at amplitude 2000: well inside the resampler passband,
+        # so the measured peak is the input peak (a square-edged signal would
+        # legitimately overshoot ~9% through the anti-aliasing FIR).
+        pcm = _pcm16(
+            *[int(2000 * math.sin(2 * math.pi * 300 * n / 48000)) for n in range(320)]
+        )
         frames = [
             _FakeFrame(pcm, 48000),
             _FakeFrame(pcm, 48000),
@@ -110,7 +116,7 @@ class TestDrainTrackStats:
         assert stats["frames_in"] == 3
         assert stats["drops"] == 2
         assert stats["in_rates"] == {48000, 24000}
-        assert stats["out_peak"] == 2000
+        assert abs(stats["out_peak"] - 2000) <= 50, stats["out_peak"]
         # Sentinel evicts backlog and terminates the stream.
         assert queue.get_nowait() == b""
         assert queue.empty()

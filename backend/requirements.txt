@@ -24,3 +24,7 @@ pytest>=8.0
 httpx>=0.27
 audioop-lts>=0.2.2; python_version >= '3.13'
 livekit>=1.1,<2
+# Anti-aliasing FIR decimation in app/services/g711.py (48kHz room audio ->
+# 8kHz PSTN leg). Already pulled in transitively by livekit-rtc; declared so a
+# dependency reshuffle cannot silently break the phone media bridge.
+numpy>=1.26

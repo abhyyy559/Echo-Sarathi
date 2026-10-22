@@ -27,7 +27,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Call, Contact
 from app.services.calls_service import end_call, log_call_event
-from app.services.media_bridge import OUTBOUND_QUEUE_MAXSIZE, drain_track, make_frame, put_sentinel
+from app.services.media_bridge import (
+    OUTBOUND_QUEUE_MAXSIZE,
+    TELEPHONY_FRAME_BYTES,
+    drain_track,
+    make_frame,
+    put_sentinel,
+)
 from app.services.twilio_bridge import build_phone_room_token
 from app.services.vobiz_bridge import build_play_audio
 from app.services.vobiz_bridge import parse_vobiz_event as _parse_bridge_event
@@ -196,15 +202,33 @@ async def _pump_vobiz_to_room(
 
 
 async def _pump_room_to_vobiz(
-    queue: Any, ws: WebSocket, stream_id_box: dict[str, str]
+    queue: Any, ws: WebSocket, stream_id_box: dict[str, str], stats: Any = None
 ) -> None:
     """Send queued agent mu-law frames to Vobiz as playAudio messages.
 
-    Repacketized into fixed 160-byte (20ms) frames paced at real time:
-    LiveKit delivers variable-size chunks, and forwarding them raw bursts
-    uneven audio into Vobiz's jitter buffer, which callers hear as noisy,
-    crackling speech. Exits cleanly when any drain puts the b"" sentinel
-    (padding the tail with silence first).
+    Repacketized into fixed 160-byte (20ms) frames paced against an ABSOLUTE
+    schedule: frame n is due at ``t0 + n * 20ms``. Anchoring to a fixed origin
+    instead of "20ms after whenever the last frame happened to go out" is what
+    keeps the bridge in step with the caller. With a relative deadline, every
+    late wake-up was written off instead of repaid, so a few milliseconds of
+    overshoot per frame (sleep granularity, plus the base64+WebSocket write,
+    on a free-tier CPU) compounded into seconds of lag: the drain kept
+    arriving in real time (the room track is real-time paced), the queue only
+    grew, the agent was heard progressively late, and the worker's barge_in
+    flush then discarded seconds of speech the caller had never heard — heard
+    as the agent cutting out mid-sentence. Because the origin is fixed, an
+    overshoot is now repaid by the next frame sending immediately.
+
+    ``stats`` collects the pacing diagnostics the bridge logs per call:
+    frames sent and ``max_late_ms``, the worst schedule deficit observed —
+    how far behind the ideal real-time timeline this pump ever fell. A
+    healthy call sits at ~0 (a momentary hiccup is repaid by the following
+    frames). Under the old relative deadline it grew without bound, which is
+    what the caller heard as the agent drifting late and then going silent
+    when the barge-in flush threw away the unplayed tail.
+
+    Exits cleanly when any drain puts the b"" sentinel (padding the tail with
+    silence first).
     """
     import asyncio
     import base64
@@ -216,9 +240,14 @@ async def _pump_room_to_vobiz(
         payload = base64.b64encode(frame).decode()
         await ws.send_text(build_play_audio(stream_id_box.get("sid", ""), payload))
 
+    #: One frame IS 20ms of 8kHz speech.
+    frame_seconds = TELEPHONY_FRAME_BYTES / 8000.0
     framer = MulawFramer()
     getter = asyncio.ensure_future(queue.get())
-    next_deadline = time.monotonic()
+    t0 = time.monotonic()
+    frames_out = 0
+    sent_bytes = 0
+    max_late_ms = 0.0
     try:
         while True:
             await asyncio.wait({getter})
@@ -228,17 +257,26 @@ async def _pump_room_to_vobiz(
                 tail = framer.flush()
                 if tail:
                     await _send(tail)
+                    frames_out += 1
+                    sent_bytes += len(tail)
                 break
             for frame in framer.push(ulaw):
                 await _send(frame)
-                # One frame IS 20ms of 8kHz speech: hold the cadence so
-                # playout is continuous instead of bursty.
-                next_deadline = max(time.monotonic(), next_deadline) + 0.02
-                delay = next_deadline - time.monotonic()
+                frames_out += 1
+                sent_bytes += len(frame)
+                # Frame number frames_out is due at t0 + frames_out * 20ms.
+                # Behind schedule -> delay is <= 0 and we send straight on,
+                # which repays the deficit instead of writing it off.
+                delay = t0 + frames_out * frame_seconds - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
+                elif -delay * 1000.0 > max_late_ms:
+                    max_late_ms = -delay * 1000.0
     finally:
         getter.cancel()
+        if stats is not None:
+            stats["frames_out"] = frames_out
+            stats["max_late_ms"] = round(max_late_ms, 1)
 
 
 def _flush_bridge_queue(queue: Any) -> int:
@@ -390,8 +428,9 @@ async def vobiz_media(websocket: WebSocket) -> None:
     room_gone = asyncio.Event()
     # Outbound-audio diagnostics for this call leg (what the CALLER hears):
     # how many agent tracks were drained, per-track input rates, queue drops,
-    # and output peak. Logged once at teardown - levels and rates, never
-    # content - so the next "noisy call" report comes with numbers.
+    # output peak, frames played, and worst-case unplayed backlog. Logged once
+    # at teardown - levels and rates, never content - so the next "noisy call"
+    # report comes with numbers.
     drain_stats: dict[str, Any] = {}
 
     def _on_frame(
@@ -433,7 +472,9 @@ async def vobiz_media(websocket: WebSocket) -> None:
     )
 
     to_agent = asyncio.ensure_future(_pump_vobiz_to_room(websocket, source))
-    from_agent = asyncio.ensure_future(_pump_room_to_vobiz(queue, websocket, stream_id_box))
+    from_agent = asyncio.ensure_future(
+        _pump_room_to_vobiz(queue, websocket, stream_id_box, drain_stats)
+    )
     room_gone_waiter = asyncio.ensure_future(room_gone.wait())
     tasks: tuple[asyncio.Future[Any], ...] = (to_agent, from_agent, room_gone_waiter)
     try:
@@ -445,15 +486,21 @@ async def vobiz_media(websocket: WebSocket) -> None:
         # Outbound verdict (what the caller heard): tracks>1 means two audio
         # sources were mixed into one leg (echo/garble); drops>0 means gaps
         # and crackle; out_peak near 32767 means the agent's TTS is clipping
-        # into mu-law (harsh distortion). in_rates shows the resample path.
+        # into mu-law (harsh distortion); max_late_ms is how far the pump fell
+        # behind the caller's real-time timeline at its worst - anything past
+        # ~200ms means replies were heard late (and the backlog grew from
+        # there). in_rates shows the resample path.
         logger.info(
-            "vobiz outbound audio call=%s tracks=%s frames_in=%s drops=%s in_rates=%s out_peak=%s",
+            "vobiz outbound audio call=%s tracks=%s frames_in=%s frames_out=%s drops=%s "
+            "in_rates=%s out_peak=%s max_late_ms=%s",
             call_pk,
             drain_stats.get("tracks", 0),
             drain_stats.get("frames_in", 0),
+            drain_stats.get("frames_out", 0),
             drain_stats.get("drops", 0),
             sorted(drain_stats.get("in_rates") or []),
             drain_stats.get("out_peak", 0),
+            drain_stats.get("max_late_ms", 0),
         )
         try:
             await room.disconnect()
