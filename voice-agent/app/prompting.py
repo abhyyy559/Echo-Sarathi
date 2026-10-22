@@ -47,6 +47,29 @@ CALL_BUDGET_HEADER = "CALL BUDGET - finish fast, calls cost money:"
 
 LANGUAGE_NAMES = {"en": "English", "te": "Telugu", "hi": "Hindi"}
 
+#: Spoken-register examples. A model told only "respond in Telugu" writes the
+#: literary (granthik) register from its training data: on a live call the
+#: agent said "కాలేయ పునాహక్రష్ వల్లే రాలేకపోయాడనే వివరం నమోదు చేస్తున్నా"
+#: and the caller heard a newsreader from a textbook, not a college office.
+#: One GOOD/BAD pair per language is what actually moves the output.
+_SPOKEN_STYLE: dict[str, str] = {
+    "te": (
+        "- Telugu script for the Telugu, English words IN ENGLISH inside the "
+        "same sentence, the way Hyderabad speaks on the phone.\n"
+        "  GOOD: \"అర్థమైంది — fever వల్ల కాలేజ్‌కి రాలేదు కదా. రేపు వస్తాడా?\"\n"
+        "  BAD (bookish, never say this): \"జ్వరము నిమిత్తము విద్యాలయమునకు "
+        "విరామము కలదని వివరము నమోదు చేయుచున్నాను.\"\n"
+        "- When the caller used an English word (fever, college, attendance, "
+        "tomorrow, fee), give it back to them in English. Never hunt for a "
+        "Sanskrit or classical synonym for a word they already said.\n"
+    ),
+    "hi": (
+        "- Devanagari for the Hindi, English words IN ENGLISH inside the same "
+        "sentence, the way Delhi/Hyderabad speaks on the phone: \"बुखार से "
+        "college नहीं आ पाया, कल आ जाएगा ना?\" — not शब्दों की रचना.\n"
+    ),
+}
+
 _BRACKET_ARTIFACT_RE = re.compile(r"\[[^\]]*\]")
 _DOUBLE_SPACE_RE = re.compile(r"\s{2,}")
 
@@ -254,7 +277,7 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "from_suffix": " {institution} నుండి",
         "from_standalone": "{institution} నుండి కాల్ చేస్తున్నాను.",
         "about": " {subject} గురించి కాల్ చేస్తున్నాను.",
-        "ask_who": "మీరు ఎవరో తెలుసుకోవచ్చా?",
+        "ask_who": "మీ పేరు ఏంటి?",
     },
     "hi": {
         "hello": "नमस्ते",
@@ -587,6 +610,7 @@ def render_compact_instructions(
     captured: list[str],
     remaining: list[str],
     today: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> str:
     """Short continuation instructions for mid/late voice turns.
 
@@ -596,7 +620,22 @@ def render_compact_instructions(
     prompt. After the opening exchanges the conversation history already
     carries the persona, names and disclosure, so the model only needs today's
     date, which fields are done, and the rules that must not be forgotten.
+
+    ``language`` must be passed: from turn two on this block REPLACES the full
+    instructions, so anything that lives only in the full prompt (the spoken
+    register, mirroring the caller) is silently dropped for the rest of the
+    call.
     """
+    lang_code = str(language or "").strip().lower()
+    language_line = ""
+    if lang_code and lang_code != "en":
+        lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
+        language_line = (
+            f"Keep answering in everyday spoken {lang_name}, mixed with English "
+            "words exactly as the caller mixes them, in this register: "
+            + _SPOKEN_STYLE.get(lang_code, "short spoken sentences, not bookish.")
+            + "Never the textbook register; if they switch to English, follow them.\n"
+        )
     state = (
         f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
     )
@@ -617,7 +656,8 @@ def render_compact_instructions(
         "verbatim - the phone transcript is often misspelled, so say what you "
         "understood in your own words. Keep their language; code-switch only "
         "as they do.\n"
-        f"{state} {todo}\n"
+        + language_line
+        + f"{state} {todo}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
         f"finish with end_call(summary). Valid field names: "
         f"{', '.join(captured + remaining) or 'none'}."
@@ -727,7 +767,12 @@ def render_system_prompt(
     if lang_code != "en":
         sections.append(
             f"{LANGUAGE_HEADER}\n"
-            f"- Default to {lang_name}. Mirror the CALLER, not a rulebook: mixed "
+            "- Speak the everyday phone register of this language, not its "
+            "book register: short spoken sentences, the words people actually "
+            "use. If a phrase could have come from a textbook or a news "
+            "reader, replace it before you say it.\n"
+            + _SPOKEN_STYLE.get(lang_code, "")
+            + f"- Default to {lang_name}. Mirror the CALLER, not a rulebook: mixed "
             f"{lang_name}+English is natural and welcome (English words inside "
             f"{lang_name} sentences). If they answer fully in English, meet them "
             "in English for that reply, then ease back into "

@@ -185,7 +185,9 @@ def test_opening_line_telugu_without_names_asks_in_telugu() -> None:
         "question_flow": [],
     }
     out = build_opening_line(config, _tokens({}), {})
-    assert "మీరు ఎవరో తెలుసుకోవచ్చా?" in out
+    # Spoken form, not "మీరు ఎవరో తెలుసుకోవచ్చా?" — the caller's verdict on
+    # the live Telugu call was that the agent sounded like an old textbook.
+    assert "మీ పేరు ఏంటి?" in out
 
 
 def test_opening_line_telugu_disclosure_that_names_the_ai_drops_the_intro() -> None:

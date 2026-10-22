@@ -163,6 +163,10 @@ class ProviderBundle:
     # Which STT backend is armed (deepgram | sarvam). The session is tuned
     # differently per provider (Sarvam handles VAD/turn-taking internally).
     stt_provider: str = "deepgram"
+    #: The agent's conversation language ("en" | "te" | "hi"). Carried on the
+    #: bundle because the compact mid-call instructions must keep steering the
+    #: spoken register, and telemetry is the only thing that rebuilds them.
+    language: str = "en"
     # Which TTS backend is armed (cartesia | deepgram | sarvam). Reported in
     # the session-start event so the panel names the REAL pipeline.
     tts_provider: str = "cartesia"
@@ -839,6 +843,7 @@ def build_providers(
     """
     bundle = ProviderBundle(stt=None, llm=None, tts=None)
     model_override, tts_voice_override, voices_by_lang, language = _voice_overrides(voice_settings)
+    bundle.language = language
     effective_voice = voices_by_lang.get(language) or tts_voice_override
 
     # STT provider routing. A non-English agent must be transcribed by Sarvam
@@ -1391,7 +1396,8 @@ class TurnTelemetry:
     EOUMetrics.end_of_utterance_delay/.transcription_delay,
     LLMMetrics.ttft (-1 when no token), TTSMetrics.ttfb.
     If the event shape ever changes again, wall-clock fallbacks below keep the
-    columns populated (marked APPROXIMATION).
+    columns populated; nothing is reported as a first token unless something
+    actually measured one.
     """
 
     def __init__(
@@ -1405,11 +1411,13 @@ class TurnTelemetry:
         extraction_tools: Any = None,
         llm: Any = None,
         agent: Any = None,
+        language: str = "en",
     ) -> None:
         self._session = session
         self._backend = backend
         self._call_id = call_id
         self._room = room
+        self._language = language
         self._on_final_user = on_final_user
         self._backchannel = backchannel
         self._extraction_tools = extraction_tools
@@ -2079,6 +2087,7 @@ class TurnTelemetry:
                 [f for f in recorded],
                 [f for f in required if f not in recorded],
                 today,
+                self._language,
             )
             if await agent.swap_to_compact_instructions(compact):
                 logger.info(
@@ -2937,6 +2946,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             backchannel=backchannel,
             extraction_tools=tools_impl,
             llm=bundle.llm,
+            language=bundle.language,
         )
         telemetry.attach()
 
