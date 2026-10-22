@@ -123,18 +123,41 @@ if (-not $SkipDeploy) {
         throw "npx was not found. Install Node.js 18+ and re-run."
     }
     $frontendDir = Join-Path $script:RepoRoot "frontend"
-    Push-Location $frontendDir
-    try {
-        # Link to the EXISTING project first: `vercel deploy --yes` in an
-        # unlinked directory would silently create a brand-new project.
-        & npx --yes vercel@latest link --yes --project $project.name --scope $teamId --token $token 2>&1 |
-            ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw "vercel link failed (exit $LASTEXITCODE)." }
+    $linkedPath = Join-Path $frontendDir ".vercel\project.json"
 
-        & npx --yes vercel@latest deploy --prod --yes --scope $teamId --token $token 2>&1 |
+    # Link to the EXISTING project: `vercel deploy --yes` in an unlinked
+    # directory silently creates a brand-new project. An existing
+    # .vercel/project.json for the same project id is enough, and skips a
+    # `link` round-trip that can 404 on a personal token + team scope.
+    $alreadyLinked = $false
+    if (Test-Path -LiteralPath $linkedPath) {
+        try {
+            $linked = Get-Content -LiteralPath $linkedPath -Raw | ConvertFrom-Json
+            $alreadyLinked = ($linked.projectId -eq $projectId)
+        } catch { $alreadyLinked = $false }
+    }
+
+    Push-Location $frontendDir
+    # Vercel CLI writes its banner to stderr; with ErrorActionPreference=Stop
+    # (set by common.ps1) that would abort the script before the exit code is
+    # even readable.
+    $previousEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        if (-not $alreadyLinked) {
+            & npx --yes vercel@latest link --yes --project $project.name --token $token 2>&1 |
+                ForEach-Object { Write-Host "  $_" }
+            if ($LASTEXITCODE -ne 0) { throw "vercel link failed (exit $LASTEXITCODE)." }
+        } else {
+            Write-Host "  already linked to $projectId"
+        }
+
+        & npx --yes vercel@latest deploy --prod --yes --token $token 2>&1 |
             ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw "Vercel deploy failed (exit $LASTEXITCODE)." }
+        $deployExit = $LASTEXITCODE
+        if ($deployExit -ne 0) { throw "Vercel deploy failed (exit $deployExit)." }
     } finally {
+        $ErrorActionPreference = $previousEap
         Pop-Location
     }
 }

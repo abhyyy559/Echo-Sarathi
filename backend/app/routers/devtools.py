@@ -62,8 +62,12 @@ def _pipeline_reachability(settings) -> dict[str, Any]:
     try:
         parsed = urlparse(settings.livekit_url_internal or "")
         if parsed.hostname:
-            livekit_host, livekit_port = parsed.hostname, parsed.port or 7880
-    except Exception:  # noqa: BLE001 — malformed URL just means "uncheckable"
+            # wss:// (LiveKit Cloud) terminates TLS on 443; the self-hosted
+            # dev server listens on 7880. Defaulting to 7880 for a cloud URL
+            # made this probe permanently red.
+            default_port = 443 if parsed.scheme in ("wss", "https") else 7880
+            livekit_host, livekit_port = parsed.hostname, parsed.port or default_port
+    except Exception:  # noqa: BLE001 - malformed URL just means "uncheckable"
         pass
     if livekit_host:
         jobs["livekit_server"] = (livekit_host, livekit_port)

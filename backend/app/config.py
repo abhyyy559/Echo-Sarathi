@@ -56,7 +56,10 @@ class Settings(BaseSettings):
 
     # --- infrastructure -------------------------------------------------
     database_url: str = "sqlite:///./voice_agent.db"
-    redis_url: str = "redis://localhost:6379/0"
+    # Redis is optional: nothing in this app uses it (the dialer is
+    # Postgres-backed). Empty means "not configured" and /api/health reports
+    # it as unknown instead of a permanent red dot.
+    redis_url: str = ""
     environment: str = "development"
     log_level: str = "info"
 
