@@ -263,7 +263,7 @@ def campaign_dashboard(
         "campaign_id": campaign.id,
         "campaign_status": campaign.status,
         "counts": _contact_counts(db, campaign.id),
-        "calls_in_flight": in_flight_call_count(db),
+        "calls_in_flight": in_flight_call_count(db, phone_only=True),
         "recent_calls": [
             {
                 "id": call.id,

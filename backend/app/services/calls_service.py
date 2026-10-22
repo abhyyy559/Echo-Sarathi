@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -46,11 +46,21 @@ def log_call_event(
     return event
 
 
-def in_flight_call_count(db: Session) -> int:
-    return int(
-        db.scalar(select(func.count()).select_from(Call).where(Call.status.in_(IN_FLIGHT_CALL_STATUSES)))
-        or 0
+def in_flight_call_count(db: Session, *, phone_only: bool = False) -> int:
+    """Calls still occupying capacity.
+
+    ``phone_only`` scopes the count to telephony legs. Without it a browser
+    playground session that was never finalised holds a dial slot forever: in
+    production a ten-hour-old ``in_progress`` playground row stopped every
+    campaign dial while the concurrency limit was 1. A NULL kind predates the
+    column and was always a phone leg, so it stays counted.
+    """
+    query = select(func.count()).select_from(Call).where(
+        Call.status.in_(IN_FLIGHT_CALL_STATUSES)
     )
+    if phone_only:
+        query = query.where(or_(Call.kind.is_(None), Call.kind != "playground"))
+    return int(db.scalar(query) or 0)
 
 
 def apply_contact_retry(contact: Contact, settings: Settings, now: Optional[Any] = None) -> None:

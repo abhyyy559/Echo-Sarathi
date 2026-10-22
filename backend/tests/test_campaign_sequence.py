@@ -265,6 +265,39 @@ def test_campaign_dials_one_contact_after_another(app, client, session_factory, 
     assert call_detail["extracted_fields"][0]["field_value"] == "no"
 
 
+def test_a_stale_playground_session_cannot_block_a_dial(app, client, session_factory):
+    """Regression 2026-10-22: the campaign dialed nothing while one contact waited.
+
+    A browser playground session from the morning was still ``in_progress`` in
+    the database, the concurrency limit was 1, and the in-flight count was global
+    - so the zombie held the campaign's only slot indefinitely. Dial capacity
+    belongs to phone legs; a demo tab that was closed without finalising must
+    never stop a roster.
+    """
+    from app.models import Call
+    from app.services.telephony import FakeTelephonyClient
+
+    _token, campaign = _seed_running_campaign(
+        app, client, session_factory, [PHONE_1], org_name="Seq Four University"
+    )
+    with session_factory() as db:
+        db.add(
+            Call(
+                org_id=campaign["org_id"],
+                kind="playground",
+                status="in_progress",
+                started_at=LAUNCH_TIME,
+            )
+        )
+        db.commit()
+
+    telephony = FakeTelephonyClient()
+    dialer, _now = _moving_dialer(session_factory, telephony, default_concurrency_limit=1)
+
+    assert dialer.tick() == 1
+    assert [phone for phone, _ in telephony.placed] == [PHONE_1]
+
+
 def test_no_answer_backs_off_then_redials_then_gives_up(app, client, session_factory):
     """A refused call re-queues on the backoff schedule and stops at max attempts."""
     from app.models import Call, Contact

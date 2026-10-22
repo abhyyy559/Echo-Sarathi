@@ -6,7 +6,8 @@ which keeps the rate limiting, consent gating and retry logic unit-testable.
 
 Guarantees per tick:
 - Skips entirely when outside calling hours (local timezone).
-- Respects a global in-flight concurrency cap (queued/ringing/in_progress calls).
+- Respects an in-flight concurrency cap over live phone legs only
+  (queued/ringing/in_progress); a stale browser session cannot hold a dial slot.
 - Respects a global CPS limit via an in-memory timestamp window.
 - Consent gate: with enforcement on, a queued contact without consent whose
   phone is not on the TEST_PHONE_NUMBERS allowlist is set to ``opted_out``.
@@ -164,7 +165,7 @@ class DialerService:
             return 0
         placed = 0
         with self.session_factory() as db:
-            in_flight = in_flight_call_count(db)
+            in_flight = in_flight_call_count(db, phone_only=True)
             campaigns = db.scalars(select(Campaign).where(Campaign.status == "running")).all()
             for campaign in campaigns:
                 while (
