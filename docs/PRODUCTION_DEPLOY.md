@@ -197,6 +197,23 @@ Manual spot check:
 Invoke-RestMethod https://echosarathi-api.onrender.com/api/health | ConvertTo-Json -Depth 4
 ```
 
+### Proving the voice worker actually joins
+
+Status `Running` only means the container is alive. To prove dispatch, join a
+room the way the browser does:
+
+```powershell
+$cfg = @{}; Get-Content .deploy.env | ForEach-Object {
+    if ($_ -match '^([A-Z_]+)=(.*)$') { $cfg[$matches[1]] = $matches[2] } }
+$env:DEMO_EMAIL = $cfg['DEMO_EMAIL']; $env:DEMO_PASSWORD = $cfg['DEMO_PASSWORD']
+voice-agent\.venv\Scripts\python.exe scripts\deploy\e2e_worker_check.py
+```
+
+It signs in, creates a playground session, connects over WebRTC, and waits for
+the `agent-*` participant and its `roomio_audio` track. `AGENT JOINED` plus a
+track line is the whole voice path (token → dispatch → STT/TTS pipeline) proven;
+a timeout of 90 s covers a cold worker.
+
 ---
 
 ## 6. Faculty demo flow — all from the UI
