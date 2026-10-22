@@ -72,7 +72,7 @@ from app.extraction_tools import (
     ExtractionCoordinator,
     VoiceAgentTools,
 )
-from app.prompting import build_opening_line, build_token_map, render_system_prompt, scrub_speech_text
+from app.prompting import build_opening_line, build_token_map, render_system_prompt, scrub_speech_text, speakable_text
 
 logger = logging.getLogger("voice_agent.pipeline")
 
@@ -552,6 +552,7 @@ class _FallbackStream(llm.LLMStream):
         while True:
             try:
                 chunk = await self._active.__anext__()
+                _speak_chunk_content(chunk)
                 if _chunk_has_content(chunk):
                     if not self._yielded_content:
                         self._owner._note_first_content(
@@ -630,6 +631,34 @@ class _FallbackStream(llm.LLMStream):
             await self._active.aclose()
         except Exception:  # noqa: BLE001 — best effort
             pass
+
+
+def _speak_chunk_content(chunk: Any) -> None:
+    """Drop from a streamed delta whatever phone TTS cannot pronounce.
+
+    Mutates the chunk in place so a bare "..." or a stray Han character never
+    reaches synthesis; Sarvam answers those with a 400 and the framework
+    re-sends the whole segment, which is heard as dead air mid-reply.
+    """
+    deltas = []
+    head = getattr(chunk, "delta", None)
+    if head is not None:
+        deltas.append(head)
+    for choice in getattr(chunk, "choices", None) or []:
+        tail = getattr(choice, "delta", None)
+        if tail is not None:
+            deltas.append(tail)
+    for delta in deltas:
+        content = getattr(delta, "content", None)
+        if not isinstance(content, str) or not content:
+            continue
+        clean = speakable_text(content)
+        if clean == content:
+            continue
+        try:
+            delta.content = clean
+        except Exception:  # noqa: BLE001 — an immutable chunk is not worth a dropped turn
+            logger.debug("Could not rewrite streamed delta", exc_info=True)
 
 
 def _chunk_has_content(chunk: Any) -> bool:

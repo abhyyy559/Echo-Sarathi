@@ -80,6 +80,37 @@ _TOOL_BLOCK_RE = re.compile(
 _TOOL_CALLS_JSON_RE = re.compile(r'"[^"]*tool_calls[^"]*"\s*:\s*\[.*?\]', re.DOTALL)
 
 
+#: Phone TTS (Sarvam Bulbul) rejects any segment with no letter it recognises:
+#: "400: Text must contain at least one character from the allowed languages".
+#: A qwen reply that is bare punctuation, or that leaks a Han character into a
+#: Telugu sentence, therefore fails to synthesize and the framework re-sends the
+#: whole segment several times - seconds of dead air mid-call.
+_SPEAKABLE_LETTER_RANGES = (
+    (0x0041, 0x005A),
+    (0x0061, 0x007A),
+    (0x00C0, 0x017F),
+    (0x0900, 0x097F),  # Devanagari (hi)
+    (0x0C00, 0x0C7F),  # Telugu (te)
+)
+_SPEAKABLE_ALNUM_RE = re.compile(r"[0-9A-Za-z\u0900-\u097F\u0C00-\u0C7F]")
+
+
+def speakable_text(text: str) -> str:
+    """Keep only characters a phone voice can pronounce, preserving spacing.
+
+    Letters outside Latin/Devanagari/Telugu are dropped; a chunk left with no
+    letter or digit at all becomes "" so nothing is sent to synthesis.
+    """
+    kept: list[str] = []
+    for ch in str(text or ""):
+        cp = ord(ch)
+        if ch.isalpha() and not any(lo <= cp <= hi for lo, hi in _SPEAKABLE_LETTER_RANGES):
+            continue
+        kept.append(ch)
+    out = "".join(kept)
+    return out if _SPEAKABLE_ALNUM_RE.search(out) else ""
+
+
 def scrub_speech_text(text: str) -> str:
     """Remove LLM tool-call markup from text that will be spoken/saved.
 
@@ -278,6 +309,10 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "from_standalone": "{institution} నుండి కాల్ చేస్తున్నాను.",
         "about": " {subject} గురించి కాల్ చేస్తున్నాను.",
         "ask_who": "మీ పేరు ఏంటి?",
+        # Bare "Ram." is how a form letter addresses someone; on a Telugu phone
+        # call the caller is "Ram గారూ". Without it the name also runs into the
+        # next sentence and sounds like one long name ("Ram Demo Student").
+        "address": "{parent} గారూ",
     },
     "hi": {
         "hello": "नमस्ते",
@@ -287,6 +322,7 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "from_standalone": "{institution} से कॉल कर रहा हूँ।",
         "about": " {subject} के बारे में कॉल कर रहा हूँ।",
         "ask_who": "क्या मैं जान सकता हूँ कि आप कौन हैं?",
+        "address": "{parent} जी",
     },
 }
 
@@ -383,7 +419,8 @@ def build_opening_line(
     )
     about = "" if named_in_question else phrases["about"].format(subject=subject)
     if parent and subject and parent != subject:
-        greet = f"{hello} {parent}.".strip()
+        address = phrases.get("address", "{parent}").format(parent=parent)
+        greet = f"{hello} {address}.".strip()
         if intro:
             greet += f" {intro}"
         greet += about

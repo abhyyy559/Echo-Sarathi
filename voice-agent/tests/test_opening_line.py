@@ -92,7 +92,7 @@ def test_opening_line_drops_the_greeting_the_disclosure_already_spoke() -> None:
     out = build_opening_line(config, _tokens(contact), contact)
 
     assert out.count("నమస్కారం") == 1, out
-    assert "Suresh Kumar." in out
+    assert "Suresh Kumar గారూ." in out
     # The question names the student, so the "calling about X" clause is dropped
     # rather than naming the same child twice in a row.
     assert "గురించి కాల్ చేస్తున్నాను" not in out
@@ -212,7 +212,7 @@ def test_opening_line_telugu_disclosure_that_names_the_ai_drops_the_intro() -> N
     assert "నేను ఒక AI అసిస్టెంట్ మాట్లాడుతున్నాను" not in out
     # The authored disclosure and the localized greeting/question still stand.
     assert "AI అసిస్టెంట్ మాట్లాడుతున్నాను" in out
-    assert "నమస్కారం Suresh Kumar." in out
+    assert "నమస్కారం Suresh Kumar గారూ." in out
     assert "[" not in out and "]" not in out
 
 
