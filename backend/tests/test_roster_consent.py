@@ -33,9 +33,17 @@ MAPPING = {
 
 
 def _make_campaign(client: Any, token: str) -> dict[str, Any]:
+    from test_playground import _make_agent_and_version
+
+    # A campaign must pin an agent version to launch; these tests are about
+    # consent, so attach one rather than test the agent guard here.
+    ids = _make_agent_and_version(client, token)
     created = client.post(
         "/api/campaigns",
-        json={"name": "Class 10 Absentees"},
+        json={
+            "name": "Class 10 Absentees",
+            "agent_version_id": ids["version"]["id"],
+        },
         headers=auth_headers(token),
     )
     assert created.status_code == 201, created.text

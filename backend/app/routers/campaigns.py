@@ -157,6 +157,11 @@ def launch_campaign(
     )
     if contact_count == 0:
         raise HTTPException(status_code=422, detail="campaign has no contacts to call")
+    if campaign.agent_version_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="campaign has no agent: choose an agent version before launching",
+        )
 
     clock: Callable = getattr(request.app.state, "clock", None) or utcnow
     now = clock()

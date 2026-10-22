@@ -29,9 +29,15 @@ def _seed_campaign_with_contact(
 ) -> tuple[str, dict[str, Any]]:
     """Register an org, create a draft campaign, insert one contact row."""
     token, _user = register(client)
+    from test_playground import _make_agent_and_version
+
+    ids = _make_agent_and_version(client, token)
     created = client.post(
         "/api/campaigns",
-        json={"name": "Absent Students - Demo Week"},
+        json={
+            "name": "Absent Students - Demo Week",
+            "agent_version_id": ids["version"]["id"],
+        },
         headers=auth_headers(token),
     )
     assert created.status_code == 201, created.text
@@ -166,3 +172,70 @@ def test_delete_requires_auth(client, session_factory):
     token, campaign = _seed_campaign_with_contact(client, session_factory)
     resp = client.delete(f"/api/campaigns/{campaign['id']}")
     assert resp.status_code == 401
+
+
+def test_launch_without_an_agent_is_422(app, client, session_factory):
+    """A campaign with no pinned agent produces calls nobody can answer."""
+    token, _user = register(client)
+    created = client.post(
+        "/api/campaigns", json={"name": "No Agent"}, headers=auth_headers(token)
+    )
+    assert created.status_code == 201, created.text
+    campaign = created.json()
+
+    from app.models import Contact
+
+    with session_factory() as db:
+        db.add(
+            Contact(
+                campaign_id=campaign["id"],
+                org_id=campaign["org_id"],
+                name="Ravi Kumar",
+                phone="+919000000002",
+                consent=True,
+            )
+        )
+        db.commit()
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+
+    resp = client.post(
+        f"/api/campaigns/{campaign['id']}/launch", headers=auth_headers(token)
+    )
+    assert resp.status_code == 422, resp.text
+    assert "no agent" in resp.json()["detail"]
+
+
+def test_dialer_pins_the_agent_version_on_each_call(app, client, session_factory):
+    """vobiz/twilio/plivo all close the media socket when the call has no
+    agent version, so a dialer-placed call must carry the campaign's."""
+    from app.models import Call
+    from app.services.dialer import DialerService
+    from conftest import make_settings
+
+    token, campaign = _seed_campaign_with_contact(client, session_factory)
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+    launch = client.post(
+        f"/api/campaigns/{campaign['id']}/launch", headers=auth_headers(token)
+    )
+    assert launch.status_code == 200, launch.text
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.placed: list[int] = []
+
+        def place_call(self, to: str, call_id: int) -> str:
+            self.placed.append(call_id)
+            return f"CAfake{call_id:010d}"
+
+    dialer = DialerService(
+        make_settings(),
+        session_factory,
+        _Recorder(),
+        clock=lambda: datetime(2026, 8, 24, 5, 0),
+    )
+    assert dialer.tick() == 1
+
+    with session_factory() as db:
+        call = db.query(Call).filter_by(campaign_id=campaign["id"]).one()
+        assert call.agent_version_id == campaign["agent_version_id"]
+        assert call.status == "ringing"

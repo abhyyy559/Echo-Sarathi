@@ -109,6 +109,10 @@ class DialerService:
             org_id=campaign.org_id,
             status="queued",
             started_at=now,
+            # The media bridge will not join a call without a pinned agent
+            # version (it closes 4404), so the campaign's version must travel
+            # onto the call row or the phone rings and nobody answers.
+            agent_version_id=campaign.agent_version_id,
             # P0-2: pack the contact card at call creation so any room/token
             # created for this call carries the same personalization metadata
             # as the playground path.
