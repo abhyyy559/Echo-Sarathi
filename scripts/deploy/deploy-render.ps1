@@ -87,8 +87,17 @@ Add-EnvVar "DEFAULT_CONCURRENCY_LIMIT" "1"
 Add-EnvVar "RETRY_MAX_ATTEMPTS" "3"
 Add-EnvVar "RETRY_BACKOFF_MINUTES" "15"
 Add-EnvVar "TIMEZONE" "Asia/Kolkata"
-Add-EnvVar "CALLING_HOURS_START" "9"
-Add-EnvVar "CALLING_HOURS_END" "21"
+# The quiet-hours window comes from the local .env (gitignored), so an
+# operator-approved, temporary extension is never committed to the repo. The
+# shipped default stays 09:00-21:00 IST.
+foreach ($window in @(
+    @{ Key = "CALLING_HOURS_START"; Default = "9" },
+    @{ Key = "CALLING_HOURS_END"; Default = "21" }
+)) {
+    $value = Get-ProviderValue -Maps @($local, $cfg) -Key $window.Key
+    if ([string]::IsNullOrWhiteSpace($value)) { $value = $window.Default }
+    Add-EnvVar $window.Key $value
+}
 Add-EnvVar "RECORDING_RETENTION_DAYS" "90"
 Add-EnvVar "RETENTION_JOB_ENABLED" "true"
 Add-EnvVar "DOMAIN_CONFIGS_DIR" "../domain-configs"
