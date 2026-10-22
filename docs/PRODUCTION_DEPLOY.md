@@ -133,6 +133,10 @@ directly, so the first request after a sleep is slow instead of broken. The
 `/api/*` rewrite stays in `vercel.json` as a same-origin fallback for anything
 that ignores the baked-in URL.
 
+The only files the deploy writes are `.deploy.env` (service id/URL, detected
+origin) and the `/api` `dest` line in `frontend/vercel.json` — both are
+reviewable with `git diff` after a run.
+
 ---
 
 ## 4. Vobiz wiring
@@ -209,6 +213,7 @@ No Python, no scripts, no terminal during the demo.
 | Voice agent answers after ~15 s | Build plan scales to zero | Connect the playground once before the demo |
 | Build fails on Render | 512 MB limit | Check the deploy logs; `pip install` is the heaviest step |
 | Postgres grows | Neon free 0.5 GB | Recording retention is 90 days; purge with `python scripts/seed_demo.py --purge-sample-data` |
+| A running campaign stalls | The dialer runs inside the web service, so it pauses while the instance sleeps | Wake the API (or keep it warm) for the duration of a live campaign |
 
 Free-tier gotchas that were deliberately designed around:
 
