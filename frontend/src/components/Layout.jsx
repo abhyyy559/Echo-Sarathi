@@ -95,12 +95,12 @@ const NAV_ITEMS = [
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
   { to: '/test-call', icon: <IconTestCall />, label: 'Test Call' },
+  { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
   { to: '/phone-numbers', icon: <IconPhone />, label: 'Phone Numbers', soon: true },
   { to: '/guide', icon: <IconGuide />, label: 'Guide' },
 ];
 
 const UTILITY_LINKS = [
-  { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
   { to: '/dev', icon: <IconDev />, label: 'Dev' },
 ];
 
