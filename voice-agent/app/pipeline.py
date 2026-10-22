@@ -308,6 +308,31 @@ def _tpm_bucket(provider: str) -> str:
     return _SHARED_TPM_BUCKETS.get(label, label)
 
 
+#: qwen3.8-27b answers a Telugu caller in ungrammatical word-salad
+#: ("సరే మీరు చెప్పిన కారణాన్ని నేను ఎంతైనా"). Measured against the production
+#: prompt and the real tool schema, the Indic-trained chain member replied in
+#: everyday code-mixed Telugu in ~300 ms and called record_extracted_field
+#: correctly, so Indic calls start there and Groq becomes the overflow.
+#: English stays on Groq, where it was already good and ~150 ms faster.
+SPOKEN_INDIC_LLM_PROVIDER = "sarvam"
+_INDIC_LANGUAGES = frozenset({"te", "hi", "ta", "kn", "ml", "bn", "mr", "gu", "or", "pa"})
+
+
+def _preferred_llm_provider(
+    language: str, provider_names: list[str], models: list[str]
+) -> Optional[str]:
+    """Chain label to serve first for this call's language, if the chain has one."""
+    if str(language or "").strip().lower() not in _INDIC_LANGUAGES:
+        return None
+    labels = [str(name or "").strip().lower() for name in provider_names]
+    if SPOKEN_INDIC_LLM_PROVIDER in labels:
+        return SPOKEN_INDIC_LLM_PROVIDER
+    for index, model in enumerate(models):
+        if "sarvam" in str(model or "").lower():
+            return provider_names[index]
+    return None
+
+
 class FallbackLLM(llm.LLM):
     """Ordered LLM chain with per-member cooldown (ARCHITECTURE.md S5).
 
@@ -321,7 +346,8 @@ class FallbackLLM(llm.LLM):
     member INSIDE THE SAME TURN; that turns a Groq 429 from ~13s of dead air
     into a normal reply from the secondary model. If content was already
     spoken it re-raises (no duplicated prefixes). The chain definition and
-    order are unchanged: 5x Qwen -> GPT-OSS -> Sarvam.
+    order are unchanged: 5x Qwen -> GPT-OSS -> Sarvam, except that an Indic
+    call tries its preferred member first and keeps that order for failover.
 
     Backward compatible: ``FallbackLLM(primary, fallback)`` behaves exactly
     as before; ``FallbackLLM([k1, k2], openai_llm)`` rotates Groq keys.
@@ -333,6 +359,7 @@ class FallbackLLM(llm.LLM):
         fallback: Any = None,
         cooldown_s: float = 90.0,
         provider_names: Optional[list[str]] = None,
+        prefer_provider: Optional[str] = None,
     ) -> None:
         super().__init__()
         if isinstance(fallback, (int, float)) and not isinstance(fallback, bool):
@@ -365,6 +392,13 @@ class FallbackLLM(llm.LLM):
         if provider_names is None:
             provider_names = [f"member-{index}" for index in range(len(members))]
         self._providers: list[str] = list(provider_names)
+        self._prefer_index: Optional[int] = None
+        want = str(prefer_provider or "").strip().lower()
+        if want:
+            for index, name in enumerate(self._providers):
+                if str(name).strip().lower() == want:
+                    self._prefer_index = index
+                    break
 
     @property
     def last_served_model(self) -> str:
@@ -392,14 +426,26 @@ class FallbackLLM(llm.LLM):
         if self.first_token_ms is None or elapsed_ms < self.first_token_ms:
             self.first_token_ms = float(elapsed_ms)
 
+    def _member_order(self) -> list[int]:
+        """Chain indexes in the order this call should try them.
+
+        An Indic-language call puts the provider trained for spoken Indic
+        first; every other member stays in its original position as overflow.
+        """
+        order = list(range(len(self._down_until)))
+        if self._prefer_index is None:
+            return order
+        order.remove(self._prefer_index)
+        return [self._prefer_index, *order]
+
     def _pick_member(self, exclude: Optional[set[int]] = None) -> int:
         now = time.monotonic()
-        for index, down_until in enumerate(self._down_until):
+        for index in self._member_order():
             if exclude and index in exclude:
                 continue
-            if now >= down_until:
+            if now >= self._down_until[index]:
                 return index
-        return -1 if exclude else 0  # no eligible member
+        return -1 if exclude else (self._member_order()[0] if self._down_until else 0)
 
     def _mark_down(self, index: int) -> None:
         self._down_until[index] = time.monotonic() + self._cooldown_s
@@ -1177,7 +1223,13 @@ def build_providers(
                     for name, m in zip(chain_providers, chain)
                 ),
             )
-            bundle.llm = FallbackLLM(chain, provider_names=chain_providers)
+            bundle.llm = FallbackLLM(
+                chain,
+                provider_names=chain_providers,
+                prefer_provider=_preferred_llm_provider(
+                    language, chain_providers, [getattr(m, "model", "") for m in chain]
+                ),
+            )
         else:
             bundle.llm = chain[0]
     elif settings.llm_fallback_chain:
@@ -1212,7 +1264,13 @@ def build_providers(
                     for name, m in zip(extra_names, extra_llms)
                 ),
             )
-            bundle.llm = FallbackLLM(extra_llms, provider_names=extra_names)
+            bundle.llm = FallbackLLM(
+                extra_llms,
+                provider_names=extra_names,
+                prefer_provider=_preferred_llm_provider(
+                    language, extra_names, [getattr(m, "model", "") for m in extra_llms]
+                ),
+            )
         elif extra_llms:
             bundle.llm = extra_llms[0]
             logger.info("GROQ_API_KEY missing - using %s (%s)", extra_names[0], getattr(extra_llms[0], "model", "?"))
