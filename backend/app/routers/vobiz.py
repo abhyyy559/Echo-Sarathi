@@ -236,9 +236,12 @@ async def _pump_room_to_vobiz(
 
     from app.services.media_bridge import MulawFramer
 
-    async def _send(frame: bytes) -> None:
+    async def _send(frame: bytes) -> float:
+        """Write one playAudio message; returns how long the write blocked."""
         payload = base64.b64encode(frame).decode()
+        started = time.monotonic()
         await ws.send_text(build_play_audio(stream_id_box.get("sid", ""), payload))
+        return (time.monotonic() - started) * 1000.0
 
     #: One frame IS 20ms of 8kHz speech.
     frame_seconds = TELEPHONY_FRAME_BYTES / 8000.0
@@ -248,6 +251,7 @@ async def _pump_room_to_vobiz(
     frames_out = 0
     sent_bytes = 0
     max_late_ms = 0.0
+    max_send_ms = 0.0
     try:
         while True:
             await asyncio.wait({getter})
@@ -256,12 +260,12 @@ async def _pump_room_to_vobiz(
             if ulaw == b"":
                 tail = framer.flush()
                 if tail:
-                    await _send(tail)
+                    max_send_ms = max(max_send_ms, await _send(tail))
                     frames_out += 1
                     sent_bytes += len(tail)
                 break
             for frame in framer.push(ulaw):
-                await _send(frame)
+                max_send_ms = max(max_send_ms, await _send(frame))
                 frames_out += 1
                 sent_bytes += len(frame)
                 # Frame number frames_out is due at t0 + frames_out * 20ms.
@@ -277,6 +281,13 @@ async def _pump_room_to_vobiz(
         if stats is not None:
             stats["frames_out"] = frames_out
             stats["max_late_ms"] = round(max_late_ms, 1)
+            # Splits a schedule miss into its two possible causes: a write
+            # that blocked (Vobiz/network backpressure, so max_send_ms is
+            # large) versus this coroutine simply not being scheduled (the
+            # event loop was busy elsewhere, so max_send_ms stays tiny while
+            # max_late_ms is not). Call 18 showed 1517.8ms late and needed
+            # this answer before anything else about pacing could be fixed.
+            stats["max_send_ms"] = round(max_send_ms, 1)
 
 
 def _flush_bridge_queue(queue: Any) -> int:
@@ -492,7 +503,7 @@ async def vobiz_media(websocket: WebSocket) -> None:
         # there). in_rates shows the resample path.
         logger.info(
             "vobiz outbound audio call=%s tracks=%s frames_in=%s frames_out=%s drops=%s "
-            "in_rates=%s out_peak=%s max_late_ms=%s",
+            "in_rates=%s out_peak=%s max_late_ms=%s max_send_ms=%s",
             call_pk,
             drain_stats.get("tracks", 0),
             drain_stats.get("frames_in", 0),
@@ -501,6 +512,7 @@ async def vobiz_media(websocket: WebSocket) -> None:
             sorted(drain_stats.get("in_rates") or []),
             drain_stats.get("out_peak", 0),
             drain_stats.get("max_late_ms", 0),
+            drain_stats.get("max_send_ms", 0),
         )
         try:
             await room.disconnect()

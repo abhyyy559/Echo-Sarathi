@@ -126,6 +126,10 @@ def test_pump_keeps_real_time_when_each_send_costs_time(monkeypatch) -> None:
     assert stats["frames_out"] == frames
     # Never behind: the 8ms write is charged against the 20ms budget.
     assert stats["max_late_ms"] == 0.0
+    # ...and the log now separates "the write was slow" from "we were late":
+    # a late pump with max_send_ms at the write cost is Vobiz backpressure,
+    # a late pump with max_send_ms ~0 is this coroutine not being scheduled.
+    assert stats["max_send_ms"] == 8.0
 
 
 def test_pump_repays_a_stall_instead_of_compounding_it(monkeypatch) -> None:
