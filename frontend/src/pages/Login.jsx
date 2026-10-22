@@ -25,45 +25,29 @@ export default function Login() {
     setError(null);
   }
 
-  // Demo logins try the REAL backend account first (seeded by
-  // backend/scripts/seed_demo.py), so the dashboard and all APIs work with a
-  // genuine JWT. Only when the backend is down or unseeded do we fall back to
-  // an offline mock session — api.js knows mock tokens and won't kick a demo
-  // user back to /login on 401s; pages render their own error states instead.
-  const DEMO_LOGINS = [
-    { email: 'demo@example.com', password: 'demo1234' },
-    { email: 'demo@echosarathi.ai', password: 'voice1234' },
-  ];
+  // The public demo account is configured at build time (Vercel env vars), not
+  // hardcoded here. Login always goes through the real API with whatever the
+  // visitor typed, so a stale password shows the backend's error instead of a
+  // misleading "demo account is not available" banner. Empty vars = no hint.
+  const DEMO_EMAIL = (import.meta.env.VITE_DEMO_EMAIL || '').trim();
+  const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || '';
+  const showDemoHint = Boolean(DEMO_EMAIL && DEMO_PASSWORD);
+  const usesDemoCredentials =
+    !isRegister &&
+    showDemoHint &&
+    form.email.trim() === DEMO_EMAIL &&
+    form.password === DEMO_PASSWORD;
+
+  function fillDemo() {
+    setForm({ orgName: '', email: DEMO_EMAIL, password: DEMO_PASSWORD });
+    setError(null);
+  }
 
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const isDemo =
-        !isRegister &&
-        DEMO_LOGINS.some((d) => form.email.trim() === d.email && form.password === d.password);
-      if (isDemo) {
-        try {
-          const demoRes = await authApi.login({ email: 'demo@example.com', password: 'demo1234' });
-          if (demoRes && demoRes.token) {
-            setSession(demoRes.token, demoRes.user);
-            navigate(from, { replace: true });
-            return;
-          }
-          throw new Error('no token');
-        } catch {
-          if (!ALLOW_OFFLINE_DEMO) {
-            setError(
-              'The demo account is not available on this deployment. Sign in with your own account, or ask the administrator to seed the demo tenant.'
-            );
-            return;
-          }
-          setSession('demo-token', { email: form.email.trim(), role: 'admin' });
-          navigate(from, { replace: true });
-          return;
-        }
-      }
       const res = isRegister
         ? await authApi.register({
             orgName: form.orgName.trim(),
@@ -79,6 +63,12 @@ export default function Login() {
       setSession(res.token, res.user);
       navigate(from, { replace: true });
     } catch (err) {
+      // Dev-only escape hatch: with the API down, keep the offline mock usable.
+      if (usesDemoCredentials && ALLOW_OFFLINE_DEMO) {
+        setSession('demo-token', { email: form.email.trim(), role: 'admin' });
+        navigate(from, { replace: true });
+        return;
+      }
       setError(
         err.message ||
           `Could not sign in. Check that the backend at ${apiTargetLabel()} is reachable.`
@@ -190,10 +180,11 @@ export default function Login() {
 
         <div className={`err-msg${error ? ' show' : ''}`}>{error}</div>
 
-        {!isRegister && (
-          <div className="demo-hint">
-            Demo — use <b>demo@example.com</b> / <b>demo1234</b> (full data when the backend is seeded)
-          </div>
+        {!isRegister && showDemoHint && (
+          <button type="button" className="demo-hint demo-hint-btn" onClick={fillDemo}>
+            Demo — use <b>{DEMO_EMAIL}</b> / <b>{DEMO_PASSWORD}</b>
+            <span className="demo-hint-do">click to fill</span>
+          </button>
         )}
 
         <div className="form-actions">

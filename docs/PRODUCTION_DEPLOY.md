@@ -214,6 +214,21 @@ the `agent-*` participant and its `roomio_audio` track. `AGENT JOINED` plus a
 track line is the whole voice path (token → dispatch → STT/TTS pipeline) proven;
 a timeout of 90 s covers a cold worker.
 
+### The demo login on the sign-in page
+
+The page's "click to fill" box is built from `VITE_DEMO_EMAIL` and
+`VITE_DEMO_PASSWORD`, which `deploy-vercel.ps1` copies from `DEMO_EMAIL` /
+`DEMO_PASSWORD` in `.deploy.env`. Nothing is hardcoded: clear either value,
+re-run the script, and the box disappears (the account still exists, it just
+isn't advertised).
+
+Those two values are compiled into the public JavaScript, so the demo account
+is public by design — that is what a self-serve demo means. It is an `owner` of
+the seeded demo org only, and outbound calling stays bounded by
+`CONSENT_ENFORCEMENT=true` and the `TEST_PHONE_NUMBERS` allowlist. If you need a
+deployment where the demo is *not* public, unset both variables and hand the
+credentials to reviewers out of band.
+
 ---
 
 ## 6. Faculty demo flow — all from the UI
@@ -266,6 +281,8 @@ Free-tier gotchas that were deliberately designed around:
 - `JWT_SECRET` and `INTERNAL_API_TOKEN` are freshly generated (96 hex chars)
   and exist only in `.deploy.env` and the providers' encrypted env stores.
 - The demo password is generated, 17 characters, and no longer `demo1234`.
+- The sign-in page's demo hint comes from build-time env vars (no hardcoded
+  password in the source); clearing `DEMO_PASSWORD` and re-deploying removes it.
 - `CONSENT_ENFORCEMENT=true` and `TEST_PHONE_NUMBERS` limits outbound calls to
   numbers you own.
 - `/api/health` exposes only booleans, model names, and TCP reachability —

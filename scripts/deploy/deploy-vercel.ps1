@@ -73,20 +73,37 @@ if ($OriginOnly) {
 }
 
 Write-Section "Vercel: environment"
-$existing = Invoke-VercelApi -Method GET -Path "/v9/projects/$projectId/env"
-foreach ($item in @($existing.envs)) {
-    if ($item.key -eq "VITE_API_URL") {
-        Invoke-VercelApi -Method DELETE -Path "/v9/projects/$projectId/env/$($item.id)" | Out-Null
-        Write-Host "  replaced existing VITE_API_URL"
+function Set-VercelEnv {
+    param([string]$Key, [string]$Value)
+    $existing = Invoke-VercelApi -Method GET -Path "/v9/projects/$projectId/env"
+    foreach ($item in @($existing.envs)) {
+        if ($item.key -eq $Key) {
+            Invoke-VercelApi -Method DELETE -Path "/v9/projects/$projectId/env/$($item.id)" | Out-Null
+            Write-Host "  replaced existing $Key"
+        }
     }
+    Invoke-VercelApi -Method POST -Path "/v10/projects/$projectId/env" -Body @{
+        key    = $Key
+        value  = $Value
+        type   = "plain"
+        target = @("production", "preview", "development")
+    } | Out-Null
+    Write-Host "  $Key -> $Value"
 }
-Invoke-VercelApi -Method POST -Path "/v10/projects/$projectId/env" -Body @{
-    key    = "VITE_API_URL"
-    value  = $RenderServiceUrl
-    type   = "plain"
-    target = @("production", "preview", "development")
-} | Out-Null
-Write-Host "  VITE_API_URL -> $RenderServiceUrl"
+
+Set-VercelEnv -Key "VITE_API_URL" -Value $RenderServiceUrl
+# The login page's demo hint is build-time config, never a hardcoded password:
+# setting these is what makes "click to fill" appear. They are baked into the
+# public bundle by definition, which is the same exposure the old hardcoded
+# demo1234 had - but it can be switched off by clearing DEMO_PASSWORD.
+$demoEmail = $cfg["DEMO_EMAIL"]
+$demoPassword = $cfg["DEMO_PASSWORD"]
+if ([string]::IsNullOrWhiteSpace($demoEmail) -or [string]::IsNullOrWhiteSpace($demoPassword)) {
+    Write-Host "  demo hint skipped (DEMO_EMAIL / DEMO_PASSWORD not both set)"
+} else {
+    Set-VercelEnv -Key "VITE_DEMO_EMAIL" -Value $demoEmail
+    Set-VercelEnv -Key "VITE_DEMO_PASSWORD" -Value $demoPassword
+}
 
 Write-Section "Vercel: /api proxy"
 # The Vercel project's root is the repo root, so vercel.json at the root is the
