@@ -346,6 +346,13 @@ class FallbackLLM(llm.LLM):
         self._cooldown_s = cooldown_s
         self._down_until: list[float] = [0.0] * len(members)
         self.last_served_index: int = 0
+        #: True time-to-first-content-token for the current exchange, measured
+        #: in the stream proxy. Providers whose SDK build emits no
+        #: ``LLMMetrics.ttft`` (Sarvam, and Groq through this plugin) otherwise
+        #: leave turn telemetry with nothing better than the item-commit time,
+        #: which is full generation time: a 20 s "first token" was reported on
+        #: a turn whose audio actually started in 0.6 s.
+        self.first_token_ms: Optional[float] = None
         # Provider label per member ("groq", "gemini", ...), same order as the
         # chain. Labels drive the shared-TPM skip: request counters were
         # measured to be per key, but the token bucket is org-wide (a 5,012
@@ -371,6 +378,15 @@ class FallbackLLM(llm.LLM):
     def chain_size(self) -> int:
         """Number of keys/providers in the rotation (observability)."""
         return len(self._chain)
+
+    def begin_exchange(self) -> None:
+        """Clear per-exchange streaming measurements (called by telemetry)."""
+        self.first_token_ms = None
+
+    def _note_first_content(self, elapsed_ms: float) -> None:
+        """Latch the fastest first-token time seen this exchange."""
+        if self.first_token_ms is None or elapsed_ms < self.first_token_ms:
+            self.first_token_ms = float(elapsed_ms)
 
     def _pick_member(self, exclude: Optional[set[int]] = None) -> int:
         now = time.monotonic()
@@ -521,6 +537,7 @@ class _FallbackStream(llm.LLMStream):
         self._member_index = member_index
         self._tried: set[int] = {member_index}
         self._yielded_content = False
+        self._started_at = time.monotonic()
 
     async def _run(self) -> None:
         # Abstract hook required by llm.LLMStream. This proxy never drives
@@ -532,6 +549,10 @@ class _FallbackStream(llm.LLMStream):
             try:
                 chunk = await self._active.__anext__()
                 if _chunk_has_content(chunk):
+                    if not self._yielded_content:
+                        self._owner._note_first_content(
+                            (time.monotonic() - self._started_at) * 1000.0
+                        )
                     self._yielded_content = True
                 return chunk
             except StopAsyncIteration:
@@ -1351,10 +1372,15 @@ class TurnTelemetry:
     - ``transcription_delay_ms``: Deepgram finalization lag
       (EOU metric ``transcription_delay``), logged separately so the two STT
       levers are distinguishable (P0-1).
-    - ``llm_first_token_ms``: LLM time-to-first-token (``LLMMetrics.ttft``).
+    - ``llm_first_token_ms``: LLM time-to-first-token (``LLMMetrics.ttft``, or
+      the chain's own in-stream measurement when the SDK reports none).
     - ``tts_first_audio_ms``: TTS time-to-first-audio-byte (``TTSMetrics.ttfb``).
-    - ``e2e_ms``: approximated speech-to-speech =
-      stt_final + llm_ttfb + tts_ttfb.
+    - ``e2e_ms``: the caller's own latency — their end of speech until the
+      agent's audio started, measured on one wall clock. NOT a sum of the
+      stage timings: that double-counted a slow stage which had already been
+      overlapped by streaming, and turned a 0.6 s reply into a reported 20 s.
+    - ``llm_reply_ms``: time until the assistant item committed, i.e. full
+      generation length. Kept out of ``llm_first_token_ms`` on purpose.
 
     Event wiring for livekit-agents 1.8.3: there is NO ``session.metrics``
     collector object on AgentSession — the session EMITS a single
@@ -1434,10 +1460,23 @@ class TurnTelemetry:
         self._end_of_speech_at: Optional[float] = None
         self._reply_start_at: Optional[float] = None
         self._got_agent_item = False
+        # When the agent's audio actually started, and when its text item
+        # finally committed. The first is what the caller experiences as the
+        # agent's response time; the second is generation time, not first
+        # token, and must never be reported as one.
+        self._first_speech_at: Optional[float] = None
+        self._llm_reply_ms: Optional[float] = None
         self._stt_final_ms: Optional[float] = None
         self._transcription_delay_ms: Optional[float] = None
         self._llm_first_token_ms: Optional[float] = None
         self._tts_first_audio_ms: Optional[float] = None
+        # A fresh exchange also restarts the LLM's streaming measurement;
+        # without this the previous turn's first-token time is reused and
+        # every subsequent turn looks as fast (or as slow) as the first.
+        try:
+            self._llm.begin_exchange()
+        except Exception:  # noqa: BLE001 — telemetry must never break a turn
+            logger.debug("LLM begin_exchange failed", exc_info=True)
         # Per-stage diagnostic log guards (Fix 4): exactly one INFO line per
         # exchange even though a turn emits one metric per TTS sentence and
         # agent_state may set the latency before the metric event arrives.
@@ -1653,6 +1692,8 @@ class TurnTelemetry:
             )
         if new_state == "speaking":
             self._agent_speaking = True
+            if self._first_speech_at is None:
+                self._first_speech_at = time.monotonic()
         elif old_state == "speaking":
             self._agent_speaking = False
         if old_state == "speaking" and new_state is not None and new_state != "speaking":
@@ -1790,6 +1831,38 @@ class TurnTelemetry:
             if self._stt_final_ms is None:
                 self._stt_final_ms = elapsed_ms
 
+    def _streamed_first_token_ms(self) -> Optional[float]:
+        """First content token, from whichever source actually measured it.
+
+        ``LLMMetrics.ttft`` when the provider's SDK reports it, else the LLM
+        chain's own in-stream measurement. Deliberately excludes the
+        item-commit time: that is generation length, and on a 200-character
+        spoken reply it is off by more than an order of magnitude.
+        """
+        if self._llm_first_token_ms is not None:
+            return self._llm_first_token_ms
+        try:
+            value = getattr(self._llm, "first_token_ms", None)
+        except Exception:  # noqa: BLE001 — a missing metric is never fatal
+            return None
+        return None if value is None else float(value)
+
+    def _watchdog_is_dead(self) -> bool:
+        """True only when nothing at all is coming back for this exchange.
+
+        Every earlier version of this guard keyed on the assistant ITEM, which
+        commits when generation finishes. A reply that streamed for 19 s (a
+        215-character Telugu answer) therefore looked dead at 10 s, and the
+        recovery line "Sorry, I didn't quite catch that" landed on top of an
+        answer the caller was already hearing. Audio, spoken text and first
+        LLM tokens each independently prove the turn is alive.
+        """
+        if self._got_agent_item or self._agent_text:
+            return False
+        if self._agent_speaking or self._first_speech_at is not None:
+            return False
+        return self._streamed_first_token_ms() is None
+
     async def _stall_watchdog(self, generation: int, transcript: str) -> None:
         """Break silence only when a turn is truly dead - never filler.
 
@@ -1805,24 +1878,23 @@ class TurnTelemetry:
         media stream that goes silent too long (seen live: our bridge left
         phone-155 with no hangup signal, mid-thought, during an LLM stall).
         Speaking anything keeps audio flowing and the call alive, so phone
-        rooms recover at 7s while browser rooms wait the full 12s.
+        rooms recover at 10s while browser rooms wait the full 12s.
         """
         try:
             phone_room = "phone-" in str(getattr(self, "_room_name", "") or "")
             # 10s on phone (Vobiz drops silent streams; 7s collided with 5-11s
             # throttled turns and talked over real replies), 12s in browser.
             await asyncio.sleep(10.0 if phone_room else 12.0)
-            if generation != self._watchdog_generation or self._got_agent_item:
+            if generation != self._watchdog_generation:
                 return
-            # If the LLM has already produced its first token, a reply IS
-            # coming - speaking now would talk over it ("Sorry, I didn't" cut
-            # off mid-sentence, then the real reply). Only recover when there
-            # is genuinely nothing: no agent speech AND no LLM output.
-            if self._llm_first_token_ms is not None:
+            if not self._watchdog_is_dead():
+                # Something is in flight: give a slow-but-live generation one
+                # more window before declaring the turn dead.
                 await asyncio.sleep(8.0)
-                if generation != self._watchdog_generation or self._got_agent_item:
-                    return
-                if self._llm_first_token_ms is not None and self._agent_text:
+                if (
+                    generation != self._watchdog_generation
+                    or not self._watchdog_is_dead()
+                ):
                     return
             try:
                 await self._session.say(
@@ -1858,12 +1930,13 @@ class TurnTelemetry:
         # call itself must stay out of the transcript. Returning before this
         # check made the watchdog fire on a model that had already replied.
         if role == "assistant" and text:
-            if not self._got_agent_item and self._llm_first_token_ms is None and self._reply_start_at is not None:
-                # APPROXIMATION fallback: item commit time - reply start upper-
-                # bounds true TTFT; used only if llm_metrics never arrived.
-                self._llm_first_token_ms = (
-                    time.monotonic() - self._reply_start_at
-                ) * 1000.0
+            if not self._got_agent_item and self._reply_start_at is not None:
+                # Generation length, kept separately from first-token: this
+                # commit time is when the whole reply finished, which is what
+                # let a 0.6 s response get reported as a 19.9 s LLM.
+                self._llm_reply_ms = (time.monotonic() - self._reply_start_at) * 1000.0
+            if self._llm_first_token_ms is None:
+                self._llm_first_token_ms = self._streamed_first_token_ms()
             self._got_agent_item = True
             self._agent_text = f"{self._agent_text} {text}".strip()
             self._publish_caption("agent", text)
@@ -2033,7 +2106,18 @@ class TurnTelemetry:
             timestamp = self._utc_now_iso()
 
             e2e_ms: Optional[float] = None
+            # The number the caller can actually feel: their voice stopped,
+            # then the agent's started. Measured on one wall clock so EOU,
+            # STT finalization, LLM and TTS are all inside it. The sum of the
+            # three per-stage timings was the fallback and is what made a
+            # 0.6 s reply read as 20 s on the dashboard.
             if (
+                self._end_of_speech_at is not None
+                and self._first_speech_at is not None
+                and self._first_speech_at >= self._end_of_speech_at
+            ):
+                e2e_ms = (self._first_speech_at - self._end_of_speech_at) * 1000.0
+            elif (
                 self._stt_final_ms is not None
                 and self._llm_first_token_ms is not None
                 and self._tts_first_audio_ms is not None
@@ -2098,6 +2182,7 @@ class TurnTelemetry:
                             self._transcription_delay_ms
                         ),
                         "llm_first_token_ms": self._round(self._llm_first_token_ms),
+                        "llm_reply_ms": self._round(self._llm_reply_ms),
                         "tts_first_audio_ms": self._round(self._tts_first_audio_ms),
                         "e2e_ms": self._round(e2e_ms),
                         "prompt_tokens": self._prompt_tokens,

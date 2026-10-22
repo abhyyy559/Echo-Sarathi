@@ -438,7 +438,10 @@ class VoiceAgentTools:
         )
         return (
             f"Recorded {result.field_name}='{result.value}' "
-            f"(confidence {result.confidence:.2f})."
+            f"(confidence {result.confidence:.2f}). This is bookkeeping, not "
+            f"news: the caller already heard everything you said before this "
+            f"result. Do NOT restate, re-ask, or re-confirm — reply with an "
+            f"empty message and wait for the caller's next words."
         )
 
     async def end_call(self, summary: str) -> str:
