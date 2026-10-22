@@ -140,7 +140,7 @@
 | **Orchestration** | LiveKit (self-hosted) | Room management, agent lifecycle, audio routing |
 | **Telephony** | Vobiz | India PSTN gateway, μ-law 8kHz WebSocket streaming |
 | **STT** | Deepgram Nova-2 Phonecall | Streaming speech-to-text, telephony-tuned |
-| **LLM** | Groq Llama 3.1 8B Instant | Response generation, tool calling |
+| **LLM** | Groq Qwen 3.8-27B (primary) / GPT-OSS-120B (secondary) | Response generation, tool calling |
 | **TTS** | Cartesia Sonic (Phase 1) / Sarvam Bulbul V3 (Phase 2) | Text-to-speech, μ-law 8kHz output |
 | **Backend** | Python FastAPI | Call control, campaign management, webhooks |
 | **Frontend** | React | Dashboard, Call Detail, agent creation |
@@ -237,7 +237,7 @@
 
 **Deepgram Nova-2 Phonecall (STT):** Streaming speech-to-text tuned for 8kHz telephony audio. Emits interim results (fast, low-confidence) and final results (slower, high-confidence). Configured with `endpointing=300ms` and `utterance_end=1000ms`.
 
-**Groq Llama 3.1 8B Instant (LLM):** Generates the agent's response. Time-to-first-token under 200ms. Supports tool calling for calendar booking, transfers, and API actions. Capped at 300 output tokens to stay within rate limits.
+**Groq Qwen 3.8-27B (LLM, primary):** Generates the agent's response. Measured 6/6 correct tool decisions, multi-field capture, and under 2.3s latency on the real prompt. Supports tool calling for calendar booking, transfers, and API actions. Capped at 300 output tokens to stay within rate limits. GPT-OSS-120B is the secondary model; Sarvam 105B Conversations is the overflow after the whole Groq tier.
 
 **Cartesia Sonic (TTS):** Converts the LLM's text to speech. Streaming mode — sends audio as soon as the first sentence is ready. Time-to-first-byte under 150ms. Outputs μ-law 8kHz matching the telephony pipeline.
 

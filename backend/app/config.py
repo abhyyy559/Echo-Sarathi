@@ -6,10 +6,19 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _logger = logging.getLogger(__name__)
+
+#: Repository root (backend/app/config.py -> backend/app -> backend -> root).
+#: The root .env is authoritative for shared LLM/provider settings so the
+#: playground and the Docker campaign cannot silently use different keys or
+#: models. backend/.env still supplies backend-only values, but the root file
+#: is loaded LAST and therefore wins on overlapping names.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ENV_FILES = (".env", str(_REPO_ROOT / ".env"))
 
 #: Values that are obviously template leftovers, not real credentials. A
 #: placeholder key in the LLM chain would 401 on every turn and mask the real
@@ -38,7 +47,11 @@ def _looks_like_template(value: str) -> bool:
 class Settings(BaseSettings):
     """Runtime configuration, loaded from environment / .env file."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # --- infrastructure -------------------------------------------------
     database_url: str = "sqlite:///./voice_agent.db"
@@ -140,7 +153,11 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     # Groq chat model for playground TEXT mode (must match GROQ_MODEL used by
     # the voice worker so both modes exercise the same brain).
-    groq_model: str = "openai/gpt-oss-20b"
+    # qwen3.8-27b: 6/6 correct tool decisions, multi-field capture, <2.3s.
+    # llama-3.1-8b-instant is 404 (decommissioned for dev tiers, Aug 2026).
+    groq_model: str = "qwen/qwen3.8-27b"
+    # Second Groq MODEL tried after every primary key. Empty disables the tier.
+    groq_secondary_model: str = ""
 
     # --- LLM provider chain (free/cheap tiers, OpenAI-compatible) ---
     # A single Groq key hits 429 after a handful of turns, which is what makes
@@ -163,13 +180,37 @@ class Settings(BaseSettings):
     def llm_chain(self) -> list[tuple[str, str, str, str]]:
         """Ordered ``(name, base_url, api_key, model)`` provider members.
 
-        Explicit LLM_FALLBACK_CHAIN entries go FIRST in listed order, then the
-        DeepSeek shorthand, then the Groq keys, then the remaining shorthands.
-        The owner sets priority by listing: "gemini|...|...,deepseek|..." puts
-        Gemini first and DeepSeek second with Groq as the bulk fallback.
+        Groq-FIRST: the primary pool (qwen on every key) is the fast path,
+        then one secondary Groq model (gpt-oss-120b), then explicit
+        LLM_FALLBACK_CHAIN overflow entries (Sarvam is the intended one), then
+        the remaining shorthands. The old explicit-first order put a slow or
+        failing provider in front of every turn; Groq leads so turn one never
+        waits on it.
         """
         members: list[tuple[str, str, str, str]] = []
-        # 1. Explicit chain entries first, in the owner's listed order.
+        # 1. Groq primary pool: the bulk, fastest tier.
+        for key in self.groq_api_key_list:
+            members.append(("groq", self.groq_base_url, key, self.groq_model))
+        # 2. Secondary Groq model: quality fallback after the whole primary
+        #    pool. Only on Groq's own endpoint; an OpenAI model id on a
+        #    Cerebras base URL would 404 (not retryable).
+        secondary_model = str(self.groq_secondary_model or "").strip()
+        if (
+            self.groq_api_key_list
+            and secondary_model
+            and secondary_model != self.groq_model
+            and "groq.com" in self.groq_base_url
+        ):
+            members.append(
+                (
+                    "groq-secondary",
+                    self.groq_base_url,
+                    self.groq_api_key_list[0],
+                    secondary_model,
+                )
+            )
+        # 3. Explicit overflow entries (Sarvam, ...), in the owner's listed
+        #    order. They only fire after the entire Groq tier.
         for entry in self.llm_fallback_chain.split(","):
             entry = entry.strip()
             if not entry:
@@ -192,7 +233,7 @@ class Settings(BaseSettings):
             if name == "groq" and api_key in self.groq_api_key_list:
                 continue  # already added from GROQ_API_KEY(S)
             members.append((name, base_url, api_key, model))
-        # 2. DeepSeek shorthand: fast cheap tier, second priority by default.
+        # 4. DeepSeek shorthand (billed; only when a real key is set).
         if self.deepseek_api_key and not _looks_like_template(self.deepseek_api_key):
             members.append(
                 (
@@ -202,10 +243,7 @@ class Settings(BaseSettings):
                     "deepseek-chat",
                 )
             )
-        # 3. Groq keys: the bulk fallback pool.
-        for key in self.groq_api_key_list:
-            members.append(("groq", self.groq_base_url, key, self.groq_model))
-        # Shorthand keys append to the chain. A template leftover (the
+        # 5. Remaining shorthand keys append to the chain. A template leftover (the
         # shipped OPENAI_API_KEY=your_openai_api_key) must never occupy a slot:
         # it would 401 on every turn and look like a provider outage.
         if self.openai_api_key and not _looks_like_template(self.openai_api_key):

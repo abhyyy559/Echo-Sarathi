@@ -79,6 +79,37 @@ def test_escalation_and_never_fabricate_text_present() -> None:
     assert "flag" in lowered  # flagged wrap-up requirement
 
 
+def test_ai_identity_rule_is_explicit_for_every_provider() -> None:
+    """Recorded calls in India require an honest answer when asked whether
+    this is a bot. The rule lives in the shared prompt, so it applies to
+    Qwen, GPT-OSS, and Sarvam alike - not just the overflow provider."""
+    rendered = render_system_prompt(BASE_CONFIG)
+    lowered = rendered.lower()
+
+    assert "ai identity" in lowered
+    assert "answer honestly that you are an ai assistant" in lowered
+    assert "never claim to be a human" in lowered
+
+
+def test_opening_is_not_replayed_after_system_greeting() -> None:
+    """The pipeline speaks build_opening_line() before the first LLM turn.
+    Without this rule the model re-greets, repeats the recording disclosure,
+    and re-asks the first question - the "Hello... Hello..." monologue."""
+    rendered = render_system_prompt(BASE_CONFIG)
+    lowered = rendered.lower()
+
+    assert "opening already spoken" in lowered
+    assert "do not re-greet" in lowered
+    assert "repeat the disclosure" in lowered
+
+    # No disclosure means the pipeline has no deterministic opening, so the
+    # model must still greet on its own. The rule must not be emitted there.
+    no_disclosure: Dict[str, Any] = dict(BASE_CONFIG)
+    no_disclosure.pop("disclosure_script", None)
+    no_disclosure.pop("mandatory_disclosure", None)
+    assert "opening already spoken" not in render_system_prompt(no_disclosure).lower()
+
+
 # ---------------------------------------------------------------------------
 # Creator role definition (prompt-driven agents): the user's system_prompt is
 # the authoritative ROLE & MISSION block, rendered verbatim - not a bullet.

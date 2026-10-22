@@ -18,10 +18,13 @@ except ImportError:  # pragma: no cover
     load_dotenv = None  # type: ignore[assignment]
 
 DEFAULT_BACKEND_INTERNAL_URL = "http://localhost:8000"
-# Fast default for voice (gpt-oss-20b runs ~1000 tok/s on Groq dev tier).
-# llama-3.1-8b-instant went Enterprise-only (404 for dev keys). Reasoning is
-# disabled per-request in pipeline.py. Per-agent override: voice_settings.
-DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+# Fast, accurate default for voice. Measured on the real prompt + tools:
+# qwen3.8-27b made 6/6 correct tool decisions, captured multiple fields, spoke
+# on tool turns, and returned in <2.3s. gpt-oss-20b/120b are reasoning models:
+# they need a much larger output budget and are silent on most tool turns.
+# llama-3.1-8b-instant is 404 (decommissioned for dev tiers, Aug 2026).
+# Per-agent override: voice_settings.llm_model.
+DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 # Any OpenAI-compatible endpoint works here (Groq default; Cerebras
 # https://api.cerebras.ai/v1 is the fastest swap — same keys list applies).
@@ -105,15 +108,21 @@ class Settings:
     # not free: a zero balance 402s, which the chain treats as an exhausted
     # member (cools down, fails over) rather than a dead turn.
     deepseek_api_key: Optional[str] = None
+    # Second Groq MODEL tried after every primary Groq key. Empty disables the
+    # tier (the historical Groq-only behaviour). Set to openai/gpt-oss-120b in
+    # .env: qwen is the primary for accuracy, gpt-oss-120b is the quality
+    # fallback before leaving Groq entirely.
+    groq_secondary_model: str = ""
 
     @property
     def llm_fallback_chain(self) -> tuple[tuple[str, str, str, str], ...]:
-        """``(name, base_url, api_key, model)`` members, owner-ordered first.
+        """``(name, base_url, api_key, model)`` overflow members.
 
         Explicit entries keep the owner's listed order, then the DeepSeek
-        shorthand, then the remaining shorthands. The pipeline prepends these
-        BEFORE the Groq keys, so "gemini|...|..." in LLM_FALLBACK_CHAIN plus
-        DEEPSEEK_API_KEY yields gemini -> deepseek -> groq on voice calls.
+        shorthand, then the remaining shorthands. The pipeline appends these
+        AFTER the Groq pool, so the voice order is:
+        Groq primary (qwen) -> Groq secondary (gpt-oss-120b) -> these extras.
+        A slow provider such as Gemini can therefore never delay turn one.
         """
         members: list[tuple[str, str, str, str]] = []
         for entry in (self.llm_fallback_chain_raw or "").split(","):
@@ -208,6 +217,7 @@ class Settings:
                 "BACKEND_INTERNAL_URL", DEFAULT_BACKEND_INTERNAL_URL
             ),
             groq_model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL),
+            groq_secondary_model=os.getenv("GROQ_SECONDARY_MODEL", ""),
             groq_base_url=os.getenv("GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL),
             openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
             llm_fallback_chain_raw=_get("LLM_FALLBACK_CHAIN") or "",

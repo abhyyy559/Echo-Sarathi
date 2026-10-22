@@ -133,6 +133,15 @@ def test_preemptive_off_for_phone_rooms(monkeypatch) -> None:
     preemptive = turn_handling.get("preemptive_generation")
     assert isinstance(preemptive, dict), preemptive
     assert preemptive.get("enabled") is False, preemptive
+    # Enabled speculation must still keep TTS off the partial transcript:
+    # preemptive TTS synthesizes cancelled turns and burns Sarvam credits.
+    preemptive_opts = pipeline_module._PreemptiveOpts
+    if preemptive_opts is not None and "preemptive_tts" in (
+        getattr(preemptive_opts, "__annotations__", {}) or {}
+    ):
+        enabled = pipeline_module._preemptive_kwargs(True)["preemptive_generation"]
+        assert enabled.get("enabled") is True, enabled
+        assert enabled.get("preemptive_tts") is False, enabled
     pipeline_module._build_agent_session(bundle)
     # Must match the helper output after the installed SDK's own filtering:
     # 1.8+ carries the options mapping, 1.7 drops the unknown key entirely.

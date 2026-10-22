@@ -591,7 +591,7 @@ def test_serving_provider_is_persisted_for_the_next_turn(groq_client, session_fa
         call = db.get(Call, call_id)
         assert call.context.get("llm_provider") == {
             "provider": "groq",
-            "model": "openai/gpt-oss-20b",
+            "model": "qwen/qwen3.8-27b",
         }
 
 
@@ -905,9 +905,10 @@ def test_shorthand_keys_extend_the_chain_in_order() -> None:
     ]
 
 
-def test_explicit_chain_leads_then_deepseek_then_groq() -> None:
-    """Owner-ordered chain: explicit entries first in listed order, DeepSeek
-    shorthand second, Groq keys as the bulk fallback."""
+def test_groq_leads_then_explicit_then_deepseek() -> None:
+    """Groq-first chain: the fast primary pool leads, then owner-listed
+    overflow entries, then the DeepSeek shorthand. A slow provider must never
+    sit in front of turn one."""
     from app.config import Settings
 
     settings = Settings(
@@ -918,9 +919,32 @@ def test_explicit_chain_leads_then_deepseek_then_groq() -> None:
         _env_file=None,
     )
     assert [(n, m) for n, _u, _k, m in settings.llm_chain] == [
+        ("groq", settings.groq_model),
         ("gemini", "gemini-flash-latest"),
         ("deepseek", "deepseek-chat"),
-        ("groq", settings.groq_model),
+    ]
+
+
+def test_secondary_groq_then_sarvam_follow_the_primary_pool() -> None:
+    """The requested demo order: every qwen key, then gpt-oss-120b, then
+    Sarvam. Sarvam is overflow only, never a co-primary."""
+    from app.config import Settings
+
+    settings = Settings(
+        database_url="sqlite://",
+        groq_api_key="g1,g2",
+        groq_model="qwen/qwen3.8-27b",
+        groq_secondary_model="openai/gpt-oss-120b",
+        llm_fallback_chain=(
+            "sarvam|https://api.sarvam.ai/v1|sk-test|sarvam-105b-conversations"
+        ),
+        _env_file=None,
+    )
+    assert [(name, model) for name, _u, _k, model in settings.llm_chain] == [
+        ("groq", "qwen/qwen3.8-27b"),
+        ("groq", "qwen/qwen3.8-27b"),
+        ("groq-secondary", "openai/gpt-oss-120b"),
+        ("sarvam", "sarvam-105b-conversations"),
     ]
 
 
@@ -1023,10 +1047,9 @@ def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_fact
     fresh = create_app(
         make_settings(
             groq_api_key="k1",
-            # Explicit groq-k1 duplicates the shorthand key, so the dedup drops
-            # it there and the owner-ordered chain reads cerebras -> groq: the
-            # 429-retry behaviour under test is unchanged, just led by the
-            # explicit entry.
+            # Groq-first: the primary pool is retried, then the explicit
+            # Cerebras overflow answers. The 429-retry behavior is unchanged;
+            # only the order is new (a slow provider must not lead).
             llm_fallback_chain="cerebras|https://api.cerebras.ai/v1|ck1|llama-3.3-70b",
         )
     )
@@ -1046,11 +1069,10 @@ def test_chain_fails_over_to_next_provider_when_one_is_rate_limited(session_fact
         assert resp.status_code == 200, resp.text
         assert resp.json()["reply_text"] == "still here"
         bearers = [r["headers"]["Authorization"] for r in _FlakyAsyncClient.requests]
-        # Owner-ordered chain leads with the explicit entry: cerebras retried,
-        # then groq answers. Same retry-then-failover behaviour, new order.
-        assert bearers == ["Bearer ck1"] * 3 + ["Bearer k1"]
+        # Groq leads: the primary key is retried, then Cerebras answers.
+        assert bearers == ["Bearer k1"] * 3 + ["Bearer ck1"]
         assert _FlakyAsyncClient.requests[-1]["url"] == (
-            "https://api.groq.com/openai/v1/chat/completions"
+            "https://api.cerebras.ai/v1/chat/completions"
         )
     _FlakyAsyncClient.planned = []
     _FlakyAsyncClient.requests = []

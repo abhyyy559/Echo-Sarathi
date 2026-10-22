@@ -10,6 +10,7 @@ export default function TestCallPage() {
   const [domainId, setDomainId] = useState('');
   const [agents, setAgents] = useState([]);
   const [agentId, setAgentId] = useState('');
+  const [agentsError, setAgentsError] = useState(null);
   const [versions, setVersions] = useState([]);
   const [versionId, setVersionId] = useState('');
   const [contactCard, setContactCard] = useState({ ...ABSENT_STUDENT_DEFAULTS });
@@ -25,8 +26,21 @@ export default function TestCallPage() {
       setDomainsError(null);
     }).catch((e) => setDomainsError(e.message));
     agentsApi.list().then((list) => {
-      setAgents(Array.isArray(list) ? list : []);
-    }).catch(() => setAgents([]));
+      const rows = Array.isArray(list) ? list : [];
+      setAgents(rows);
+      setAgentsError(null);
+      // Make the page usable straight after login: preselect the newest agent
+      // that actually has a saved version, so "Place test call" is enabled
+      // without forcing the user through a selector they do not care about.
+      if (rows.length) {
+        const preferred =
+          rows.find((a) => a.current_version_id != null) || rows[0];
+        setAgentId(String(preferred.id));
+      }
+    }).catch((e) => {
+      setAgents([]);
+      setAgentsError(e.message || 'Could not load agents.');
+    });
   }, []);
 
   useEffect(() => {
@@ -34,6 +48,12 @@ export default function TestCallPage() {
       setVersions([]);
       setVersionId('');
       return;
+    }
+    // Fall back to the agent's current_version_id immediately, so the call
+    // button works even if the separate version-list request is slow.
+    const selected = agents.find((a) => String(a.id) === String(agentId));
+    if (selected && selected.current_version_id != null) {
+      setVersionId(String(selected.current_version_id));
     }
     agentsApi.listVersions(agentId).then((list) => {
       const arr = Array.isArray(list) ? list : [];
@@ -93,9 +113,9 @@ export default function TestCallPage() {
             ))}
           </select>
           {domainsError && <p className="hint hint-error">{domainsError}</p>}
-          {!domainsError && domains.length === 0 && (
-            <p className="hint">No domain configs available yet — add one first (see /domain-configs).</p>
-          )}
+          <p className="hint">
+            Optional — leave blank to use the call domain attached to the selected agent version.
+          </p>
         </div>
 
         <div className="field">
@@ -108,6 +128,13 @@ export default function TestCallPage() {
               </option>
             ))}
           </select>
+          {agentsError && <p className="hint hint-error">{agentsError}</p>}
+          {!agentsError && agents.length === 0 && (
+            <p className="hint">
+              No agents yet. <Link to="/agents/new">Create one in the builder</Link> and the latest
+              saved version will be selected here automatically.
+            </p>
+          )}
         </div>
 
         <div className="field">

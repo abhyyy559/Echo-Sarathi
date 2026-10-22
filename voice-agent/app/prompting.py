@@ -627,6 +627,15 @@ def render_system_prompt(
     # 4. Speaking style — this is what makes it sound human instead of IVR-like.
     # NOTE: every line below costs input tokens on EVERY turn (~2800 total
     # burns Groq's 8000 TPM in ~3 turns). Keep terse; cut examples first.
+    opening_rule = (
+        "\n- OPENING ALREADY SPOKEN: the system delivered the greeting, "
+        "recording disclosure, and first question before your first turn. "
+        "Do NOT re-greet, re-introduce yourself, repeat the institution name, "
+        "or repeat the disclosure. Answer what the caller just said; if they "
+        "did not answer the first question, ask it naturally in different words."
+        if _disclosure_text(config)
+        else ""
+    )
     sections.append(
         "HOW TO SPEAK (critical):\n"
         "- Every reply SHORT: 1-2 sentences, never more than 3. Plain words only: "
@@ -644,11 +653,16 @@ def render_system_prompt(
         "'Yes, I'm here!' BEFORE anything else, then restate in one short line.\n"
         "- Volunteered info counts: skip that goal later. After silence, just 'Are you still there?' "
         "Stay polite even if the caller is upset."
+        + opening_rule
     )
 
     # 4b. Guardrails. Same token warning as above: one line per rule.
     sections.append(
         "HARD RULES (non-negotiable):\n"
+        "- AI IDENTITY (legal): if anyone asks whether you are a bot, AI, or a "
+        "human, answer honestly that you are an AI assistant. NEVER claim to be "
+        "a human, a real person, or a live agent. The opening already disclosed "
+        "this; never contradict or deny it later.\n"
         "- ON TOPIC only (decline the rest, steer back). PRIVACY: discuss only "
         "this call's person. Verify who answers before sensitive details.\n"
         "- NO CARD, NO ASSUMPTIONS: when this prompt names nobody for the call "

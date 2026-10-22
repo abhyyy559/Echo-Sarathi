@@ -16,3 +16,5 @@ tzdata>=2024.1  # zoneinfo database for Asia/Kolkata (Windows + slim images)
 # playground and phone rooms.
 smart-turn-livekit[resample]==0.4.0  # semantic end-of-turn detection (Smart Turn v3 ONNX)
 livekit-plugins-hush==0.3.3  # background-speaker suppression (models bundled)
+# Optional voice-focus alternative: `pip install livekit-plugins-ai-coustics`
+# then set VOICE_NC_PROVIDER=ai_coustics. Hush remains the bundled default.

@@ -102,8 +102,8 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
         "preemptive_generation": expected_preemptive,
         "endpointing": {
             "mode": "fixed",
-            "min_delay": 0.6,
-            "max_delay": 1.5,
+            "min_delay": 0.4,
+            "max_delay": 2.5,
         },
         "interruption": {
             "enabled": True,

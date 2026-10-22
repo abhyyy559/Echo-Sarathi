@@ -1,0 +1,193 @@
+# Render Blueprint for the production demo stack.
+#
+# Frontend stays on Vercel. This file deploys the pieces Vercel cannot run as
+# a normal long-lived service:
+#   - FastAPI backend (HTTP + Vobiz media WebSocket + background dialer)
+#   - LiveKit Agents voice worker
+#   - Postgres and Redis
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repository.
+# Render prompts for every `sync: false` value during the first sync.
+#
+# LiveKit itself stays on LiveKit Cloud. The backend and worker both connect
+# outbound to the same wss:// URL.
+
+databases:
+  - name: echosarathi-db
+    databaseName: voice_agent
+    user: voice_agent
+    plan: basic-256mb
+    region: singapore
+
+services:
+  - type: web
+    name: echosarathi-api
+    runtime: python
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    # Applies migrations and creates the demo tenant/agent on every deploy.
+    # The script is idempotent and never places a call.
+    preDeployCommand: cd backend && python scripts/seed_demo.py
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        fromDatabase:
+          name: echosarathi-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: echosarathi-redis
+          type: keyvalue
+          property: connectionString
+
+      # Public URL Vobiz uses for answer/media/status callbacks. Change this if
+      # Render assigns a different service URL.
+      - key: PUBLIC_BASE_URL
+        value: https://echosarathi-api.onrender.com
+      - key: PUBLIC_WS_BASE_URL
+        value: wss://echosarathi-api.onrender.com
+      # The deployed Vercel frontend origin, e.g. https://your-app.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INTERNAL_API_TOKEN
+        generateValue: true
+      # The demo tenant is seeded above; keep public sign-up closed on a public
+      # deployment. Set to true only if faculty should create their own orgs.
+      - key: ALLOW_PUBLIC_REGISTRATION
+        value: "false"
+
+      # Telephony / calling policy.
+      - key: TELEPHONY_PROVIDER
+        value: vobiz
+      - key: VOBIZ_AUTH_ID
+        sync: false
+      - key: VOBIZ_AUTH_TOKEN
+        sync: false
+      - key: VOBIZ_PHONE_NUMBER
+        sync: false
+      # Comma-separated numbers allowed to receive test calls, including your
+      # own phone. No other number can be dialled while consent enforcement is on.
+      - key: TEST_PHONE_NUMBERS
+        sync: false
+      - key: CONSENT_ENFORCEMENT
+        value: "true"
+      - key: DIALER_ENABLED
+        value: "true"
+      - key: DEFAULT_CPS_LIMIT
+        value: "1"
+      - key: DEFAULT_CONCURRENCY_LIMIT
+        value: "2"
+
+      # LiveKit Cloud room server.
+      - key: LIVEKIT_URL
+        value: wss://echo-sarathi-2hya0f27.livekit.cloud
+      - key: LIVEKIT_URL_INTERNAL
+        value: wss://echo-sarathi-2hya0f27.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+
+      # LLM + speech providers. The voice worker reads the same values.
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: CARTESIA_API_KEY
+        sync: false
+      - key: SARVAM_TTS_API
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEYS
+        sync: false
+      - key: GROQ_MODEL
+        value: qwen/qwen3.8-27b
+      - key: GROQ_SECONDARY_MODEL
+        value: openai/gpt-oss-120b
+      # Optional Sarvam overflow, copied from the local .env:
+      # sarvam|https://api.sarvam.ai/v1|YOUR_KEY|sarvam-105b-conversations
+      - key: LLM_FALLBACK_CHAIN
+        sync: false
+
+      # Render keeps the repo checkout, so the domain-config JSON files are
+      # available without a Docker volume. Backend runs from backend/.
+      - key: DOMAIN_CONFIGS_DIR
+        value: ../domain-configs
+
+  - type: worker
+    name: echosarathi-voice
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./voice-agent/Dockerfile
+    dockerContext: ./voice-agent
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: BACKEND_INTERNAL_URL
+        value: https://echosarathi-api.onrender.com
+      - key: INTERNAL_API_TOKEN
+        fromService:
+          name: echosarathi-api
+          type: web
+          envVarKey: INTERNAL_API_TOKEN
+
+      - key: LIVEKIT_URL
+        value: wss://echo-sarathi-2hya0f27.livekit.cloud
+      - key: LIVEKIT_URL_INTERNAL
+        value: wss://echo-sarathi-2hya0f27.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: CARTESIA_API_KEY
+        sync: false
+      - key: SARVAM_TTS_API
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEYS
+        sync: false
+      - key: GROQ_MODEL
+        value: qwen/qwen3.8-27b
+      - key: GROQ_SECONDARY_MODEL
+        value: openai/gpt-oss-120b
+      - key: LLM_FALLBACK_CHAIN
+        sync: false
+
+      - key: TTS_PROVIDER
+        value: cartesia
+      - key: TTS_LANGUAGE_ROUTING
+        value: "on"
+      - key: SARVAM_TTS_MODEL
+        value: bulbul:v3
+      - key: SARVAM_TTS_SPEAKER
+        value: priya
+      - key: SARVAM_TTS_LANG
+        value: en-IN
+      - key: SARVAM_TTS_SAMPLE_RATE
+        value: "8000"
+      - key: VOICE_NC
+        value: "on"
+      - key: VOICE_NC_PROVIDER
+        value: hush
+
+  - type: keyvalue
+    name: echosarathi-redis
+    plan: starter
+    region: singapore

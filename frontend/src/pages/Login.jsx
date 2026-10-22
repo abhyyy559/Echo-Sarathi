@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { authApi, setSession } from '../api.js';
+import { apiTargetLabel, authApi, setSession } from '../api.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -14,6 +14,11 @@ export default function Login() {
   const [error, setError] = useState(null);
 
   const isRegister = mode === 'register';
+  // The offline mock session is a local-development convenience only. In a
+  // deployed build it must never mint a fake token: every API call would then
+  // 401 and the "demo" would look like a broken product.
+  const ALLOW_OFFLINE_DEMO =
+    import.meta.env.DEV && import.meta.env.VITE_ALLOW_OFFLINE_DEMO === 'true';
 
   function switchMode(next) {
     setMode(next);
@@ -48,6 +53,12 @@ export default function Login() {
           }
           throw new Error('no token');
         } catch {
+          if (!ALLOW_OFFLINE_DEMO) {
+            setError(
+              'The demo account is not available on this deployment. Sign in with your own account, or ask the administrator to seed the demo tenant.'
+            );
+            return;
+          }
           setSession('demo-token', { email: form.email.trim(), role: 'admin' });
           navigate(from, { replace: true });
           return;
@@ -61,13 +72,17 @@ export default function Login() {
           })
         : await authApi.login({ email: form.email.trim(), password: form.password });
       if (!res || !res.token) {
-        throw new Error('Server did not return a session token. ' +
-          'Make sure the backend (FastAPI) is running at http://localhost:8000');
+        throw new Error(
+          `The backend at ${apiTargetLabel()} did not return a session token. Check the API deployment and database migrations.`
+        );
       }
       setSession(res.token, res.user);
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.message || 'Could not sign in. Is the backend running at http://localhost:8000?');
+      setError(
+        err.message ||
+          `Could not sign in. Check that the backend at ${apiTargetLabel()} is reachable.`
+      );
     } finally {
       setBusy(false);
     }

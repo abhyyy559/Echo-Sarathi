@@ -1,4 +1,23 @@
-export const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+// Production builds talk to the same origin (`/api/...`) so Vercel can proxy
+// to the backend without baking a host into the bundle. Local Vite dev keeps
+// the historical localhost:8000 default. An explicit VITE_API_URL always wins
+// (useful for Docker and for direct-to-Render deployments).
+const CONFIGURED_API_BASE = String(import.meta.env.VITE_API_URL || '').trim();
+const RUNTIME_ORIGIN =
+  typeof window !== 'undefined' && window.location ? window.location.origin : '';
+const IS_LOCAL_RUNTIME =
+  typeof window !== 'undefined' &&
+  window.location &&
+  ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+export const API_BASE = (
+  CONFIGURED_API_BASE || (IS_LOCAL_RUNTIME ? 'http://localhost:8000' : '')
+).replace(/\/+$/, '');
+
+/** Human-readable backend target for error messages. */
+export function apiTargetLabel() {
+  return API_BASE || RUNTIME_ORIGIN || 'the configured backend';
+}
 
 const TOKEN_KEY = 'vat_token';
 const USER_KEY = 'vat_user';
@@ -100,7 +119,11 @@ export async function apiFetch(path, options = {}) {
   try {
     res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   } catch {
-    throw new ApiError(`Cannot reach the server at ${API_BASE}. Is the backend running?`, 0, null);
+    throw new ApiError(
+      `Cannot reach the backend at ${apiTargetLabel()}. Check that the API service is running and that the frontend is pointed at it.`,
+      0,
+      null
+    );
   }
 
   if (!res.ok) {

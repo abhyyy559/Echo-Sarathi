@@ -1,9 +1,12 @@
-﻿"""Multi-key LLM rotation: GROQ_API_KEY + GROQ_API_KEYS combine, and the
-FallbackLLM chain cools down only the failed key while turns keep flowing.
+﻿"""Multi-key LLM rotation: GROQ_API_KEY + GROQ_API_KEYS combine.
+
+The FallbackLLM chain cools one key on a per-key RPD/RPM 429, and the whole
+Groq tier on a shared TPM 429 (the token bucket was measured org-wide).
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from livekit.agents import llm
@@ -60,12 +63,39 @@ class _RateLimitedError(Exception):
 
 
 class _FailingStream(_PrimaryStream):
+    def __init__(self, chat_ctx: llm.ChatContext, error: Exception | None = None) -> None:
+        super().__init__(chat_ctx)
+        self._error = error or _RateLimitedError()
+
     async def __anext__(self) -> Any:
-        raise _RateLimitedError()
+        raise self._error
+
+
+class _TpmLimitedError(Exception):
+    """Groq's shared tokens-per-minute rejection (names the org bucket)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Rate limit reached for model `qwen` in organization `org_x` on "
+            "tokens per minute (TPM): Limit 8000, Requested 9210"
+        )
+        self.status_code = 429
+
+
+class _RpdLimitedError(Exception):
+    """A per-key request rejection; the sibling keys still have quota."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Rate limit reached for model `qwen` on requests per day (RPD): "
+            "Limit 1000, Requested 1001"
+        )
+        self.status_code = 429
 
 
 class _RecordingLLM(llm.LLM):
     fail: bool = False
+    error: Exception | None = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -81,7 +111,7 @@ class _RecordingLLM(llm.LLM):
     ) -> _PrimaryStream:
         self.connect_options.append(conn_options)
         if self.fail:
-            return _FailingStream(chat_ctx)
+            return _FailingStream(chat_ctx, self.error)
         return _PrimaryStream(chat_ctx)
 
 
@@ -115,6 +145,63 @@ def test_chain_serves_next_member_after_retryable_failure() -> None:
 
         await llm.LLMStream.aclose(first)
         await llm.LLMStream.aclose(second)
+
+    asyncio.run(scenario())
+
+
+def test_shared_tpm_429_benches_every_groq_key() -> None:
+    """The token bucket is shared (measured): trying a sibling key after a
+    TPM 429 only adds dead air, so the whole tier goes on cooldown."""
+
+    async def scenario() -> None:
+        bad = _RecordingLLM()
+        bad.fail = True
+        bad.error = _TpmLimitedError()
+        sibling = _RecordingLLM()
+        owner = FallbackLLM([bad, sibling], provider_names=["groq", "groq"])
+
+        stream = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
+        try:
+            await stream.__anext__()
+            raise AssertionError("expected the TPM 429 to propagate")
+        except _TpmLimitedError:
+            pass
+
+        now = time.monotonic()
+        assert owner._down_until[0] > now
+        assert owner._down_until[1] > now
+        await llm.LLMStream.aclose(stream)
+
+    asyncio.run(scenario())
+
+
+def test_per_key_rpd_429_leaves_siblings_usable() -> None:
+    """Request counters are per key (measured): an RPD 429 must cool only the
+    key that hit it, so the next turn uses the sibling instead of dropping to
+    a different provider."""
+
+    async def scenario() -> None:
+        bad = _RecordingLLM()
+        bad.fail = True
+        bad.error = _RpdLimitedError()
+        sibling = _RecordingLLM()
+        owner = FallbackLLM([bad, sibling], provider_names=["groq", "groq"])
+
+        stream = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
+        try:
+            await stream.__anext__()
+            raise AssertionError("expected the RPD 429 to propagate")
+        except _RpdLimitedError:
+            pass
+
+        now = time.monotonic()
+        assert owner._down_until[0] > now
+        assert owner._down_until[1] == 0.0
+        nxt = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
+        assert isinstance(nxt, _FallbackStream)
+        assert nxt._member_index == 1
+        await llm.LLMStream.aclose(stream)
+        await llm.LLMStream.aclose(nxt)
 
     asyncio.run(scenario())
 
@@ -261,6 +348,59 @@ def test_build_providers_adds_chain_members_to_voice_llm(monkeypatch) -> None:
     assert made[1]["base_url"] == "https://api.cerebras.ai/v1"
     # The OpenRouter ":free" suffix must survive parsing intact.
     assert made[2]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+
+
+def test_groq_leads_then_secondary_then_sarvam_overflow(monkeypatch) -> None:
+    """Runtime order must be qwen (all keys) -> gpt-oss-120b -> Sarvam.
+
+    This is the fix for the Gemini-first chain: a 503/402 in front of turn one
+    cost 5.7-20s of dead air. Sarvam is overflow only, never a co-primary.
+    """
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.model = kwargs.get("model", "?")
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="c",
+        groq_api_key="k1",
+        groq_api_keys=("k1", "k2"),
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        groq_secondary_model="openai/gpt-oss-120b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+        llm_fallback_chain_raw=(
+            "sarvam|https://api.sarvam.ai/v1|sk-test|sarvam-105b-conversations"
+        ),
+    )
+    bundle = build_providers(settings)
+    assert isinstance(bundle.llm, FallbackLLM)
+    assert bundle.llm._providers == [
+        "groq",
+        "groq",
+        "groq-secondary",
+        "sarvam",
+    ]
+    assert [getattr(m, "model", "?") for m in bundle.llm._chain] == [
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.8-27b",
+        "openai/gpt-oss-120b",
+        "sarvam-105b-conversations",
+    ]
 
 
 def test_output_cap_is_model_aware() -> None:

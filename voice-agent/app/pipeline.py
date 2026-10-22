@@ -157,6 +157,36 @@ def _voice_overrides(voice_settings: Optional[Mapping[str, Any]]) -> tuple[str, 
     return llm_model, tts_voice, vbl, lang
 
 
+_SARVAM_LANG_ALIASES = {
+    "en": "en-IN",
+    "hi": "hi-IN",
+    "ta": "ta-IN",
+    "te": "te-IN",
+    "bn": "bn-IN",
+    "ml": "ml-IN",
+    "mr": "mr-IN",
+    "kn": "kn-IN",
+    "gu": "gu-IN",
+    "pa": "pa-IN",
+    "or": "od-IN",
+    "od": "od-IN",
+}
+
+
+def _bcp47_language(value: Any) -> str:
+    """Map a bare config code ("te") to the BCP-47 code Sarvam requires.
+
+    Already-qualified codes ("te-IN") pass through unchanged. Unknown codes
+    are returned as-is so a future Sarvam language works without a code
+    change; Sarvam validates them at construction and the session degrades
+    to the next provider instead of silently speaking the wrong language.
+    """
+    code = str(value or "").strip()
+    if not code:
+        return ""
+    return _SARVAM_LANG_ALIASES.get(code.lower(), code)
+
+
 def _cartesia_speed(speaking_rate: Any) -> Optional[float]:
     """Map the platform speaking_rate onto Cartesia's speed multiplier.
 
@@ -176,6 +206,23 @@ def _cartesia_speed(speaking_rate: Any) -> Optional[float]:
 #: Anything else (400s like bad-model/shape, 401s) is a config bug — retrying
 #: on another provider would just fail differently.
 _RETRYABLE_LLM_STATUS: frozenset = frozenset({None, 408, 425, 429, 500, 502, 503, 504})
+
+
+def _is_shared_tpm_error(exc: Exception) -> bool:
+    """True when a 429 names the org-wide tokens-per-minute bucket.
+
+    Groq says: "Rate limit reached ... on tokens per minute (TPM): Limit
+    8000". Measured on this key pool: a single 5,012-token request on key #1
+    dropped key #2's remaining tokens to the same level, so TPM/TPD is
+    shared. An RPD ("requests per day") or RPM error is per key and must not
+    bench the siblings.
+    """
+    text = str(exc).lower()
+    for attr in ("message", "body"):
+        value = getattr(exc, attr, None)
+        if value:
+            text += " " + str(value).lower()
+    return "tokens per minute" in text or "(tpm)" in text
 
 
 class FallbackLLM(llm.LLM):
@@ -221,11 +268,10 @@ class FallbackLLM(llm.LLM):
         self._down_until: list[float] = [0.0] * len(members)
         self.last_served_index: int = 0
         # Provider label per member ("groq", "gemini", ...), same order as the
-        # chain. A 429 on one member usually means the whole PROVIDER bucket is
-        # empty (Groq's TPM is org-wide), so the remaining keys of that
-        # provider are skipped instead of burned one by one. Members WITHOUT an
-        # explicit label each get a unique one, so they keep the old per-key
-        # cooldown behaviour instead of being lumped into one bucket.
+        # chain. Labels drive the shared-TPM skip: request counters were
+        # measured to be per key, but the token bucket is org-wide (a 5,012
+        # token request on key #1 dropped key #2's remaining tokens from 7,986
+        # to 3,098), so only TPM 429s bench a whole provider.
         if provider_names is None:
             provider_names = [f"member-{index}" for index in range(len(members))]
         self._providers: list[str] = list(provider_names)
@@ -260,9 +306,12 @@ class FallbackLLM(llm.LLM):
     def _mark_provider_down(self, provider: str) -> int:
         """Cool down every member of one provider. Returns how many skipped.
 
-        A 429 on one key almost always means the provider's shared bucket
-        (org-wide TPM) is empty; the sibling keys would fail identically, so
-        trying them burns seconds of the caller's time for nothing.
+        Only for the SHARED tokens-per-minute bucket. Measured with five Groq
+        keys: a 5,012-token request on key #1 dropped key #2's remaining
+        tokens from 7,986 to 3,098, so the TPM/TPD pool is org-wide and trying
+        a sibling key after a TPM 429 only burns the caller's time. Request
+        counters are separate per key (five distinct RPD values), so plain
+        RPD/RPM 429s still cool ONE member and leave the other keys usable.
         """
         now = time.monotonic()
         skipped = 0
@@ -397,24 +446,34 @@ class _FallbackStream(llm.LLMStream):
             # silence with a working Groq pool sitting behind it.
             if status not in _RETRYABLE_LLM_STATUS and status != 402:
                 raise
-            if status == 429:
-                # Shared bucket: skip the provider's remaining keys now.
+            if status == 429 and _is_shared_tpm_error(exc):
+                # Shared TPM/TPD bucket: every Groq key draws on it, so a
+                # sibling would 429 identically. Skip the whole provider tier.
                 provider = self._owner._providers[self._member_index] if (
                     0 <= self._member_index < len(self._owner._providers)
                 ) else "?"
                 skipped = self._owner._mark_provider_down(provider)
                 logger.warning(
-                    "LLM chain member %d 429 (%s); skipping %d sibling(s) on the exhausted bucket",
+                    "LLM chain member %d hit the shared TPM bucket (%s); skipping %d sibling(s)",
                     self._member_index + 1,
                     provider,
                     max(skipped - 1, 0),
                 )
             else:
-                logger.warning(
-                    "LLM chain member %d failed (%s), cooling down for next member",
-                    self._member_index + 1,
-                    status or "connection-error",
-                )
+                # RPD/RPM or a non-429 failure: cool THIS member only. Request
+                # counters are per key (measured), so the other keys remain
+                # usable and skipping them would discard the pool.
+                if status == 429:
+                    logger.warning(
+                        "LLM chain member %d 429 (per-key request limit); cooling down this key only",
+                        self._member_index + 1,
+                    )
+                else:
+                    logger.warning(
+                        "LLM chain member %d failed (%s), cooling down for next member",
+                        self._member_index + 1,
+                        status or "connection-error",
+                    )
                 self._owner._mark_down(self._member_index)
             raise
 
@@ -443,6 +502,25 @@ def _max_completion_tokens_for(model: str) -> int:
     if any(marker in lowered for marker in _REASONING_MODEL_MARKERS):
         return _REASONING_MAX_COMPLETION_TOKENS
     return _DEFAULT_MAX_COMPLETION_TOKENS
+
+
+def _groq_client_kwargs(model: str) -> dict[str, Any]:
+    """Per-model kwargs for one OpenAI-compatible Groq client.
+
+    GPT-OSS rejects ``reasoning_effort="none"`` (400: must be low/medium/high),
+    so it gets the minimum. Qwen does not think out loud and must not receive
+    the knob at all.
+    """
+    kwargs: dict[str, Any] = {}
+    if "gpt-oss" in str(model or "").lower():
+        kwargs["reasoning_effort"] = "low"
+    # Voice turns are 1-3 sentences. The cap must be big enough for the model
+    # to actually finish: a reasoning model spends its output budget thinking
+    # first, and truncation at 160 returned an empty reply (the "agent goes
+    # silent mid-call" symptom), while it also has to stay under the output
+    # tokens/min tier or the call 429s.
+    kwargs["max_completion_tokens"] = _max_completion_tokens_for(model)
+    return kwargs
 
 
 def build_providers(
@@ -487,25 +565,21 @@ def build_providers(
         if not sarvam_key:
             bundle.problems.append("SARVAM_TTS_API missing - Sarvam STT disabled")
         else:
-            sarvam_lang = str(
-                (voice_settings or {}).get("stt_language", "")
-            ).strip() or os.getenv("SARVAM_STT_LANG", "en-IN")
+            explicit_language = str(
+                (voice_settings or {}).get("language", "") or ""
+            ).strip()
+            # Explicit stt_language wins; otherwise the agent's own language
+            # wins over the platform env default (a Telugu agent must not be
+            # transcribed as English just because SARVAM_STT_LANG is unset).
+            sarvam_lang = (
+                str((voice_settings or {}).get("stt_language", "") or "").strip()
+                or _bcp47_language(explicit_language)
+                or os.getenv("SARVAM_STT_LANG", "en-IN")
+            )
             # Sarvam requires BCP-47 (en-IN, hi-IN); our configs carry bare
             # codes ("en"). A bare code raises ValueError at STT construction
             # and degrades the whole session, so map the common ones.
-            _SARVAM_LANG_ALIASES = {
-                "en": "en-IN",
-                "hi": "hi-IN",
-                "ta": "ta-IN",
-                "te": "te-IN",
-                "bn": "bn-IN",
-                "ml": "ml-IN",
-                "mr": "mr-IN",
-                "kn": "kn-IN",
-                "gu": "gu-IN",
-                "pa": "pa-IN",
-            }
-            sarvam_lang = _SARVAM_LANG_ALIASES.get(sarvam_lang.lower(), sarvam_lang)
+            sarvam_lang = _bcp47_language(sarvam_lang)
             bundle.stt = _sarvam_stt.STT(
                 language=sarvam_lang,
                 model=os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
@@ -522,7 +596,23 @@ def build_providers(
 
     selected_tts = os.getenv("TTS_PROVIDER", "cartesia").lower()
     sarvam_key = os.getenv("SARVAM_TTS_API", "") or os.getenv("SARVAM_API_KEY", "")
-    if selected_tts == "sarvam" and sarvam_key:
+    explicit_language = str(
+        (voice_settings or {}).get("language", "") or ""
+    ).strip().lower()
+    # Indian-language agents must use Bulbul: Cartesia/Aura voices mangle
+    # Indian names and cannot code-switch Telugu-English. English keeps the
+    # operator's chosen provider (Cartesia in production, Sarvam when set).
+    # TTS_LANGUAGE_ROUTING=off restores a strict TTS_PROVIDER choice.
+    route_by_language = os.getenv("TTS_LANGUAGE_ROUTING", "on").strip().lower() not in (
+        "off", "0", "no", "false",
+    )
+    indian_language = bool(explicit_language) and explicit_language not in (
+        "en", "en-in", "en-us", "en-gb",
+    )
+    use_sarvam_tts = bool(sarvam_key) and (
+        selected_tts == "sarvam" or (route_by_language and indian_language)
+    )
+    if use_sarvam_tts:
         # Official Sarvam LiveKit plugin (streaming Bulbul v3 over websocket,
         # pronunciation dicts, Indian voices). Replaces the earlier hand-rolled
         # REST TTS, which could not stream and raised "AudioEmitter isn't
@@ -537,19 +627,44 @@ def build_providers(
             str((voice_settings or {}).get("tts_speaker", "") or "").strip()
             or os.getenv("SARVAM_TTS_SPEAKER", "priya")
         )
+        # Explicit tts_language wins; otherwise follow the agent language so
+        # a Telugu prompt is not paired with an English voice.
         sarvam_lang = (
             str((voice_settings or {}).get("tts_language", "") or "").strip()
+            or _bcp47_language(explicit_language)
             or os.getenv("SARVAM_TTS_LANG", "en-IN")
         )
+        sarvam_lang = _bcp47_language(sarvam_lang)
+        # 8000 Hz is telephony narrowband (the platform is a phone agent).
+        # Browser-only demos can set SARVAM_TTS_SAMPLE_RATE=22050 for fuller
+        # audio; LiveKit resamples PSTN down automatically either way.
+        try:
+            sarvam_rate = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "8000"))
+        except ValueError:
+            sarvam_rate = 8000
+        if sarvam_rate not in (8000, 16000, 22050, 24000, 32000, 44100, 48000):
+            sarvam_rate = 8000
+        try:
+            sarvam_pace = float((voice_settings or {}).get("speaking_rate", 1.0))
+        except (TypeError, ValueError):
+            sarvam_pace = 1.0
+        sarvam_pace = max(0.3, min(3.0, sarvam_pace))
         bundle.tts = _sarvam.TTS(
             target_language_code=sarvam_lang,
             model=sarvam_model,
             speaker=sarvam_speaker,
+            speech_sample_rate=sarvam_rate,
+            pace=sarvam_pace,
             api_key=sarvam_key,
         )
         bundle.tts_provider = "sarvam"
         logger.info(
-            "TTS provider: Sarvam Bulbul (%s/%s/%s)", sarvam_model, sarvam_speaker, sarvam_lang
+            "TTS provider: Sarvam Bulbul (%s/%s/%s rate=%d pace=%.2f)",
+            sarvam_model,
+            sarvam_speaker,
+            sarvam_lang,
+            sarvam_rate,
+            sarvam_pace,
         )
     elif selected_tts == "cartesia" and settings.cartesia_api_key:
         tts_kwargs: dict[str, Any] = {}
@@ -595,42 +710,57 @@ def build_providers(
         groq_keys = [settings.groq_api_key]
     groq_base_url = getattr(settings, "groq_base_url", None) or "https://api.groq.com/openai/v1"
     groq_llms: list[Any] = []
+    groq_secondary_llm: Any = None
     if groq_keys:
         # Groq is an OpenAI-compatible endpoint, so construct it explicitly.
         # GROQ_BASE_URL can point at any compatible provider (Cerebras).
-        kwargs: dict[str, Any] = {}
-        if "gpt-oss" in groq_model.lower():
-            # GPT-OSS rejects "none" (400: must be low/medium/high) — use the
-            # minimum. Combined with a large-enough output budget, thinking
-            # stays a short prefix before the spoken reply.
-            kwargs["reasoning_effort"] = "low"
-        # Voice turns are 1-3 sentences. The cap must be big enough for the
-        # model to actually finish: a REASONING model spends its output budget
-        # thinking first, and truncation at 160 returned an empty reply (that
-        # is the "agent goes silent mid-call" symptom), while it also has to
-        # stay under Groq's on_demand output-tokens/min tier or the call 429s.
-        kwargs["max_completion_tokens"] = _max_completion_tokens_for(groq_model)
         for key in groq_keys:
             groq_llms.append(
                 openai.LLM(
                     model=groq_model,
                     api_key=key,
                     base_url=groq_base_url,
-                    **kwargs,
+                    **_groq_client_kwargs(groq_model),
                 )
             )
+        # Model-level fallback: after the whole primary pool, try one different
+        # Groq model on the first key. This is a QUALITY tier (gpt-oss-120b),
+        # not a quota expansion: if the org bucket is empty, this member 429s
+        # too and the chain moves on to Sarvam. Only arm it on Groq's endpoint;
+        # an OpenAI model id on Cerebras would 404 (not retryable).
+        secondary_model = str(
+            getattr(settings, "groq_secondary_model", "") or ""
+        ).strip()
+        if (
+            secondary_model
+            and secondary_model != groq_model
+            and "groq.com" in groq_base_url
+        ):
+            try:
+                groq_secondary_llm = openai.LLM(
+                    model=secondary_model,
+                    api_key=groq_keys[0],
+                    base_url=groq_base_url,
+                    **_groq_client_kwargs(secondary_model),
+                )
+            except Exception as exc:  # noqa: BLE001 — never block the chain
+                logger.warning(
+                    "Secondary Groq model %s rejected: %s", secondary_model, exc
+                )
     if groq_llms:
-        # Owner-ordered chain: explicit LLM_FALLBACK_CHAIN entries (and the
-        # DeepSeek shorthand) serve FIRST, Groq keys are the bulk fallback.
-        # Groq-first was the old default; the owner sets priority by listing,
-        # so "gemini|...|..." + DEEPSEEK_API_KEY reads gemini -> deepseek ->
-        # groq on voice calls, mirroring the backend text chain.
-        chain: list[Any] = []
-        chain_providers: list[str] = []
-        # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN, DeepSeek,
-        # Cerebras, OpenRouter). Same-tier, different provider: Groq's free tier caps
-        # out mid-call, and the wrapper re-issues the identical request on the
-        # next member instead of leaving the caller in silence.
+        # Groq-first. The primary pool (qwen on every key) is the fast path,
+        # then the secondary Groq model (gpt-oss-120b), then overflow providers
+        # (Sarvam) appended last. This is the fix for the old Gemini-first
+        # chain, which put a 503/402 in front of EVERY call's first turn.
+        chain: list[Any] = list(groq_llms)
+        chain_providers: list[str] = ["groq"] * len(groq_llms)
+        if groq_secondary_llm is not None:
+            chain.append(groq_secondary_llm)
+            chain_providers.append("groq-secondary")
+        # Extra OpenAI-compatible providers (LLM_FALLBACK_CHAIN / DeepSeek /
+        # Cerebras / OpenRouter). Sarvam is the intended overflow: the
+        # ToolTurnFiller below covers its silent tool turns, so it is no longer
+        # a dead-air liability. It only fires after the whole Groq tier.
         for name, base_url, api_key, model in settings.llm_fallback_chain:
             if not base_url:
                 continue
@@ -647,8 +777,6 @@ def build_providers(
                 logger.info("LLM chain member armed: %s (%s)", name, model)
             except Exception as exc:  # noqa: BLE001 — never block the chain
                 logger.warning("LLM chain member %s rejected: %s", name, exc)
-        chain.extend(groq_llms)
-        chain_providers.extend(["groq"] * len(groq_llms))
         if len(chain) > 1:
             logger.info(
                 "LLM chain armed (%d members): %s",
@@ -660,7 +788,7 @@ def build_providers(
             )
             bundle.llm = FallbackLLM(chain, provider_names=chain_providers)
         else:
-            bundle.llm = groq_llms[0]
+            bundle.llm = chain[0]
     elif settings.llm_fallback_chain:
         # No Groq at all, but extra providers are configured: arm ALL of them
         # as a fallback chain (not just the first) with the same output caps,
@@ -784,6 +912,95 @@ class BackchannelController:
         return True
 
 
+#: Short, natural cues for a tool call the model did not verbally acknowledge.
+#: Chosen by tool so "Let me note that down" never fires for end_call.
+_TOOL_FILLERS: dict[str, str] = {
+    "record_extracted_field": "Let me note that down.",
+}
+_DEFAULT_TOOL_FILLER = "One moment, please."
+#: end_call is deliberately exempt: the follow-up closing line is the speech,
+#: and a filler after the call is already being torn down only adds noise.
+_TOOL_FILLER_EXEMPT: frozenset[str] = frozenset({"end_call"})
+
+
+def tool_filler_for(function_name: str) -> Optional[str]:
+    """Return the spoken filler for a tool call, or None when it should stay silent."""
+    name = str(function_name or "").strip()
+    if not name or name in _TOOL_FILLER_EXEMPT:
+        return None
+    return _TOOL_FILLERS.get(name, _DEFAULT_TOOL_FILLER)
+
+
+class ToolTurnFiller:
+    """Speak one short filler when a tool call would otherwise be silent.
+
+    Measured gap across providers: even the best model (qwen3.8-27b) produced
+    no speech on 1 of 6 tool turns; Sarvam was silent on 5 of 6. The tool
+    result is not the problem - the model simply called the tool without a
+    spoken acknowledgement first. This listener fixes that in the PIPELINE,
+    for every provider:
+
+    * reset on each final caller transcript;
+    * remember whether the assistant generated any text this turn (a message
+      may contain both text and tool calls);
+    * on the first tool_call_started of a silent turn, say one short cue.
+
+    The cue is not added to the LLM context, so the model never reacts to its
+    own filler, and it is interruptible like any other agent speech.
+    """
+
+    def __init__(self, session: Any, say: Any = None) -> None:
+        self._session = session
+        self._say = say
+        self._assistant_spoke = False
+        self._filler_spoken = False
+
+    def reset(self) -> None:
+        self._assistant_spoke = False
+        self._filler_spoken = False
+
+    def on_user_input_transcribed(self, ev: Any) -> None:
+        if not bool(getattr(ev, "is_final", False)):
+            return
+        if not str(getattr(ev, "transcript", "") or "").strip():
+            return
+        self.reset()
+
+    def on_conversation_item_added(self, ev: Any) -> None:
+        item = getattr(ev, "item", None)
+        if item is None:
+            return
+        if str(getattr(item, "role", "") or "").lower() != "assistant":
+            return
+        text = scrub_speech_text(str(getattr(item, "text_content", "") or ""))
+        if text.strip():
+            self._assistant_spoke = True
+
+    def on_tool_execution_updated(self, ev: Any) -> None:
+        update = getattr(ev, "update", None)
+        if str(getattr(update, "type", "") or "") != "tool_call_started":
+            return
+        if self._assistant_spoke or self._filler_spoken:
+            return
+        # Never stack a cue over audio that is already playing. The text flag
+        # above is the primary guard; this covers an event that raced ahead.
+        if "speaking" in str(getattr(self._session, "agent_state", "") or "").lower():
+            return
+        function_call = getattr(update, "function_call", None)
+        name = str(getattr(function_call, "name", "") or "")
+        phrase = tool_filler_for(name)
+        if not phrase:
+            return
+        try:
+            say = self._say or self._session.say
+            say(phrase, allow_interruptions=True, add_to_chat_ctx=False)
+        except Exception:  # noqa: BLE001 — a missed cue must never break the call
+            logger.debug("Tool-turn filler failed", exc_info=True)
+            return
+        self._filler_spoken = True
+        logger.info("Spoke tool-turn filler for %s", name or "?")
+
+
 class TurnTelemetry:
     """Accumulates one exchange (user utterance + agent reply), posts it.
 
@@ -880,6 +1097,11 @@ class TurnTelemetry:
         self._transcription_delay_ms: Optional[float] = None
         self._llm_first_token_ms: Optional[float] = None
         self._tts_first_audio_ms: Optional[float] = None
+        # Per-stage diagnostic log guards (Fix 4): exactly one INFO line per
+        # exchange even though a turn emits one metric per TTS sentence and
+        # agent_state may set the latency before the metric event arrives.
+        self._llm_metric_logged = False
+        self._tts_metric_logged = False
         # Cost basis per exchange (CLAUDE.md: log cost from day one).
         self._prompt_tokens: Optional[int] = None
         self._completion_tokens: Optional[int] = None
@@ -1288,11 +1510,12 @@ class TurnTelemetry:
         item_type = str(getattr(item, "type", "") or "").lower()
         if item_type and item_type not in {"message", "assistant_message", "text"}:
             return
-        tool_calls = getattr(item, "tool_calls", None)
-        if tool_calls:
-            return
         role = str(getattr(item, "role", "")).lower()
-        text = scrub_speech_text(getattr(item, "text_content", ""))
+        text = scrub_speech_text(str(getattr(item, "text_content", "") or ""))
+        # A message may contain BOTH spoken text and tool calls. The text WAS
+        # spoken, so caption it and stop the stall watchdog; only the function
+        # call itself must stay out of the transcript. Returning before this
+        # check made the watchdog fire on a model that had already replied.
         if role == "assistant" and text:
             if not self._got_agent_item and self._llm_first_token_ms is None and self._reply_start_at is not None:
                 # APPROXIMATION fallback: item commit time - reply start upper-
@@ -1342,10 +1565,27 @@ class TurnTelemetry:
             )
             if transcription_s > 0:
                 self._transcription_delay_ms = transcription_s * 1000.0
+            # Per-stage baseline (Fix 4): one line per turn, greppable in
+            # `docker compose logs voice-agent`. The structured turn_latency
+            # line below aggregates the same numbers for the backend table.
+            logger.info(
+                "EOU | end_of_utterance_delay=%.0fms transcription_delay=%.0fms",
+                eou_s * 1000.0,
+                transcription_s * 1000.0,
+            )
         elif metric_type == "llm_metrics":
             ttft_seconds = float(getattr(metrics, "ttft", -1.0))
             if ttft_seconds > 0:
                 self._llm_first_token_ms = ttft_seconds * 1000.0
+            if not self._llm_metric_logged and ttft_seconds > 0:
+                self._llm_metric_logged = True
+                meta = getattr(metrics, "metadata", None)
+                logger.info(
+                    "LLM | ttft=%.0fms model=%s/%s",
+                    ttft_seconds * 1000.0,
+                    getattr(meta, "model_provider", "") or "?",
+                    getattr(meta, "model_name", "") or "?",
+                )
             # Usage accumulates per metric event within one exchange; the
             # flush log turns this into a per-turn cost basis.
             prompt_tokens = getattr(metrics, "prompt_tokens", None)
@@ -1360,6 +1600,9 @@ class TurnTelemetry:
             ttfb_seconds = float(getattr(metrics, "ttfb", 0.0) or 0.0)
             if ttfb_seconds > 0:
                 self._tts_first_audio_ms = ttfb_seconds * 1000.0
+            if not self._tts_metric_logged and ttfb_seconds > 0:
+                self._tts_metric_logged = True
+                logger.info("TTS | ttfb=%.0fms", ttfb_seconds * 1000.0)
             # livekit-agents 1.8.3 TTSMetrics carries characters_count; older
             # builds named it characters. Accept either.
             characters = getattr(metrics, "characters_count", None)
@@ -1367,6 +1610,12 @@ class TurnTelemetry:
                 characters = getattr(metrics, "characters", None)
             if characters is not None:
                 self._tts_characters = (self._tts_characters or 0) + int(characters)
+        elif metric_type == "stt_metrics":
+            logger.info(
+                "STT | duration=%.0fms audio=%.0fms",
+                float(getattr(metrics, "duration", 0.0) or 0.0) * 1000.0,
+                float(getattr(metrics, "audio_duration", 0.0) or 0.0) * 1000.0,
+            )
 
     # -- flushing ------------------------------------------------------------
 
@@ -1633,11 +1882,13 @@ def _reset_smart_turn_cache() -> None:
 
 
 def _get_noise_cancellation() -> Any:
-    """Hush voice-focus processor, or None when the plugin is missing.
+    """Voice-focus input processor, or None when no plugin is installed.
 
-    Runs before turn detection/STT: isolates the foreground speaker and
-    suppresses competing voices (TV, car passengers) that plain noise
-    cancellation hears as speech. Never raises.
+    Default is Hush (bundled in the image). ``VOICE_NC_PROVIDER=ai_coustics``
+    (or ``auto``) prefers ai_coustics QUAIL_VF_L when that optional plugin is
+    installed, then falls back to Hush. Runs before turn detection/STT:
+    isolates the foreground speaker and suppresses competing voices (TV, car
+    passengers) that plain noise cancellation hears as speech. Never raises.
 
     VOICE_NC=off disables it entirely. Exists because an input-path processor
     is a prime suspect when STT goes silent: if it corrupts or drops frames,
@@ -1646,6 +1897,21 @@ def _get_noise_cancellation() -> Any:
     """
     if os.getenv("VOICE_NC", "on").strip().lower() in ("off", "0", "no", "false"):
         return None
+    provider = os.getenv("VOICE_NC_PROVIDER", "hush").strip().lower()
+    if provider in ("ai_coustics", "auto"):
+        try:
+            from livekit.plugins import ai_coustics as _ai_coustics
+
+            return _ai_coustics.audio_enhancement(
+                model=_ai_coustics.EnhancerModel.QUAIL_VF_L
+            )
+        except Exception:
+            # ai_coustics is an optional, heavier install (model weights +
+            # license). Hush is bundled and already voice-focus, so fall
+            # back rather than starting the call with no input conditioning.
+            logger.warning(
+                "ai_coustics unavailable, falling back to Hush", exc_info=True
+            )
     try:
         from livekit.plugins import hush as _hush
     except ImportError:
@@ -1661,7 +1927,9 @@ def _room_options() -> Any:
     """RoomOptions with voice-focus audio input, or None for a plain start."""
     nc = _get_noise_cancellation()
     if nc is None:
+        logger.info("Noise cancellation: none (VOICE_NC=off or plugin missing)")
         return None
+    logger.info("Noise cancellation: %s", type(nc).__name__)
     try:
         from livekit.agents import room_io
 
@@ -1687,7 +1955,14 @@ def _preemptive_kwargs(enabled: bool) -> dict[str, Any]:
         return {"preemptive_generation": bool(enabled)}
     if not enabled:
         return {"preemptive_generation": _PreemptiveOpts(enabled=False)}
-    return {"preemptive_generation": _opts(_PreemptiveOpts)}
+    # Speculate on the STT partial for the LLM, but do NOT start TTS until the
+    # turn is confirmed: preemptive TTS synthesizes cancelled turns and burns
+    # Sarvam characters/credits for audio nobody hears.
+    return {
+        "preemptive_generation": _opts(
+            _PreemptiveOpts, enabled=True, preemptive_tts=False
+        )
+    }
 
 
 def _room_metadata(ctx: JobContext) -> Any:
@@ -1823,6 +2098,13 @@ def _build_agent_session(
     # min_endpointing_delay=0.07 (their STT processes in ~70ms). Anything else
     # fights their pipeline and adds seconds.
     sarvam_stt = bundle.stt_provider == "sarvam"
+    turn_detector = "stt" if sarvam_stt else _turn_detection()
+    # Greppable in live logs: a SmartTurn* class is the bundled Smart Turn v3,
+    # a TurnDetector is the semantic cloud fallback, "vad" is the last resort.
+    logger.info(
+        "Turn detection: %s",
+        turn_detector if isinstance(turn_detector, str) else type(turn_detector).__name__,
+    )
     session_kwargs: dict[str, Any] = {}
     if not sarvam_stt:
         session_kwargs["vad"] = _get_vad()
@@ -1834,7 +2116,7 @@ def _build_agent_session(
         **session_kwargs,
         turn_handling=_opts(
             TurnHandlingOptions,
-            turn_detection="stt" if sarvam_stt else _turn_detection(),
+            turn_detection=turn_detector,
             # Preemptive generation: start the LLM on partial transcripts so
             # the first sentence is ready the moment the turn ends (TTS
             # already synthesizes sentence-by-sentence as tokens stream in).
@@ -1844,12 +2126,14 @@ def _build_agent_session(
             endpointing=_opts(
                 EndpointingOptions,
                 mode="fixed",
-                # Sarvam processes STT in ~70ms, so the session moves on
-                # almost immediately; otherwise 600ms patience for hesitant
-                # speakers (jumping in at 350ms is what callers feel as
-                # "the agent interrupts me").
-                min_delay=0.07 if bundle.stt_provider == "sarvam" else 0.6,
-                max_delay=1.5,
+                # Semantic turn detection decides when the caller is done;
+                # endpointing is only the wall-clock bound. 0.4s floor is
+                # responsive, 2.5s ceiling guarantees a turn can never hang
+                # for 25s when VAD/STT never emits end-of-speech.
+                # Sarvam's STT processes in ~70ms and its integration guide
+                # requires 0.07s, so that provider keeps its special case.
+                min_delay=0.07 if sarvam_stt else 0.4,
+                max_delay=2.5,
             ),
             interruption=_opts(
                 InterruptionOptions,
@@ -2066,6 +2350,15 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             llm=bundle.llm,
         )
         telemetry.attach()
+
+        # Cover silent tool turns for EVERY provider: the model may call a
+        # tool without speaking first, and the caller hears dead air while the
+        # tool runs + the follow-up reply generates. One short cue per silent
+        # turn (never for end_call, never over model speech).
+        tool_filler = ToolTurnFiller(session)
+        session.on("user_input_transcribed")(tool_filler.on_user_input_transcribed)
+        session.on("conversation_item_added")(tool_filler.on_conversation_item_added)
+        session.on("tool_execution_updated")(tool_filler.on_tool_execution_updated)
 
         # Announce the REAL pipeline this session is running. "Voice mode is
         # not working" is most often a provider that silently degraded, and

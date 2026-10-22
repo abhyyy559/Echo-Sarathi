@@ -7,7 +7,8 @@ Strict rules for anything that touches the call path. Violate these only with ow
 ```
 PSTN phone --(Vobiz/Twilio/Plivo)--> provider media WS --> backend bridge
   --> LiveKit room (phone-<call_id>) --> voice-agent worker:
-     Deepgram STT --turn--> Groq LLM (+tools) --reply--> Cartesia TTS
+     Sarvam Saaras STT (Deepgram fallback) --turn--> Groq Qwen 3.8-27B
+     (+tools) --reply--> Sarvam Bulbul TTS (Cartesia/Deepgram fallback)
   --> audio back the same way. Transcript + latency + costs -> backend DB.
 Browser playground skips PSTN: mic -> same LiveKit room -> same worker.
 ```
@@ -17,7 +18,7 @@ Browser playground skips PSTN: mic -> same LiveKit room -> same worker.
 - **Telephony (`backend/app/services/telephony.py`)**: `place_call(to, call_id)` only. Provider choice via `TELEPHONY_PROVIDER` ("" | twilio | plivo | vobiz); empty = auto (Plivo > Twilio). No credentials = `FakeTelephonyClient`, dialer must never dial without them (`_provider_configured`).
 - **Bridges (`twilio_bridge`, `plivo_bridge`, `vobiz_bridge` + routers)**: mu-law 8kHz both directions, always. WS handshake ≤10s or close 4400. Unknown events are skipped, never crash. Call matching: our `?call_id=` first, provider id second.
 - **Call rows**: a media leg ending IS the call ending — finalize to a terminal status on close. Never leave `in_progress`/`ringing` rows (they vanish from reports). Test-call campaigns MUST carry `org_id` (org-scoped reads hide NULL-org rows entirely).
-- **Voice pipeline (`voice-agent/app`)**: cascaded STT -> LLM tools -> TTS only — no speech-to-speech path, ever. Missing keys degrade with clear logs, never raise. `max_completion_tokens=300` on Groq (on_demand 1000 OTPM tier 429s anything larger and wedges the call).
+- **Voice pipeline (`voice-agent/app`)**: cascaded STT -> LLM tools -> TTS only — no speech-to-speech path, ever. Missing keys degrade with clear logs, never raise. `max_completion_tokens=300` on Groq (on_demand 1000 OTPM tier 429s anything larger and wedges the call). Turn-taking is semantic (Smart Turn v3, `inference.TurnDetector` fallback) with a 0.4s floor / **2.5s wall-clock ceiling** so a turn can never hang; preemptive generation speculates on the LLM only (`preemptive_tts=False`), and every silent tool call gets one short spoken filler. Log one `EOU |`, `STT |`, `LLM |`, and `TTS |` line per exchange for stage-level latency. Non-English agents route STT/TTS to Sarvam automatically.
 - **Prompt (`prompting.py`)**: disclosure first verbatim; verify-then-continue (never end after identity check); end only when REQUIRED goals are covered or caller ends; never fabricate field values (ask again, flag at `end_call`).
 - **Frontend**: no `type="submit"` without a `<form>`; no `.map` on possibly-missing API arrays; mock demo tokens must never trigger login redirects; captions honor worker `final` flags (interim updates in place).
 - **Secrets**: `.env` is gitignored and never committed; `.env.example` stays in sync; no key VALUES in logs, health, or docs (presence booleans only).
@@ -39,7 +40,7 @@ Browser playground skips PSTN: mic -> same LiveKit room -> same worker.
 ## 5. Cost / latency budgets (Phase 1)
 
 - Per-minute target < ₹3.5 all-in (telephony ~1.00 + STT ~0.35 + LLM ~0.30 + TTS ~0.50 + infra ~0.20). Log per-call tokens/audio so campaigns stay queryable.
-- Turn latency targets: median ≤900ms end-to-end, p95 ≤1500ms. Default LLM is Llama 3.1 8B Instant (TTFT ~80ms); reasoning models (Qwen-27B, GPT-OSS) are banned from the hot path — they deliberate instead of answering. Per-agent `llm_model` override exists for harder agents (Llama 4 Scout next step up, never 70B+ on voice). If slow: suspect model first, then TTS, then network — measure per-turn breakdowns, never guess.
+- Turn latency targets: median ≤900ms end-to-end, p95 ≤1500ms. Default LLM is Groq Qwen 3.8-27B (measured 6/6 correct tool decisions, multi-field capture, <2.3s on the real prompt). GPT-OSS-120B is the secondary model and Sarvam 105B Conversations is the overflow after the whole Groq tier. Never put a slow provider first: Gemini's 503s/5.7–20s latency added dead air to turn one and was removed. Per-agent `llm_model` override exists for harder agents. If slow: suspect model first, then TTS, then network — measure per-turn breakdowns, never guess.
 - Fallbacks are same-tier, different-provider — never change model intelligence mid-call (a personality shift is worse than a graceful failure). Apologize + `end_call` beats a mid-call brain transplant.
 
 ## 6. Phase-2 reservations (designed, not built)
