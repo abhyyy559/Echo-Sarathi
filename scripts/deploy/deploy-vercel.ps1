@@ -88,42 +88,50 @@ Invoke-VercelApi -Method POST -Path "/v10/projects/$projectId/env" -Body @{
 } | Out-Null
 Write-Host "  VITE_API_URL -> $RenderServiceUrl"
 
-Write-Section "Vercel: /api proxy fallback"
-$vercelJsonPath = Join-Path $script:RepoRoot "frontend\vercel.json"
-$proxyDest = "$RenderServiceUrl/api/`$1"
-$raw = [System.IO.File]::ReadAllText($vercelJsonPath)
-$current = $raw | ConvertFrom-Json
-$proxyRoute = @($current.routes) | Where-Object { $_.src -eq "/api/(.*)" } | Select-Object -First 1
+Write-Section "Vercel: /api proxy"
+# The Vercel project's root is the repo root, so vercel.json at the root is the
+# config that actually ships: it declares the `frontend` service and rewrites
+# /api/* to the Render API. frontend/vercel.json only matters if someone links
+# that directory as a standalone project, so both are kept in sync.
+$rootJsonPath = Join-Path $script:RepoRoot "vercel.json"
+$frontendJsonPath = Join-Path $script:RepoRoot "frontend\vercel.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$renderPattern = 'https?://[a-z0-9\-\.]+\.onrender\.com'
 
-if ($proxyRoute -and $proxyRoute.dest -eq $proxyDest) {
-    Write-Host "  proxy already -> $proxyDest"
-} else {
-    if ($proxyRoute -and $proxyRoute.dest) {
-        # Surgical substitution keeps the committed formatting intact
-        # (ConvertTo-Json on Windows PowerShell reflows the whole file).
-        $updated = $raw.Replace([string]$proxyRoute.dest, $proxyDest)
+function Update-ProxyTarget {
+    param([string]$Path, [string]$RenderUrl)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "$Path is missing; the /api proxy has nowhere to point."
+    }
+    $raw = [System.IO.File]::ReadAllText($Path)
+    if ($raw -notmatch $renderPattern) {
+        throw "$Path has no http://*.onrender.com destination to refresh. Add the /api rewrite by hand and re-run."
+    }
+    $updated = [regex]::Replace($raw, $renderPattern, $RenderUrl)
+    if ($updated -eq $raw) {
+        Write-Host "  $(Split-Path -Leaf $Path): already -> $RenderUrl"
     } else {
-        # Unexpected shape: rebuild from the parsed object instead.
-        $current.routes = @(@{ src = "/api/(.*)"; dest = $proxyDest }) + @($current.routes)
-        $updated = $current | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($Path, $updated, $utf8NoBom)
+        Write-Host "  $(Split-Path -Leaf $Path): -> $RenderUrl"
     }
-    # Never write a file the deploy step cannot parse.
-    $check = @(($updated | ConvertFrom-Json).routes) | Where-Object { $_.src -eq "/api/(.*)" } | Select-Object -First 1
-    if (-not $check -or $check.dest -ne $proxyDest) {
-        throw "Patched frontend/vercel.json does not contain the expected /api rewrite; fix it by hand and re-run."
+    # Never leave a file the deploy step cannot parse.
+    $null = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $text = Get-Content -LiteralPath $Path -Raw
+    if ($text -notmatch [regex]::Escape("$RenderUrl/api")) {
+        throw "$Path no longer points /api at $RenderUrl."
     }
-    [System.IO.File]::WriteAllText($vercelJsonPath, $updated, $utf8NoBom)
-    Write-Host "  proxy -> $proxyDest"
 }
+
+Update-ProxyTarget -Path $rootJsonPath -RenderUrl $RenderServiceUrl
+Update-ProxyTarget -Path $frontendJsonPath -RenderUrl $RenderServiceUrl
 
 if (-not $SkipDeploy) {
     Write-Section "Vercel: production deploy"
     if (-not (Test-CommandExists "npx")) {
         throw "npx was not found. Install Node.js 18+ and re-run."
     }
-    $frontendDir = Join-Path $script:RepoRoot "frontend"
-    $linkedPath = Join-Path $frontendDir ".vercel\project.json"
+    $projectDir = $script:RepoRoot
+    $linkedPath = Join-Path $projectDir ".vercel\project.json"
 
     # Link to the EXISTING project: `vercel deploy --yes` in an unlinked
     # directory silently creates a brand-new project. An existing
@@ -137,7 +145,7 @@ if (-not $SkipDeploy) {
         } catch { $alreadyLinked = $false }
     }
 
-    Push-Location $frontendDir
+    Push-Location $projectDir
     # Vercel CLI writes its banner to stderr; with ErrorActionPreference=Stop
     # (set by common.ps1) that would abort the script before the exit code is
     # even readable.

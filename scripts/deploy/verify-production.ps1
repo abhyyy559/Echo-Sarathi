@@ -49,7 +49,7 @@ if ($health) {
 }
 
 $token = $null
-Check "POST /api/auth/login (demo user)" {
+$null = Check "POST /api/auth/login (demo user)" {
     $body = @{ email = $cfg["DEMO_EMAIL"]; password = $cfg["DEMO_PASSWORD"] } | ConvertTo-Json
     $r = Invoke-RestMethod -Uri "$renderUrl/api/auth/login" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 60
     if (-not $r.token) { throw "no token returned" }
@@ -57,7 +57,7 @@ Check "POST /api/auth/login (demo user)" {
     $true
 }
 
-Check "GET /api/agents (seed present)" {
+$null = Check "GET /api/agents (seed present)" {
     $headers = @{ Authorization = "Bearer $script:token" }
     $agents = Invoke-RestMethod -Uri "$renderUrl/api/agents" -Headers $headers -TimeoutSec 60
     if (@($agents).Count -lt 1) { throw "no seeded agent" }
@@ -65,7 +65,7 @@ Check "GET /api/agents (seed present)" {
     $true
 }
 
-Check "CORS allows the Vercel origin" {
+$null = Check "CORS allows the Vercel origin" {
     $headers = @{
         Origin                        = $origin
         "Access-Control-Request-Method" = "GET"
@@ -77,14 +77,14 @@ Check "CORS allows the Vercel origin" {
 }
 
 Write-Section "Frontend (Vercel)"
-Check "GET $origin" {
+$null = Check "GET $origin" {
     $r = Invoke-WebRequest -Uri $origin -UseBasicParsing -TimeoutSec 60
     if ($r.StatusCode -ne 200) { throw "status $($r.StatusCode)" }
     if ($r.Content -notmatch '<div id="root"') { throw "unexpected HTML (SPA shell missing)" }
     $true
 }
 
-Check "Frontend proxy /api/health" {
+$null = Check "Frontend proxy /api/health" {
     $r = Invoke-RestMethod -Uri "$origin/api/health" -TimeoutSec 120
     if (-not $r.db) { throw "proxied health says database down" }
     $true
@@ -93,12 +93,31 @@ Check "Frontend proxy /api/health" {
 Write-Section "Voice worker (LiveKit Cloud)"
 $lk = Join-Path $script:RepoRoot ".tools\lk\lk.exe"
 if ((Test-Path -LiteralPath $lk) -and $cfg["LIVEKIT_API_SECRET"]) {
-    try {
-        $status = & $lk --url $cfg["LIVEKIT_URL"] --api-key $cfg["LIVEKIT_API_KEY"] --api-secret $cfg["LIVEKIT_API_SECRET"] agent status --json (Join-Path $script:RepoRoot "voice-agent") 2>&1
-        $parsed = $status | ConvertFrom-Json -ErrorAction Stop
-        Write-Host ("        agent status: " + ($parsed | ConvertTo-Json -Compress -Depth 4)) -ForegroundColor DarkGray
-    } catch {
-        Write-Host "  WARN  could not read LiveKit agent status (cold/not deployed yet)" -ForegroundColor Yellow
+    $livekit = Check "LiveKit agent is running" {
+        $res = Invoke-Native -FilePath $lk -Arguments @(
+            "--url", $cfg["LIVEKIT_URL"],
+            "--api-key", $cfg["LIVEKIT_API_KEY"],
+            "--api-secret", $cfg["LIVEKIT_API_SECRET"],
+            "agent", "status", "--json"
+        )
+        # The CLI prints "Using agent [...]" to stderr; keep only the JSON body.
+        $json = @($res.Output | Where-Object { $_ -match '^\s*[\{\[]' })
+        if ($json.Count -eq 0) { throw "no JSON in the CLI output (exit $($res.ExitCode))" }
+        $parsed = ($json -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        $agents = @($parsed.agents)
+        if ($agents.Count -eq 0) { throw "no agent registered on this LiveKit project" }
+        $running = @($agents | ForEach-Object { $_.agentDeployments } | Where-Object { $_.status -eq "Running" })
+        if ($running.Count -eq 0) {
+            $states = @($agents | ForEach-Object { $_.agentDeployments } | ForEach-Object { $_.status }) -join ", "
+            throw "agent not running yet (state: $states)"
+        }
+        $agents
+    }
+    if ($livekit) {
+        foreach ($agent in $livekit) {
+            $regions = @($agent.agentDeployments | ForEach-Object { $_.region + "=" + $_.status }) -join ", "
+            Write-Host ("        " + $agent.agentId + " version " + $agent.version + " (" + $regions + ")")
+        }
     }
 } else {
     Write-Host "  SKIP  LiveKit CLI not installed locally" -ForegroundColor Yellow

@@ -39,18 +39,14 @@ function Get-LkCli {
 }
 
 $lk = Get-LkCli
-$lkArgs = @(
-    "--url", $cfg["LIVEKIT_URL"],
-    "--api-key", $cfg["LIVEKIT_API_KEY"],
-    "--api-secret", $cfg["LIVEKIT_API_SECRET"]
-)
 
 $voiceDir = Join-Path $script:RepoRoot "voice-agent"
 
 if ($StatusOnly) {
     Write-Section "LiveKit agent status"
-    & $lk @lkArgs agent status --json $voiceDir
-    exit $LASTEXITCODE
+    $status = Invoke-Native -FilePath $lk -Arguments (@("--url", $cfg["LIVEKIT_URL"], "--api-key", $cfg["LIVEKIT_API_KEY"], "--api-secret", $cfg["LIVEKIT_API_SECRET"], "agent", "status", "--json"))
+    $status.Output | ForEach-Object { Write-Host $_ }
+    exit $status.ExitCode
 }
 
 Write-Section "LiveKit: agent secrets"
@@ -107,18 +103,34 @@ Push-Location $voiceDir
 try {
     if (-not (Test-Path -LiteralPath $tomlPath)) {
         Write-Host "  first deploy: creating agent in $region"
-        & $lk @lkArgs agent create --region $region --secrets-file $secretsPath --yes .
+        $deploy = Invoke-Native -FilePath $lk -Arguments (@(
+            "--url", $cfg["LIVEKIT_URL"],
+            "--api-key", $cfg["LIVEKIT_API_KEY"],
+            "--api-secret", $cfg["LIVEKIT_API_SECRET"],
+            "agent", "create", "--region", $region, "--secrets-file", $secretsPath, "--yes", "."
+        )) -ShowOutput
     } else {
         Write-Host "  deploying new version from voice-agent/livekit.toml"
-        & $lk @lkArgs agent deploy --secrets-file $secretsPath --yes .
+        $deploy = Invoke-Native -FilePath $lk -Arguments (@(
+            "--url", $cfg["LIVEKIT_URL"],
+            "--api-key", $cfg["LIVEKIT_API_KEY"],
+            "--api-secret", $cfg["LIVEKIT_API_SECRET"],
+            "agent", "deploy", "--secrets-file", $secretsPath, "--yes", "."
+        )) -ShowOutput
     }
-    if ($LASTEXITCODE -ne 0) { throw "LiveKit agent deploy failed (exit $LASTEXITCODE)." }
+    if ($deploy.ExitCode -ne 0) { throw "LiveKit agent deploy failed (exit $($deploy.ExitCode))." }
 } finally {
     Pop-Location
 }
 
 Write-Section "LiveKit: status"
-& $lk @lkArgs agent status --json $voiceDir
+$status = Invoke-Native -FilePath $lk -Arguments (@(
+    "--url", $cfg["LIVEKIT_URL"],
+    "--api-key", $cfg["LIVEKIT_API_KEY"],
+    "--api-secret", $cfg["LIVEKIT_API_SECRET"],
+    "agent", "status", "--json"
+))
+$status.Output | ForEach-Object { Write-Host $_ }
 
 Write-Host ""
 Write-Host "Agent deployed. It scales to zero on the free plan; the first session"

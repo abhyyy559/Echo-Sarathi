@@ -10,48 +10,32 @@
           "destination": "/index.html"
         }
       ]
-    },
-    "backend": {
-      "root": "backend",
-      "framework": "fastapi",
-      "entrypoint": "app.main:app"
     }
   },
   "rewrites": [
     {
-      "source": "/api(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/api/:path*",
+      "destination": "https://echosarathi-api.onrender.com/api/:path*"
     },
     {
-      "source": "/vobiz(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/api",
+      "destination": "https://echosarathi-api.onrender.com/api"
     },
     {
-      "source": "/twilio(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/vobiz/:path*",
+      "destination": "https://echosarathi-api.onrender.com/vobiz/:path*"
     },
     {
-      "source": "/plivo(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/twilio/:path*",
+      "destination": "https://echosarathi-api.onrender.com/twilio/:path*"
     },
     {
-      "source": "/internal(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/plivo/:path*",
+      "destination": "https://echosarathi-api.onrender.com/plivo/:path*"
+    },
+    {
+      "source": "/internal/:path*",
+      "destination": "https://echosarathi-api.onrender.com/internal/:path*"
     },
     {
       "source": "/(.*)",

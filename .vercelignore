@@ -1,0 +1,36 @@
+# `vercel deploy` runs from the repo root (the Vercel project's root directory
+# is the repo root, because the root vercel.json declares the frontend service).
+# Keep the upload to what the frontend service actually needs.
+
+# backend/ IS uploaded (it is served by Render, not Vercel, but the services
+# config references it); keep it, but drop its caches.
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+
+voice-agent/
+agent-control-center/
+tools/
+infra/
+domain-configs/
+scripts/
+docs/
+.hive/
+.superpowers/
+.pytest_cache/
+.tools/
+.deploy/
+
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/venv/
+
+.env
+.env.*
+!.env.example
+.deploy.env
+*.db
+*.sqlite3
+*.csv

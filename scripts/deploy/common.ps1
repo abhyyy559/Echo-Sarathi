@@ -175,3 +175,32 @@ function Test-CommandExists {
     param([string]$Name)
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
+
+function Invoke-Native {
+    <#
+    Run a native executable without letting its stderr abort the script.
+
+    common.ps1 sets $ErrorActionPreference = "Stop", and PowerShell turns any
+    native stderr line into a NativeCommandError under that setting (the
+    LiveKit and Vercel CLIs both print progress/info banners to stderr). This
+    runs the command under Continue and returns the real exit code.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [switch]$ShowOutput,
+        [switch]$Quiet
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $lines = & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($ShowOutput -and -not $Quiet) {
+        foreach ($line in $lines) { Write-Host "  $line" }
+    }
+    return [pscustomobject]@{ ExitCode = $code; Output = @($lines) }
+}
