@@ -23,11 +23,16 @@ import inspect
 import json
 import logging
 import math
+import ssl
 import time
+import traceback
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
+
+import httpx
+from openai import AsyncOpenAI as _OpenAIAsyncClient
 
 from livekit.agents import (
     Agent,
@@ -58,6 +63,7 @@ try:
 except Exception:  # optional heavy install; never block worker startup
     _ai_coustics_preload = None  # type: ignore[assignment]
 
+from app import usage_reporter
 from app.backend_client import BackendClient, BackendError
 from app.config import Settings
 from app.extraction_tools import (
@@ -69,6 +75,15 @@ from app.extraction_tools import (
 from app.prompting import build_opening_line, build_token_map, render_system_prompt, scrub_speech_text
 
 logger = logging.getLogger("voice_agent.pipeline")
+
+# Create the TLS context at import, not on the call path. On Windows this
+# measured ~432ms of event-loop block; doing it once during worker startup
+# keeps it out of the greeting.
+_LLM_SSL_CONTEXT: Optional[ssl.SSLContext]
+try:
+    _LLM_SSL_CONTEXT = ssl.create_default_context()
+except Exception:  # noqa: BLE001 - fall back to httpx's default verify
+    _LLM_SSL_CONTEXT = None
 
 try:  # livekit-agents >= 1.8: preemptive generation takes an options mapping
     from livekit.agents.voice.turn import (
@@ -151,6 +166,11 @@ class ProviderBundle:
     # Which TTS backend is armed (cartesia | deepgram | sarvam). Reported in
     # the session-start event so the panel names the REAL pipeline.
     tts_provider: str = "cartesia"
+    # Per-member httpx clients, so no plugin/stream closing one client can take
+    # down its siblings. The expensive TLS context is shared (created once at
+    # import), which was the actual ~2.9s event-loop block. compare=False keeps
+    # test equality sane.
+    llm_clients: list[Any] = field(default_factory=list, compare=False, repr=False)
 
     @property
     def complete(self) -> bool:
@@ -222,21 +242,66 @@ def _cartesia_speed(speaking_rate: Any) -> Optional[float]:
 _RETRYABLE_LLM_STATUS: frozenset = frozenset({None, 408, 425, 429, 500, 502, 503, 504})
 
 
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """Unwrap SDK wrapper exceptions (``APIConnectionError`` -> 429 cause)."""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _llm_status_code(exc: BaseException) -> Optional[int]:
+    """HTTP status from the first exception in the chain that carries one."""
+    for item in _exception_chain(exc):
+        status = getattr(item, "status_code", None)
+        if status is not None:
+            return int(status)
+    return None
+
+
 def _is_shared_tpm_error(exc: Exception) -> bool:
     """True when a 429 names the org-wide tokens-per-minute bucket.
 
     Groq says: "Rate limit reached ... on tokens per minute (TPM): Limit
-    8000". Measured on this key pool: a single 5,012-token request on key #1
-    dropped key #2's remaining tokens to the same level, so TPM/TPD is
-    shared. An RPD ("requests per day") or RPM error is per key and must not
-    bench the siblings.
+    8000". Measured on this key pool: a single request on key #1 dropped key
+    #2's remaining tokens to the same level, so TPM/TPD is shared. An RPD
+    ("requests per day") or RPM error is per key and must not bench the
+    siblings.
+
+    The OpenAI plugin raises ``APIConnectionError`` after retrying, and its
+    top-level string only says "failed to generate LLM completion". The 429
+    message lives on ``__cause__``; search the whole chain.
     """
-    text = str(exc).lower()
-    for attr in ("message", "body"):
-        value = getattr(exc, attr, None)
-        if value:
-            text += " " + str(value).lower()
-    return "tokens per minute" in text or "(tpm)" in text
+    for item in _exception_chain(exc):
+        text = str(item).lower()
+        for attr in ("message", "body"):
+            value = getattr(item, attr, None)
+            if value:
+                text += " " + str(value).lower()
+        if "tokens per minute" in text or "(tpm)" in text:
+            return True
+    return False
+
+
+#: Provider labels that share ONE organization-wide token bucket. A shared-TPM
+#: 429 on any member must bench every member of the same bucket, because the
+#: sibling would answer from the same depleted pool. Measured 2026-10-22: all
+#: five Groq keys AND gpt-oss-120b report the same 8000 remaining-tokens value
+#: and drain together, so the whole org is one bucket.
+_SHARED_TPM_BUCKETS: dict[str, str] = {
+    "groq": "groq",
+    "groq-secondary": "groq",
+}
+
+
+def _tpm_bucket(provider: str) -> str:
+    """Map a chain member label to the shared token bucket it draws from."""
+    label = str(provider or "").strip().lower()
+    return _SHARED_TPM_BUCKETS.get(label, label)
 
 
 class FallbackLLM(llm.LLM):
@@ -247,12 +312,12 @@ class FallbackLLM(llm.LLM):
     per API key); ``fallback`` (e.g. OpenAI) is appended last when given.
     The session calls chat() per turn; chat() always serves the first member
     whose cooldown expired (else the first member, better than silence). On
-    a retryable serving failure the proxy below marks THAT member down and
-    re-raises. NOTE: livekit-agents 1.8.x does NOT retry chat() within the
-    failed turn (the speech handle just ends in error), so failover takes
-    effect from the NEXT turn via the cooldown marks - the failed turn itself
-    is dead air covered by the stall watchdog. This object never retries
-    inside a stream: no duplicated prefixes, no re-implemented machinery.
+    a retryable serving failure the proxy below marks THAT member down. If no
+    content has been emitted yet, it also advances to the next available
+    member INSIDE THE SAME TURN; that turns a Groq 429 from ~13s of dead air
+    into a normal reply from the secondary model. If content was already
+    spoken it re-raises (no duplicated prefixes). The chain definition and
+    order are unchanged: 5x Qwen -> GPT-OSS -> Sarvam.
 
     Backward compatible: ``FallbackLLM(primary, fallback)`` behaves exactly
     as before; ``FallbackLLM([k1, k2], openai_llm)`` rotates Groq keys.
@@ -307,18 +372,20 @@ class FallbackLLM(llm.LLM):
         """Number of keys/providers in the rotation (observability)."""
         return len(self._chain)
 
-    def _pick_member(self) -> int:
+    def _pick_member(self, exclude: Optional[set[int]] = None) -> int:
         now = time.monotonic()
         for index, down_until in enumerate(self._down_until):
+            if exclude and index in exclude:
+                continue
             if now >= down_until:
                 return index
-        return 0  # all cooling down: serve the first rather than silence
+        return -1 if exclude else 0  # no eligible member
 
     def _mark_down(self, index: int) -> None:
         self._down_until[index] = time.monotonic() + self._cooldown_s
 
     def _mark_provider_down(self, provider: str) -> int:
-        """Cool down every member of one provider. Returns how many skipped.
+        """Cool down every member of one shared token bucket. Returns skipped.
 
         Only for the SHARED tokens-per-minute bucket. Measured with five Groq
         keys: a 5,012-token request on key #1 dropped key #2's remaining
@@ -326,11 +393,17 @@ class FallbackLLM(llm.LLM):
         a sibling key after a TPM 429 only burns the caller's time. Request
         counters are separate per key (five distinct RPD values), so plain
         RPD/RPM 429s still cool ONE member and leave the other keys usable.
+
+        Members are matched by BUCKET, not by label: ``groq`` and
+        ``groq-secondary`` (gpt-oss-120b) answer from the same 8000 TPM pool,
+        so a TPM 429 on either must bench both. Otherwise the chain spends
+        another full member timeout on a model that is guaranteed to 429.
         """
         now = time.monotonic()
+        bucket = _tpm_bucket(provider)
         skipped = 0
         for index, name in enumerate(self._providers):
-            if name == provider and now >= self._down_until[index]:
+            if _tpm_bucket(name) == bucket and now >= self._down_until[index]:
                 self._down_until[index] = now + self._cooldown_s
                 skipped += 1
         return skipped
@@ -421,26 +494,33 @@ def _with_handoff_brief(
 
 
 class _FallbackStream(llm.LLMStream):
-    """LLMStream proxy that observes failures; never retries itself.
+    """LLMStream proxy that fails over inside the current turn when safe.
 
-    On a retryable serving-member failure it marks THAT member down for
-    cooldown and re-raises. The 1.8.x session does not re-invoke chat() for
-    the failed turn, so the NEXT turn's chat() serves the next key/provider
-    in the chain via the cooldown marks.
+    A retryable serving-member failure marks that member down. If no content
+    chunk has been emitted yet, the proxy opens the next available member's
+    stream and continues the same turn. If content was already emitted it
+    re-raises, because replaying the next model would duplicate audio.
     """
 
     def __init__(
         self, owner: FallbackLLM, primary_stream: llm.LLMStream, member_index: int = 0
     ) -> None:
+        self._chat_ctx = primary_stream.chat_ctx
+        self._tools = list(primary_stream.tools)
+        self._conn_options = getattr(primary_stream, "conn_options", None) or (
+            APIConnectOptions(max_retry=1, retry_interval=0.5, timeout=8.0)
+        )
         super().__init__(
             owner,
-            chat_ctx=primary_stream.chat_ctx,
-            tools=list(primary_stream.tools),
-            conn_options=APIConnectOptions(),
+            chat_ctx=self._chat_ctx,
+            tools=self._tools,
+            conn_options=self._conn_options,
         )
         self._owner = owner
         self._active = primary_stream
         self._member_index = member_index
+        self._tried: set[int] = {member_index}
+        self._yielded_content = False
 
     async def _run(self) -> None:
         # Abstract hook required by llm.LLMStream. This proxy never drives
@@ -448,54 +528,101 @@ class _FallbackStream(llm.LLMStream):
         return None
 
     async def __anext__(self) -> Any:
-        try:
-            return await self._active.__anext__()
-        except StopAsyncIteration:
-            raise
-        except Exception as exc:  # noqa: BLE001 — classify, then maybe fail over
-            status = getattr(exc, "status_code", None)
-            # 402 is a dead account (DeepSeek "Insufficient Balance"), not a
-            # dead provider: cool the member and move on exactly like any
-            # other per-member failure. Raising it raw would end the turn in
-            # silence with a working Groq pool sitting behind it.
-            if status not in _RETRYABLE_LLM_STATUS and status != 402:
+        while True:
+            try:
+                chunk = await self._active.__anext__()
+                if _chunk_has_content(chunk):
+                    self._yielded_content = True
+                return chunk
+            except StopAsyncIteration:
                 raise
-            if status == 429 and _is_shared_tpm_error(exc):
-                # Shared TPM/TPD bucket: every Groq key draws on it, so a
-                # sibling would 429 identically. Skip the whole provider tier.
-                provider = self._owner._providers[self._member_index] if (
-                    0 <= self._member_index < len(self._owner._providers)
-                ) else "?"
-                skipped = self._owner._mark_provider_down(provider)
-                logger.warning(
-                    "LLM chain member %d hit the shared TPM bucket (%s); skipping %d sibling(s)",
-                    self._member_index + 1,
-                    provider,
-                    max(skipped - 1, 0),
-                )
-            else:
-                # RPD/RPM or a non-429 failure: cool THIS member only. Request
-                # counters are per key (measured), so the other keys remain
-                # usable and skipping them would discard the pool.
-                if status == 429:
+            except Exception as exc:  # noqa: BLE001 — classify, then maybe fail over
+                status = _llm_status_code(exc)
+                # 402 is a dead account (DeepSeek "Insufficient Balance"), not
+                # a dead provider: cool the member and move on exactly like any
+                # other per-member failure.
+                if status not in _RETRYABLE_LLM_STATUS and status != 402:
+                    raise
+                if status == 429 and _is_shared_tpm_error(exc):
+                    # Shared TPM/TPD bucket: every Groq key draws on it, so a
+                    # sibling would 429 identically. Skip the whole tier.
+                    provider = self._owner._providers[self._member_index] if (
+                        0 <= self._member_index < len(self._owner._providers)
+                    ) else "?"
+                    skipped = self._owner._mark_provider_down(provider)
                     logger.warning(
-                        "LLM chain member %d 429 (per-key request limit); cooling down this key only",
+                        "LLM chain member %d hit the shared TPM bucket (%s); skipping %d sibling(s)",
                         self._member_index + 1,
+                        provider,
+                        max(skipped - 1, 0),
                     )
                 else:
-                    logger.warning(
-                        "LLM chain member %d failed (%s), cooling down for next member",
-                        self._member_index + 1,
-                        status or "connection-error",
-                    )
-                self._owner._mark_down(self._member_index)
-            raise
+                    # RPD/RPM or a non-429 failure: cool THIS member only.
+                    if status == 429:
+                        logger.warning(
+                            "LLM chain member %d 429 (per-key request limit); cooling down this key only",
+                            self._member_index + 1,
+                        )
+                    else:
+                        logger.warning(
+                            "LLM chain member %d failed (%s), cooling down for next member",
+                            self._member_index + 1,
+                            status or "connection-error",
+                        )
+                    self._owner._mark_down(self._member_index)
+
+                # Never splice a second model into audio that already started.
+                if self._yielded_content:
+                    raise
+
+                self._tried.add(self._member_index)
+                next_index = self._owner._pick_member(exclude=self._tried)
+                if next_index < 0:
+                    raise
+                previous = self._member_index
+                try:
+                    await self._active.aclose()
+                except Exception:  # noqa: BLE001 — best effort
+                    pass
+                self._member_index = next_index
+                self._owner.last_served_index = next_index
+                logger.warning(
+                    "LLM chain failing over inside the same turn: member %d -> %d/%d",
+                    previous + 1,
+                    next_index + 1,
+                    len(self._owner._chain),
+                )
+                next_ctx = _with_handoff_brief(self._chat_ctx, previous, next_index)
+                self._active = self._owner._chain[next_index].chat(
+                    chat_ctx=next_ctx,
+                    tools=self._tools,
+                    conn_options=self._conn_options,
+                )
+                # Loop and read from the new member's stream.
 
     async def aclose(self) -> None:
         try:
             await self._active.aclose()
         except Exception:  # noqa: BLE001 — best effort
             pass
+
+
+def _chunk_has_content(chunk: Any) -> bool:
+    """True once a chunk carries text or a tool call (not just a role)."""
+    delta = getattr(chunk, "delta", None)
+    if delta is not None:
+        if getattr(delta, "content", None):
+            return True
+        if getattr(delta, "tool_calls", None):
+            return True
+    for choice in getattr(chunk, "choices", None) or []:
+        choice_delta = getattr(choice, "delta", None)
+        if choice_delta is not None:
+            if getattr(choice_delta, "content", None):
+                return True
+            if getattr(choice_delta, "tool_calls", None):
+                return True
+    return False
 
 
 #: Output caps. A REASONING model (gpt-oss) spends its output budget thinking
@@ -516,6 +643,145 @@ def _max_completion_tokens_for(model: str) -> int:
     if any(marker in lowered for marker in _REASONING_MODEL_MARKERS):
         return _REASONING_MAX_COMPLETION_TOKENS
     return _DEFAULT_MAX_COMPLETION_TOKENS
+
+
+class _MemberHttpClient(httpx.AsyncClient):
+    """One LLM chain member's connection pool, protected from stray teardown.
+
+    Live call 2026-10-22 (room ``phone-7``): ~0.5s into the FIRST turn every
+    member's pool was already closed - members 2-8 answered "Cannot send a
+    request, as the client has been closed" and member 1 hit a mid-stream
+    ``ReadError`` - so the whole 8-member chain died and the agent stayed silent
+    for the remaining 43s of the call. Nothing in this worker closes a pool
+    mid-session (only session teardown does), so a framework teardown path does
+    it; refusing the close keeps the live call alive, and the one-time stack
+    trace names the caller so the real bug can be chased down later.
+
+    Refusing is also the latency-correct choice: rebuilding a pool per turn
+    would re-pay DNS + TLS + handshake on every member the turn touches.
+    """
+
+    _pool_released = False
+    _pool_close_logged = False
+
+    def release(self) -> None:
+        """Allow this pool to close for real (session teardown only)."""
+        self._pool_released = True
+
+    def _refuse(self, how: str) -> None:
+        if not self._pool_close_logged:
+            self._pool_close_logged = True
+            logger.warning(
+                "%s tried to close a live LLM pool; caller stack:\n%s",
+                how,
+                "".join(traceback.format_stack()[-16:]),
+            )
+
+    async def aclose(self) -> None:
+        if self._pool_released:
+            await super().aclose()
+            return
+        self._refuse("aclose()")
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        # httpx's __aexit__ sets _state = CLOSED directly, bypassing aclose() -
+        # so the guard above would never see a pool closed as a context manager.
+        if self._pool_released:
+            await super().__aexit__(*exc_info)
+            return
+        self._refuse("__aexit__()")
+
+
+def _new_llm_http_client(
+    event_hooks: Optional[dict[str, list[Any]]] = None,
+) -> httpx.AsyncClient:
+    """A fresh connection pool per LLM member, sharing one TLS context.
+
+    The OpenAI plugin otherwise creates a fresh ``httpx.AsyncClient`` **and**
+    a fresh TLS context per member. Seven TLS contexts blocked the event loop
+    for ~2.9s on the first phone call; the context is now created once at
+    import. The pool itself must NOT be shared: one member closing its client
+    (or a plugin aclose) would otherwise kill every sibling on the next turn.
+
+    ``event_hooks`` carries the per-member quota-header capture (see
+    ``app.usage_reporter``) without giving members a shared pool.
+
+    ``read`` is 15s, not 5s: a slow first token on a long prompt was aborted by
+    the tighter read timeout mid-stream, which is indistinguishable from a dead
+    provider and wasted a whole failover hop. The per-attempt budget is owned by
+    ``APIConnectOptions(timeout=8.0)`` in ``FallbackLLM.chat``.
+    """
+    return _MemberHttpClient(
+        verify=_LLM_SSL_CONTEXT if _LLM_SSL_CONTEXT is not None else True,
+        timeout=httpx.Timeout(connect=15.0, read=15.0, write=15.0, pool=10.0),
+        follow_redirects=True,
+        limits=httpx.Limits(
+            max_connections=50,
+            max_keepalive_connections=50,
+            keepalive_expiry=120,
+        ),
+        event_hooks=event_hooks,
+    )
+
+
+def _quota_hook(provider: str, api_key: str, model: str) -> Any:
+    """httpx response hook that forwards this member's rate-limit headers.
+
+    Groq's TPM/request budget is only observable here, in the worker. The hook
+    swallows everything: it runs inside the transport on the call's critical
+    path, so a bookkeeping error must never surface as a failed turn.
+
+    MUST be ``async``: ``httpx.AsyncClient`` awaits every response hook
+    unconditionally (``await hook(response)``), so a plain function raises
+    ``TypeError: object NoneType can't be used in 'await' expression`` inside
+    ``send()``. openai wraps that in ``APIConnectionError``, so a sync hook
+    killed EVERY LLM request - every member of the chain failed, each turn
+    burned the failover budget, and the caller heard silence (live calls
+    phone-7/phone-8, and quota headers were never captured either).
+    """
+
+    async def _capture(response: Any) -> None:
+        try:
+            from app.usage_reporter import record_llm_response
+
+            record_llm_response(provider, api_key, model, response)
+        except Exception:  # noqa: BLE001 - never raise into httpx
+            logger.debug("quota header capture skipped", exc_info=True)
+
+    return _capture
+
+
+def _llm_connection_kwargs(
+    api_key: str, base_url: str, clients: Optional[list[Any]] = None,
+    *, provider: str = "", model: str = "",
+) -> dict[str, Any]:
+    """Build one member's OpenAI client without touching its siblings.
+
+    ``clients`` collects the httpx clients so ``run_session`` can close them at
+    session end. Keep ``api_key``/``base_url`` for introspection and for test
+    fakes that do not understand ``client``; the real plugin uses ``client``.
+    ``provider``/``model`` label the quota hook that reports ``x-ratelimit-*``.
+    """
+    hooks = None
+    if provider:
+        hook = _quota_hook(provider, api_key, model)
+        hooks = {"response": [hook]}
+    try:
+        http_client = _new_llm_http_client(hooks)
+    except Exception:  # noqa: BLE001 - fall back to the plugin's own client
+        return {"api_key": api_key, "base_url": base_url}
+    if clients is not None:
+        clients.append(http_client)
+    return {
+        "api_key": api_key,
+        "base_url": base_url,
+        "client": _OpenAIAsyncClient(
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=0,
+            http_client=http_client,
+        ),
+    }
 
 
 def _groq_client_kwargs(model: str) -> dict[str, Any]:
@@ -540,18 +806,39 @@ def _groq_client_kwargs(model: str) -> dict[str, Any]:
 def build_providers(
     settings: Settings,
     voice_settings: Optional[Mapping[str, Any]] = None,
+    *,
+    is_phone: bool = False,
 ) -> ProviderBundle:
     """Build STT/LLM/TTS from settings; missing keys degrade, never raise.
 
     ``voice_settings`` is the agent-version's saved config; when it carries a
     per-agent ``llm_model`` / ``tts_voice_id`` those override the platform
-    defaults (GROQ_MODEL env / provider default voice).
+    defaults (GROQ_MODEL env / provider default voice). ``is_phone`` marks a
+    PSTN leg so the TTS can emit telephony-native audio (see the Sarvam block).
     """
     bundle = ProviderBundle(stt=None, llm=None, tts=None)
     model_override, tts_voice_override, voices_by_lang, language = _voice_overrides(voice_settings)
     effective_voice = voices_by_lang.get(language) or tts_voice_override
 
-    if settings.deepgram_api_key and os.getenv("STT_PROVIDER", "deepgram").lower() == "deepgram":
+    # STT provider routing. A non-English agent must be transcribed by Sarvam
+    # Saaras (Nova has no te/hi/bn models in the streaming plugin), while
+    # English stays on Deepgram Nova-3, which is the faster of the two and the
+    # locked stack default. STT_PROVIDER=sarvam forces Sarvam everywhere;
+    # STT_LANGUAGE_ROUTING=off disables the per-language promotion.
+    stt_choice = os.getenv("STT_PROVIDER", "deepgram").strip().lower()
+    route_stt = os.getenv("STT_LANGUAGE_ROUTING", "on").strip().lower() not in (
+        "off", "0", "no", "false",
+    )
+    _agent_language = str((voice_settings or {}).get("language", "") or "").strip().lower()
+    _indian_language = bool(_agent_language) and _agent_language not in (
+        "en", "en-in", "en-us", "en-gb",
+    )
+    _sarvam_key = os.getenv("SARVAM_TTS_API", "") or os.getenv("SARVAM_API_KEY", "")
+    use_sarvam_stt = stt_choice == "sarvam" or (
+        route_stt and _indian_language and bool(_sarvam_key)
+    )
+
+    if settings.deepgram_api_key and not use_sarvam_stt:
         stt_lang = str(
             (voice_settings or {}).get("stt_language", "en")
         ).strip().lower() or "en"
@@ -567,7 +854,7 @@ def build_providers(
             api_key=settings.deepgram_api_key,
         )
         bundle.stt_provider = "deepgram"
-    elif os.getenv("STT_PROVIDER", "deepgram").lower() == "sarvam":
+    elif use_sarvam_stt:
         # Sarvam Saaras STT (official LiveKit plugin, streaming). Indian-accent
         # accuracy is its strength over Nova; en-IN plus auto-detect via
         # language="unknown". flush_signal emits the speech start/end markers
@@ -594,15 +881,25 @@ def build_providers(
             # codes ("en"). A bare code raises ValueError at STT construction
             # and degrades the whole session, so map the common ones.
             sarvam_lang = _bcp47_language(sarvam_lang)
+            # Callers code-switch mid-sentence (Tenglish: "school ki vellaledu,
+            # he had fever"). ``codemix`` keeps English words in English and the
+            # Indian language in its own script, so the LLM reads natural mixed
+            # text instead of a forced transliteration it has to translate back.
+            # SARVAM_STT_MODE / voice_settings.stt_mode overrides (transcribe |
+            # translate | verbatim | translit | codemix).
+            sarvam_mode = (
+                str((voice_settings or {}).get("stt_mode", "") or "").strip()
+                or os.getenv("SARVAM_STT_MODE", "codemix")
+            )
             bundle.stt = _sarvam_stt.STT(
                 language=sarvam_lang,
                 model=os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
-                mode="transcribe",
+                mode=sarvam_mode,
                 api_key=sarvam_key,
                 flush_signal=True,
             )
             bundle.stt_provider = "sarvam"
-            logger.info("STT provider: Sarvam Saaras (%s)", sarvam_lang)
+            logger.info("STT provider: Sarvam Saaras (%s mode=%s)", sarvam_lang, sarvam_mode)
     else:
         bundle.problems.append(
             "DEEPGRAM_API_KEY missing - speech-to-text disabled"
@@ -658,6 +955,18 @@ def build_providers(
             sarvam_rate = 8000
         if sarvam_rate not in (8000, 16000, 22050, 24000, 32000, 44100, 48000):
             sarvam_rate = 8000
+        # A PSTN leg IS 8 kHz G.711, so ask Bulbul for mu-law directly instead
+        # of mp3: mp3 at 8 kHz is an MPEG-2.5 mode with audible grain, and it
+        # costs an encoder round trip plus a decoder in the hot path. The
+        # plugin decodes the mu-law to PCM for LiveKit, and the bridge re-encodes
+        # it for the carrier — same codec in and out, so nothing is added in
+        # between. Browser rooms keep mp3 (narrowband would sound muffled).
+        _TTS_CODECS = ("mp3", "mulaw", "alaw", "wav", "linear16", "flac", "aac", "opus")
+        sarvam_codec = os.getenv("SARVAM_TTS_CODEC", "").strip().lower()
+        if sarvam_codec not in _TTS_CODECS:
+            sarvam_codec = "mulaw" if is_phone else "mp3"
+        if sarvam_codec in ("mulaw", "alaw"):
+            sarvam_rate = 8000
         try:
             sarvam_pace = float((voice_settings or {}).get("speaking_rate", 1.0))
         except (TypeError, ValueError):
@@ -670,14 +979,16 @@ def build_providers(
             speech_sample_rate=sarvam_rate,
             pace=sarvam_pace,
             api_key=sarvam_key,
+            output_audio_codec=sarvam_codec,
         )
         bundle.tts_provider = "sarvam"
         logger.info(
-            "TTS provider: Sarvam Bulbul (%s/%s/%s rate=%d pace=%.2f)",
+            "TTS provider: Sarvam Bulbul (%s/%s/%s rate=%d codec=%s pace=%.2f)",
             sarvam_model,
             sarvam_speaker,
             sarvam_lang,
             sarvam_rate,
+            sarvam_codec,
             sarvam_pace,
         )
     elif selected_tts == "cartesia" and settings.cartesia_api_key:
@@ -714,6 +1025,11 @@ def build_providers(
     else:
         bundle.problems.append("CARTESIA_API_KEY missing - text-to-speech disabled")
 
+    # Each chain member gets its own httpx pool so one member/plugin closing its
+    # client cannot kill its siblings. The expensive TLS context is shared at
+    # import, so this no longer blocks the event loop for ~2.9s.
+    llm_clients: list[Any] = []
+
     groq_model = model_override or settings.groq_model
     # Multi-key rotation: one client per API key (GROQ_API_KEY first,
     # then GROQ_API_KEYS). A 429/quota failure on one key cools THAT key
@@ -732,8 +1048,10 @@ def build_providers(
             groq_llms.append(
                 openai.LLM(
                     model=groq_model,
-                    api_key=key,
-                    base_url=groq_base_url,
+                    **_llm_connection_kwargs(
+                        key, groq_base_url, llm_clients,
+                        provider="groq", model=groq_model,
+                    ),
                     **_groq_client_kwargs(groq_model),
                 )
             )
@@ -753,8 +1071,10 @@ def build_providers(
             try:
                 groq_secondary_llm = openai.LLM(
                     model=secondary_model,
-                    api_key=groq_keys[0],
-                    base_url=groq_base_url,
+                    **_llm_connection_kwargs(
+                        groq_keys[0], groq_base_url, llm_clients,
+                        provider="groq-secondary", model=secondary_model,
+                    ),
                     **_groq_client_kwargs(secondary_model),
                 )
             except Exception as exc:  # noqa: BLE001 — never block the chain
@@ -782,8 +1102,10 @@ def build_providers(
                 chain.append(
                     openai.LLM(
                         model=model,
-                        api_key=api_key,
-                        base_url=base_url,
+                        **_llm_connection_kwargs(
+                            api_key, base_url, llm_clients,
+                            provider=name, model=model,
+                        ),
                         max_completion_tokens=_max_completion_tokens_for(model),
                     )
                 )
@@ -817,8 +1139,10 @@ def build_providers(
                 extra_llms.append(
                     openai.LLM(
                         model=model,
-                        api_key=api_key,
-                        base_url=base_url,
+                        **_llm_connection_kwargs(
+                            api_key, base_url, llm_clients,
+                            provider=name, model=model,
+                        ),
                         max_completion_tokens=_max_completion_tokens_for(model),
                     )
                 )
@@ -846,13 +1170,16 @@ def build_providers(
         )
         bundle.llm = openai.LLM(
             model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
+            **_llm_connection_kwargs(
+                settings.openai_api_key, settings.openai_base_url, llm_clients,
+                provider="openai", model=settings.openai_model,
+            ),
             max_completion_tokens=_max_completion_tokens_for(settings.openai_model),
         )
     else:
         bundle.problems.append("No LLM key (GROQ_API_KEY / OPENAI_API_KEY) set")
 
+    bundle.llm_clients = llm_clients
     return bundle
 
 
@@ -1643,14 +1970,21 @@ class TurnTelemetry:
     async def _maybe_compact_instructions(self) -> None:
         """Swap full instructions for the compact version after the opening.
 
-        Same arithmetic as text mode: the full voice prompt (~8k chars) is
-        re-sent on every LLM call against an org-wide 7000 input-tokens/min
-        bucket. After 3 exchanges the history carries the persona, so later
-        turns only need the compact rules. Runs once; failures are silent
-        because instructions must never break a live call.
+        The full voice prompt (~8k chars / ~2800 tokens measured) is re-sent on
+        every LLM call against Groq's ORGANIZATION-WIDE 8000 tokens/min bucket.
+        Measured 2026-10-22: prompt caching does not apply (the same 2850-token
+        prompt cost the full 2850 tokens on every repeat, then 429'd), so the
+        full prompt permits only ~2 LLM turns/minute before the call stalls on
+        a 429 - the 8.3s turn-1 and 14s turn-4 latency seen on a live call.
+
+        The opening exchange already carries the persona, names, disclosure and
+        first answer in the history, so from the SECOND LLM turn onward the
+        compact rules are enough. VOICE_COMPACT_AFTER_TURNS raises the
+        threshold (default 1 = compact as early as possible).
         """
         try:
-            if self._turn_index < 3:
+            threshold = int(_env_float("VOICE_COMPACT_AFTER_TURNS", 1))
+            if self._turn_index < threshold:
                 return
             agent = getattr(self, "_agent", None)
             tools = self._extraction_tools
@@ -1673,7 +2007,7 @@ class TurnTelemetry:
                 [f for f in required if f not in recorded],
                 today,
             )
-            if agent.swap_to_compact_instructions(compact):
+            if await agent.swap_to_compact_instructions(compact):
                 logger.info(
                     "voice instructions compacted at turn %d (%d chars)",
                     self._turn_index,
@@ -1937,19 +2271,33 @@ def _get_noise_cancellation() -> Any:
         return None
 
 
-def _room_options() -> Any:
-    """RoomOptions with voice-focus audio input, or None for a plain start."""
+def _room_options(*, is_phone: bool = False) -> Any:
+    """RoomOptions with voice-focus audio input, or None for a plain start.
+
+    ``is_phone`` additionally pins the agent's OUTPUT to 8 kHz. A PSTN leg is
+    8 kHz G.711 and Sarvam already hands us 8 kHz mu-law, so publishing at the
+    leg's own rate keeps the call byte-exact: the alternative (default 24 kHz
+    output) makes LiveKit upsample 8k -> 24k/48k and the media bridge decimate
+    straight back down, i.e. two resampler passes and their filter ringing for
+    audio that ends up narrowband anyway. Browser rooms keep the 24 kHz default.
+    """
     nc = _get_noise_cancellation()
     if nc is None:
         logger.info("Noise cancellation: none (VOICE_NC=off or plugin missing)")
-        return None
-    logger.info("Noise cancellation: %s", type(nc).__name__)
+        if not is_phone:
+            return None
+    else:
+        logger.info("Noise cancellation: %s", type(nc).__name__)
     try:
         from livekit.agents import room_io
 
-        return room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(noise_cancellation=nc)
-        )
+        kwargs: dict[str, Any] = {}
+        if nc is not None:
+            kwargs["audio_input"] = room_io.AudioInputOptions(noise_cancellation=nc)
+        if is_phone:
+            kwargs["audio_output"] = room_io.AudioOutputOptions(sample_rate=8000)
+            logger.info("Agent audio output: 8000 Hz (PSTN leg)")
+        return room_io.RoomOptions(**kwargs)
     except Exception:
         logger.warning("RoomOptions unsupported here, plain start", exc_info=True)
         return None
@@ -2071,6 +2419,23 @@ def _opts(cls: Any, **kwargs: Any) -> Any:
         return cls()
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, falling back to ``default`` on garbage/unset.
+
+    Used for the latency knobs so a demo can be re-tuned from the LiveKit
+    agent secrets without a code change; a malformed value must never break
+    the session, so it silently becomes the default.
+    """
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        logger.warning("%s=%r is not a number, using %s", name, raw, default)
+        return default
+
+
 def _turn_detection() -> Any:
     """End-of-turn detector: Smart Turn v3 first, local mini fallback.
 
@@ -2141,13 +2506,20 @@ def _build_agent_session(
                 EndpointingOptions,
                 mode="fixed",
                 # Semantic turn detection decides when the caller is done;
-                # endpointing is only the wall-clock bound. 0.4s floor is
-                # responsive, 2.5s ceiling guarantees a turn can never hang
-                # for 25s when VAD/STT never emits end-of-speech.
+                # endpointing is only the wall-clock bound. The floor is dead
+                # time added to EVERY turn, so it is the single cheapest
+                # latency knob: 0.3s is responsive (down from 0.4s) while the
+                # semantic detector still catches mid-sentence pauses, and the
+                # 2.5s ceiling guarantees a turn can never hang for 25s when
+                # VAD/STT never emits end-of-speech.
                 # Sarvam's STT processes in ~70ms and its integration guide
                 # requires 0.07s, so that provider keeps its special case.
-                min_delay=0.07 if sarvam_stt else 0.4,
-                max_delay=2.5,
+                # VOICE_MIN_ENDPOINTING_DELAY / VOICE_MAX_ENDPOINTING_DELAY
+                # override both when a demo needs different tuning.
+                min_delay=_env_float(
+                    "VOICE_MIN_ENDPOINTING_DELAY", 0.07 if sarvam_stt else 0.3
+                ),
+                max_delay=_env_float("VOICE_MAX_ENDPOINTING_DELAY", 2.5),
             ),
             interruption=_opts(
                 InterruptionOptions,
@@ -2187,6 +2559,88 @@ async def _speak_opening(
         return False
     await session.say(opening, allow_interruptions=True)
     return True
+
+
+#: Backstop for the call wait below. The wait ends by itself when the caller
+#: leaves; this only exists so a participant that never disconnects (a browser
+#: tab left open) cannot pin a job - and its provider pools - forever.
+_MAX_CALL_SECONDS = _env_float("VOICE_MAX_CALL_SECONDS", 1800.0)
+
+
+class _CallEndWatcher:
+    """Holds the session open until the call is over.
+
+    ``run_session`` owns the provider pools and closes them in its ``finally``,
+    so returning right after the opening killed every later turn with
+    "Cannot send a request, as the client has been closed." - live calls
+    phone-7..phone-10 played the greeting, then went silent while the caller
+    stayed connected. The call is over when the caller leaves, the room closes,
+    or the agent session closes; whichever comes first ends the wait.
+
+    Subscribing happens in ``__init__``, before the opening is spoken, because
+    a caller who hangs up mid-greeting would otherwise disconnect before we
+    ever listened for it (and only the room's empty-timeout would end the job).
+    """
+
+    def __init__(self, ctx: JobContext, session: Any, room_name: str) -> None:
+        self._room_name = room_name
+        self._room = ctx.room
+        self._done: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._subscriptions: list[tuple[Any, str, Any]] = []
+        self._subscribe(
+            self._room, "participant_disconnected", self._on_participant_disconnected
+        )
+        self._subscribe(self._room, "disconnected", self._on_room_disconnected)
+        self._subscribe(session, "close", self._on_session_close)
+
+    def _subscribe(self, emitter: Any, event: str, handler: Any) -> None:
+        try:
+            emitter.on(event)(handler)
+            self._subscriptions.append((emitter, event, handler))
+        except Exception:  # noqa: BLE001 - a missing signal must not break the call
+            logger.debug("Could not subscribe to %s", event, exc_info=True)
+
+    def _finish(self, reason: str) -> None:
+        if not self._done.done():
+            logger.info("Call over in %s: %s", self._room_name, reason)
+            self._done.set_result(reason)
+
+    def _on_participant_disconnected(self, participant: Any = None, *_args: Any) -> None:
+        remaining = list(getattr(self._room, "remote_participants", {}).values())
+        if remaining:
+            # Another caller/observer is still on the line - the call is not over.
+            logger.info(
+                "%s left %s; %d participant(s) remain",
+                getattr(participant, "identity", "?"),
+                self._room_name,
+                len(remaining),
+            )
+            return
+        self._finish("caller left the room")
+
+    def _on_room_disconnected(self, *_args: Any) -> None:
+        self._finish("room disconnected")
+
+    def _on_session_close(self, *_args: Any) -> None:
+        self._finish("agent session closed")
+
+    async def wait(self) -> str:
+        """Block for the duration of the call, then drop the listeners."""
+        try:
+            return await asyncio.wait_for(self._done, timeout=_MAX_CALL_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Call in %s exceeded VOICE_MAX_CALL_SECONDS (%.0fs)",
+                self._room_name,
+                _MAX_CALL_SECONDS,
+            )
+            return f"max call duration reached ({_MAX_CALL_SECONDS:.0f}s)"
+        finally:
+            for emitter, event, handler in self._subscriptions:
+                try:
+                    emitter.off(event, handler)
+                except Exception:  # noqa: BLE001 - teardown only
+                    logger.debug("Could not unsubscribe from %s", event, exc_info=True)
 
 
 def _attach_audio_probe(room: Any, telemetry: Any) -> None:
@@ -2259,7 +2713,16 @@ async def _start_agent_session(
 async def run_session(ctx: JobContext, settings: Settings) -> None:
     """Full lifecycle for one accepted playground job. Never raises."""
     room_name = ctx.room.name or ""
+    # A "phone-" room is a PSTN leg bridged by the backend media router; the
+    # "playground-" rooms are browser sessions. Audio treatment differs (see
+    # build_providers' TTS codec choice and the preemptive-generation rule).
+    is_phone_room = room_name.startswith(PHONE_PREFIX)
     backend = BackendClient(settings.backend_internal_url, settings.internal_api_token)
+    # Quota headers are only visible inside this worker, so point the reporter
+    # at the backend before any provider call can happen.
+    usage_reporter.configure(
+        settings.backend_internal_url, settings.internal_api_token
+    )
     parsed: Optional[ParsedJob] = parse_room_metadata(_room_metadata(ctx))
     call_id: Optional[str] = parsed.call_id if parsed else None
     session: Optional[AgentSession] = None
@@ -2308,7 +2771,9 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             )
             return
 
-        bundle = build_providers(settings, config.get("voice_settings"))
+        bundle = build_providers(
+            settings, config.get("voice_settings"), is_phone=is_phone_room
+        )
         for problem in bundle.problems:
             logger.error("Provider problem: %s", problem)
         if not bundle.complete:
@@ -2318,6 +2783,18 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             return
         assert bundle.stt is not None and bundle.llm is not None
         assert bundle.tts is not None
+
+        # Warm the TTS connection now, before prompt rendering and session setup.
+        # The first live greeting otherwise waited ~5.7s for a cold Sarvam
+        # WebSocket handshake (measured). ``prewarm`` starts a background task;
+        # the next await (call context fetch) gives it time to run. Applied to
+        # every provider, not just Sarvam: Cartesia and Deepgram Aura also open
+        # their connection lazily on the first synthesis.
+        try:
+            bundle.tts.prewarm()
+            logger.info("TTS prewarm requested (%s)", bundle.tts_provider)
+        except Exception:  # noqa: BLE001 - prewarm is an optimization
+            logger.debug("TTS prewarm failed to start", exc_info=True)
 
         # Fetch per-call context (institution_name + contact) once at session
         # start; {} on failure is fine — tokens resolve to empty and are dropped.
@@ -2338,13 +2815,26 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
             schema=schema,
         )
 
-        # Phone rooms get deterministic turn-taking: PSTN partials are too
-        # noisy for speculative replies (they answer stale turns and talk
-        # over callers). Playground keeps preemptive generation for speed.
-        is_phone_room = room_name.startswith(PHONE_PREFIX)
-        session = _build_agent_session(
-            bundle, preemptive_generation=not is_phone_room
+        # Phone rooms get deterministic turn-taking by default: PSTN partials
+        # are noisier than browser audio, and a speculative reply to a stale
+        # partial both talks over the caller and burns the shared Groq token
+        # bucket on a turn nobody hears. Playground keeps preemptive
+        # generation for speed. VOICE_PREEMPTIVE_GENERATION=on|off forces it
+        # either way (the "auto" default is the per-room rule).
+        preemptive_choice = os.getenv("VOICE_PREEMPTIVE_GENERATION", "auto").strip().lower()
+        if preemptive_choice in ("on", "1", "yes", "true"):
+            preemptive = True
+        elif preemptive_choice in ("off", "0", "no", "false"):
+            preemptive = False
+        else:
+            preemptive = not is_phone_room
+        logger.info(
+            "Preemptive generation: %s (room=%s, VOICE_PREEMPTIVE_GENERATION=%s)",
+            preemptive,
+            room_name,
+            preemptive_choice,
         )
+        session = _build_agent_session(bundle, preemptive_generation=preemptive)
 
         async def _say_cue(text: str) -> None:
             # add_to_chat_ctx=False: a listener cue is not a turn. With the
@@ -2373,6 +2863,32 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         session.on("user_input_transcribed")(tool_filler.on_user_input_transcribed)
         session.on("conversation_item_added")(tool_filler.on_conversation_item_added)
         session.on("tool_execution_updated")(tool_filler.on_tool_execution_updated)
+
+        # Sarvam Bulbul bills per character and exposes no usage API, so count
+        # exactly what we asked it to speak. Assistant items cover every
+        # utterance including the opening line — the largest single one.
+        if bundle.tts_provider == "sarvam":
+            sarvam_tts_key = os.getenv("SARVAM_TTS_API", "") or os.getenv(
+                "SARVAM_API_KEY", ""
+            )
+            sarvam_tts_model = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
+
+            def _count_tts_characters(event: Any) -> None:
+                try:
+                    item = getattr(event, "item", None)
+                    if item is None or getattr(item, "role", "") != "assistant":
+                        return
+                    text = getattr(item, "text_content", None) or ""
+                    if text:
+                        usage_reporter.record_tts_characters(
+                            text,
+                            model=sarvam_tts_model,
+                            api_key=sarvam_tts_key,
+                        )
+                except Exception:  # noqa: BLE001 - accounting never kills a call
+                    logger.debug("tts character count failed", exc_info=True)
+
+            session.on("conversation_item_added")(_count_tts_characters)
 
         # Announce the REAL pipeline this session is running. "Voice mode is
         # not working" is most often a provider that silently degraded, and
@@ -2433,11 +2949,19 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         telemetry._agent = agent
         await _start_agent_session(
             session, telemetry, ctx.room, agent,
-            room_options=_room_options(),
+            room_options=_room_options(is_phone=is_phone_room),
         )
+        # Subscribe to the call's end BEFORE the greeting: this task owns the
+        # provider pools, so it must stay alive until the caller hangs up (see
+        # _CallEndWatcher).
+        call_end = _CallEndWatcher(ctx, session, room_name)
         # Agent speaks first: the composed opening remains token-substituted,
         # and the caller can barge in while it is being delivered.
         await _speak_opening(session, config, tokens, parsed.contact)
+        await call_end.wait()
+        # Close the session here, while the pools are still open: the framework's
+        # own teardown would otherwise run after our finally closed them.
+        await session.aclose()
     except Exception:
         logger.exception("Unhandled error in voice session (room=%s)", room_name)
         try:
@@ -2462,7 +2986,35 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
                     await backend.post_telemetry(pending)
             except Exception:
                 logger.exception("Final telemetry flush failed")
+        try:
+            # Send whatever quota/character rows are still buffered. The
+            # reporter's client is process-wide (several sessions can run in
+            # one worker), so it is flushed but never closed here.
+            await usage_reporter.flush()
+        except Exception:
+            logger.exception("Final usage flush failed")
         await backend.aclose()
+        bundle_for_close = locals().get("bundle")
+        _closing = (
+            list(getattr(bundle_for_close, "llm_clients", []) or [])
+            if bundle_for_close is not None
+            else []
+        )
+        if _closing:
+            # Visible on purpose: this list is exactly the session's LLM pools, so
+            # an unexpected early close here used to be indistinguishable from a
+            # framework teardown (turns then fail with "client has been closed").
+            logger.info("Closing %d LLM pool(s) at session teardown", len(_closing))
+        for http_client in _closing:
+            try:
+                # The pool refuses to close while the session is live, so the
+                # session-teardown path is the one place that releases it.
+                release = getattr(http_client, "release", None)
+                if callable(release):
+                    release()
+                await http_client.aclose()
+            except Exception:  # noqa: BLE001 - session is already over
+                logger.debug("LLM HTTP client close failed", exc_info=True)
 
 
 async def _degrade(
@@ -2504,6 +3056,22 @@ async def _degrade(
                 await apology_session.aclose()
             except Exception:
                 logger.debug("apology session close failed", exc_info=True)
+        bundle_for_close = locals().get("bundle")
+        _closing = (
+            list(getattr(bundle_for_close, "llm_clients", []) or [])
+            if bundle_for_close is not None
+            else []
+        )
+        if _closing:
+            logger.info("Closing %d LLM pool(s) on the degrade path", len(_closing))
+        for http_client in _closing:
+            try:
+                release = getattr(http_client, "release", None)
+                if callable(release):
+                    release()
+                await http_client.aclose()
+            except Exception:  # noqa: BLE001
+                logger.debug("Apology LLM HTTP client close failed", exc_info=True)
 
     if call_id:
         posted = await backend.post_complete(

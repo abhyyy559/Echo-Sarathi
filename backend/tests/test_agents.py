@@ -52,8 +52,8 @@ def test_list_presets_returns_valid_payloads(client):
     assert resp.status_code == 200, resp.text
     presets = resp.json()
     ids = {p["preset_id"] for p in presets}
-    # Only the attendance preset ships after single-agent cleanup.
-    assert ids == {"absent-student-followup"}
+    # Attendance preset plus its Telugu twin (multilingual support).
+    assert ids == {"absent-student-followup", "absent-student-followup-telugu"}
     for preset in presets:
         assert preset["name"]
         payload = preset["version_payload"]
@@ -63,6 +63,29 @@ def test_list_presets_returns_valid_payloads(client):
         assert payload["extraction_schema"]
         assert payload["disclosure_script"]
         assert payload["escalation_rules"]
+
+
+def test_telugu_preset_routes_stt_and_tts_by_language(client):
+    """The Telugu preset must declare language=te on both voice lanes: the
+    worker promotes STT to Sarvam Saaras (te-IN) and TTS to Bulbul only when
+    the agent's saved language is Indian."""
+    token, _user = register(client)
+    presets = client.get("/api/agents/presets", headers=auth_headers(token)).json()
+    payload = next(
+        p for p in presets if p["preset_id"] == "absent-student-followup-telugu"
+    )["version_payload"]
+    assert payload["voice_settings"]["language"] == "te"
+    assert payload["voice_settings"]["stt_language"] == "te"
+    assert len(payload["question_flow"]) == 4
+    # The authored Telugu strings must survive as speech, not be replaced by
+    # an English schedule. Any Latin script here means the preset was copied
+    # from the English one.
+    summary = (
+        payload["disclosure_script"]
+        + " ".join(step["question"] for step in payload["question_flow"])
+        + payload["system_prompt"]
+    )
+    assert any("\u0c00" <= ch <= "\u0c7f" for ch in summary), "Telugu script missing"
 
 
 def test_absent_student_preset_has_attendance_schema(client):

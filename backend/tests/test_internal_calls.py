@@ -221,6 +221,25 @@ def test_context_blank_version_institution_falls_back_to_organization(client, se
     assert resp.json()["institution_name"] == "Acme University"
 
 
+def test_context_unfilled_placeholder_institution_falls_back_to_organization(
+    client, session_factory
+):
+    """A preset stores "[Institution Name]" for a tenant to fill in; holding it
+    as the institution made the spoken opening read "I am from ."."""
+    token, user = register(client, org_name="CMR College of Engineering & Technology")
+    with session_factory() as db:
+        version = _make_agent_version(
+            db,
+            user["org_id"],
+            {"institution": "  ", "institution_name": "[Institution Name]"},
+        )
+        call_id = _seed_call(db, org_id=user["org_id"], agent_version_id=version.id)
+
+    resp = client.get(f"/internal/calls/{call_id}/context", headers=INTERNAL)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["institution_name"] == "CMR College of Engineering & Technology"
+
+
 def _activity_payload(
     sequence: int = 1,
     state: str = "agent_connecting",

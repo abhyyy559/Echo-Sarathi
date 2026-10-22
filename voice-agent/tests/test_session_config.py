@@ -102,7 +102,9 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
         "preemptive_generation": expected_preemptive,
         "endpointing": {
             "mode": "fixed",
-            "min_delay": 0.4,
+            # 0.3s (lowered from 0.4): the floor is dead time on EVERY turn,
+            # and the semantic detector still catches mid-sentence pauses.
+            "min_delay": 0.3,
             "max_delay": 2.5,
         },
         "interruption": {
@@ -161,3 +163,95 @@ def test_agent_connecting_does_not_delay_session_start() -> None:
     assert posts[0]["sequence"] == 1
     assert posts[0]["event_type"] == "session_pre_start"
     assert posts[0]["source"] == "livekit-1.8.3"
+
+
+class _FakeEmitter:
+    def __init__(self) -> None:
+        self.handlers: dict[str, list[Any]] = {}
+
+    def on(self, event: str):
+        def register(handler: Any) -> Any:
+            self.handlers.setdefault(event, []).append(handler)
+            return handler
+
+        return register
+
+    def off(self, event: str, handler: Any) -> None:
+        self.handlers.get(event, []).remove(handler)
+
+    def emit(self, event: str, *args: Any) -> None:
+        for handler in list(self.handlers.get(event, [])):
+            handler(*args)
+
+
+class _FakeRoom(_FakeEmitter):
+    def __init__(self, participants: dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self.remote_participants = participants if participants is not None else {}
+
+
+class _FakeJobCtx:
+    def __init__(self, room: _FakeRoom) -> None:
+        self.room = room
+
+
+def _watcher(room: _FakeRoom, session: _FakeEmitter):
+    return pipeline_module._CallEndWatcher(
+        _FakeJobCtx(room), session, "phone-1"  # type: ignore[arg-type]
+    )
+
+
+def test_call_end_watcher_holds_the_call_until_the_caller_leaves() -> None:
+    """Regression: run_session used to return (and close the provider pools)
+    right after the opening, so every later turn died with "Cannot send a
+    request, as the client has been closed." while the caller was still on
+    the line (live calls phone-7..phone-10)."""
+
+    async def scenario() -> tuple[str, bool]:
+        room = _FakeRoom({"caller": object()})
+        session = _FakeEmitter()
+        waiter = asyncio.create_task(_watcher(room, session).wait())
+
+        # Someone else leaves (an observer, a second leg): not the end of the call.
+        await asyncio.sleep(0.01)
+        room.emit("participant_disconnected", object())
+        await asyncio.sleep(0.01)
+        still_waiting = not waiter.done()
+
+        room.remote_participants.clear()
+        room.emit("participant_disconnected", object())
+        return await asyncio.wait_for(waiter, timeout=1.0), still_waiting
+
+    reason, still_waiting = asyncio.run(scenario())
+
+    assert reason == "caller left the room"
+    assert still_waiting, "the call ended while the caller was still connected"
+
+
+def test_call_end_watcher_ends_on_room_or_session_close_and_unsubscribes() -> None:
+    async def _end_with(event: str) -> str:
+        room = _FakeRoom({"caller": object()})
+        session = _FakeEmitter()
+        watcher = _watcher(room, session)
+        waiter = asyncio.create_task(watcher.wait())
+        await asyncio.sleep(0.01)
+        (room if event == "disconnected" else session).emit(event, object())
+        reason = await asyncio.wait_for(waiter, timeout=1.0)
+        # Listeners must not outlive the wait: the next job builds fresh objects,
+        # but a stale handler would keep firing on this room until it is dropped.
+        assert all(not handlers for handlers in room.handlers.values())
+        assert all(not handlers for handlers in session.handlers.values())
+        return reason
+
+    assert asyncio.run(_end_with("disconnected")) == "room disconnected"
+    assert asyncio.run(_end_with("close")) == "agent session closed"
+
+
+def test_call_end_watcher_gives_up_at_the_hard_cap(monkeypatch) -> None:
+    """A tab left open must not pin a job (and its pools) forever."""
+    monkeypatch.setattr(pipeline_module, "_MAX_CALL_SECONDS", 0.05)
+
+    async def scenario() -> str:
+        return await asyncio.wait_for(_watcher(_FakeRoom({"caller": object()}), _FakeEmitter()).wait(), timeout=1.0)
+
+    assert asyncio.run(scenario()) == "max call duration reached (0s)"

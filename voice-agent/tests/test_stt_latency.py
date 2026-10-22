@@ -70,6 +70,79 @@ def test_deepgram_stt_gets_300ms_endpointing(monkeypatch) -> None:
     assert _RecorderSTT.last_kwargs["model"] == "nova-3"
 
 
+class _RecorderSarvamSTT:
+    """Stands in for sarvam.STT, capturing constructor kwargs."""
+
+    last_kwargs: dict[str, Any] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).last_kwargs = kwargs
+
+
+def test_telugu_agent_promotes_stt_to_sarvam_saaras(monkeypatch) -> None:
+    """A Telugu agent must be transcribed by Sarvam Saaras (te-IN) even though
+    the platform STT_PROVIDER default is deepgram: Nova-3 has no Telugu
+    streaming model, so leaving it on Deepgram transcribes the caller as
+    English gibberish."""
+    monkeypatch.setenv("SARVAM_TTS_API", "sarvam-key")
+    monkeypatch.setenv("SARVAM_API_KEY", "sarvam-key")
+    monkeypatch.setenv("TTS_PROVIDER", "sarvam")
+    monkeypatch.delenv("STT_LANGUAGE_ROUTING", raising=False)
+    monkeypatch.delenv("SARVAM_STT_MODE", raising=False)
+    monkeypatch.setattr(pipeline_module.sarvam, "STT", _RecorderSarvamSTT)
+    monkeypatch.setattr(pipeline_module.sarvam, "TTS", lambda **kw: object())
+
+    bundle = build_providers(_settings(), {"language": "te"})
+
+    assert bundle.stt_provider == "sarvam"
+    assert _RecorderSarvamSTT.last_kwargs["language"] == "te-IN"
+    assert _RecorderSarvamSTT.last_kwargs["model"] == "saaras:v4"
+    # Code-switched Telugu-English is the norm, not the exception.
+    assert _RecorderSarvamSTT.last_kwargs["mode"] == "codemix"
+
+
+def test_stt_mode_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("SARVAM_TTS_API", "sarvam-key")
+    monkeypatch.setenv("TTS_PROVIDER", "sarvam")
+    monkeypatch.setattr(pipeline_module.sarvam, "STT", _RecorderSarvamSTT)
+    monkeypatch.setattr(pipeline_module.sarvam, "TTS", lambda **kw: object())
+
+    build_providers(_settings(), {"language": "te", "stt_mode": "transcribe"})
+    assert _RecorderSarvamSTT.last_kwargs["mode"] == "transcribe"
+
+    monkeypatch.setenv("SARVAM_STT_MODE", "verbatim")
+    build_providers(_settings(), {"language": "te"})
+    assert _RecorderSarvamSTT.last_kwargs["mode"] == "verbatim"
+
+
+def test_english_agent_keeps_deepgram_stt(monkeypatch) -> None:
+    """English is the locked, faster stack default — routing must not touch it
+    just because a Sarvam key is present."""
+    monkeypatch.setenv("SARVAM_TTS_API", "sarvam-key")
+    monkeypatch.setenv("TTS_PROVIDER", "cartesia")
+    monkeypatch.delenv("STT_LANGUAGE_ROUTING", raising=False)
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", _RecorderSTT)
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+
+    bundle = build_providers(_settings(), {"language": "en"})
+
+    assert bundle.stt_provider == "deepgram"
+    assert _RecorderSTT.last_kwargs["language"] == "en"
+
+
+def test_stt_language_routing_off_is_the_escape_hatch(monkeypatch) -> None:
+    """STT_LANGUAGE_ROUTING=off restores a strict STT_PROVIDER choice, so an
+    operator can force Deepgram (degraded accuracy) for an Indian language."""
+    monkeypatch.setenv("SARVAM_TTS_API", "sarvam-key")
+    monkeypatch.setenv("STT_LANGUAGE_ROUTING", "off")
+    monkeypatch.setenv("TTS_PROVIDER", "sarvam")
+    monkeypatch.setattr(pipeline_module.sarvam, "TTS", lambda **kw: object())
+
+    bundle = build_providers(_settings(), {"language": "te"})
+
+    assert bundle.stt_provider == "deepgram"
+
+
 class _FakeSession:
     """Collects event handlers the way AgentSession.on(...) does."""
 

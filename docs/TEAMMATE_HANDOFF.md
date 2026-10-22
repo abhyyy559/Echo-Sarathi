@@ -1,9 +1,10 @@
 # EchoSarathi - Teammate Handoff for the Faculty Demo
 
 > Verified against the code in this repository on 2026-10-22. The commands
-> and endpoint names below match the code, not the older draft handoff. This
-> is a code-level verification; place one browser call and one phone call
-> before relying on it live.
+> and endpoint names below match the code, not the older draft handoff. A real
+> Vobiz phone call has now been placed end-to-end; the path works, but the
+> measured opening and one rate-limited turn are not yet at the 2.5-3 s
+> target. Read section 6 before claiming demo readiness.
 
 ---
 
@@ -26,7 +27,20 @@ Vobiz in front of faculty.
 > demo: the Vobiz REST/XML test-call path is implemented, and the current
 > `.env` sets `TELEPHONY_PROVIDER=vobiz`. Use the Test Call page or
 > `scripts/test_call.ps1`; do not let the old comment talk you out of the
-> phone path.
+> phone path. `docs/AGENTS.md` also still says "No Telugu/Sarvam (Phase 2)";
+> that line is stale for the current pipeline, which uses Sarvam STT/TTS and
+> language routing. Do not revert the implemented voice path to satisfy it.
+
+### Verification rules
+
+- A code read is not a live test. A unit test is not a phone test.
+- Do not claim the 2.5-3 s target, Telugu, or tool filler unless a real call
+  produced the matching `turn_latency` / `STT |` / `LLM |` / `TTS |` log line.
+- A phone call is verified only when the callee hears audio, the transcript
+  persists on the Calls page, and the worker logs show `Turn detection`,
+  `STT |`, `LLM |`, and `TTS |`.
+- Re-run the browser path first after any voice-pipeline change; it uses the
+  same worker without the Vobiz/tunnel variables.
 
 ---
 
@@ -71,7 +85,7 @@ LIVEKIT_API_SECRET=secret_for_local_dev_only
 # LIVEKIT_API_SECRET=...
 
 # LLM chain (5 Groq keys -> GPT-OSS-120B -> Sarvam overflow)
-GROQ_API_KEY=gsk_...,gsk_...,gsk_...
+GROQ_API_KEY=gsk_...,gsk_...,gsk_...,gsk_...,gsk_...
 GROQ_MODEL=qwen/qwen3.8-27b
 GROQ_SECONDARY_MODEL=openai/gpt-oss-120b
 
@@ -102,6 +116,14 @@ INTERNAL_API_TOKEN=...
 There is **no `VOBIZ_SIP_DOMAIN`, `VOBIZ_USERNAME`, or `VOBIZ_PASSWORD`** in
 this codebase. Do not use `lk sip outbound create`; that is a LiveKit SIP
 workflow, not the Vobiz REST/XML bridge this repo implements.
+
+> **Production TTS config is not pinned:** the live root `.env` used for the
+> verified call sets `TTS_PROVIDER=sarvam` and `SARVAM_TTS_*`, but the repo
+> does not pin `TTS_PROVIDER` or `TTS_LANGUAGE_ROUTING` in the LiveKit Cloud
+> agent secrets. If they are absent there, the worker falls back to the code
+> default (Cartesia / no routing), which is not the voice that was tested. Add
+> `TTS_PROVIDER=sarvam` and `TTS_LANGUAGE_ROUTING=on` to the agent secrets and
+> verify the worker logs before deploying.
 
 ### Secrets: who needs what
 
@@ -340,25 +362,55 @@ the endpoint is `POST /api/test-call` and it requires an `Authorization: Bearer
 
 ## 6. Demo checklist
 
+### Live-call result (2026-10-22)
+
+One real Vobiz call to the first allowlisted number completed with a normal
+callee hangup (52 s, provider cost $0.38). Vobiz REST create -> answer XML ->
+media WebSocket -> LiveKit room -> worker dispatch -> transcript persistence ->
+hangup all worked. The first attempt crashed because `livekit.plugins.sarvam`
+was imported inside the job thread; it is now preloaded on the main thread in
+`voice-agent/app/pipeline.py`. Keep that import at module scope.
+
+Measured `turn_latency` from that call:
+
+| Turn | STT final | LLM first token | TTS first audio | E2E |
+|:---|:---|:---|:---|:---|
+| 1 (first LLM turn) | 75 ms | 8303 ms | 271 ms | 9058 ms |
+| 2 | 81 ms | 513 ms | 205 ms | 1146 ms |
+| 4 (Groq 429) | 879 ms | 12866 ms | 260 ms | 14005 ms |
+
+The first audible greeting started about 11 s after answer: LLM-chain
+construction blocked the event loop for ~2.9 s, then the first Sarvam TTS
+WebSocket handshake took ~5.7 s. Turn 4 hit Groq `429 rate_limit_exceeded`
+(ITPM 7000; 2776 tokens requested) and took 12.8 s to first token. Turn 2 is
+within target; the opening and rate-limit path are not. Do not claim the
+2.5-3 s target until those are fixed.
+
 | Check | Pass criteria | Where to look |
 |:---|:---|:---|
-| **Opening** | One greeting, one institution, one identity question; no second greeting or repeated disclosure | `voice-agent/app/prompting.py::build_opening_line()` |
-| **First response** | Turn decision is capped at 2.5 s; first audio typically 2.5-3 s | `max_delay=2.5` in `voice-agent/app/pipeline.py` |
+| **Opening** | One greeting, one institution, one identity question; no repeated disclosure, no phone number, no blank name. The generic test contact produced `Test Call (+91...)` and a blank parent on the verified call | `voice-agent/app/prompting.py::build_opening_line()` |
+| **First response** | Target ≤2.5-3 s after end of speech. Measured 1.1 s on turn 2, but 9.1 s on turn 1 and 14.0 s on the 429 turn; not signed off | `max_delay=2.5` in `voice-agent/app/pipeline.py` |
 | **Tool turn** | Short spoken filler before silence | `ToolTurnFiller` in `voice-agent/app/pipeline.py`; `tests/test_tool_filler.py` |
-| **No dead air** | No unexplained gap >3 s | `EOU |`, `STT |`, `LLM |`, `TTS |` log lines |
-| **AI disclosure** | First utterance identifies the AI and the recording | `mandatory_disclosure` + prompt rule |
+| **No dead air** | No unexplained gap >3 s. The verified opening had an ~11 s gap after answer; see the live-call note above | `EOU |`, `STT |`, `LLM |`, `TTS |` log lines |
+| **AI disclosure** | First utterance identifies the AI. The config also says "This call is being recorded"; only keep that sentence if recording is actually enabled | `mandatory_disclosure` + prompt rule |
 | **Qwen first** | First LLM call is Qwen | `LLM | ttft=... model=groq/qwen/qwen3.8-27b` |
 | **Telugu** | Telugu agent uses `te-IN` and 8 kHz | `SARVAM_TTS_LANG=te-IN`, `SARVAM_TTS_SAMPLE_RATE=8000` |
 | **Call duration** | Target ~60 s; the prompt has a call budget, but this is not a hard code gate | Call detail page |
 
-The absent-student opening is roughly **35 words**: the mandatory disclosure
+The absent-student opening is roughly **35-40 words**: the mandatory disclosure
 alone is about 19 words, plus the first identity question. Do not apply a
 literal 30-word gate to this config; the important part is that it is one
-greeting, one institution, one question, with no repetition.
+greeting, one institution, one question, with no repetition, no phone number,
+and no blank name. Use the Test Call contact card with real student/parent
+names; the generic `Test Call (+91...)` contact produces the bad opening seen
+on 2026-10-22.
 
-The greeting is **not pre-rendered**. It is deterministic text streamed
-through TTS, which avoids an LLM round-trip and avoids the old
-"Hello... Hello..." monologue. `session.say()` starts the TTS stream directly.
+The greeting is **not LLM-generated**. It is deterministic text built by
+`build_opening_line()` and streamed through TTS with `session.say()`, which
+avoids an LLM round-trip and the old "Hello... Hello..." monologue. It is not
+pre-rendered audio: the first TTS audio still waits for session/provider setup
+and the Sarvam WebSocket handshake. That setup, not the LLM, caused the ~11 s
+opening delay measured on 2026-10-22.
 
 ---
 
@@ -375,6 +427,10 @@ through TTS, which avoids an LLM round-trip and avoids the old
 | Backend uses the "wrong" model | Root `.env` wins over `backend/.env` | Edit the root `.env`; do not maintain a second model config |
 | Worker cannot reach LiveKit | Local worker is using `ws://livekit:7880` | Use the compose worker, or set `LIVEKIT_URL_INTERNAL=ws://localhost:7880` and stop the compose worker |
 | Two agents answer / jobs are flaky | Compose worker plus a second local worker | Stop one; use only the compose worker for the demo |
+| `/api/health` shows `voice_agent: "unknown"` while the worker is running | The backend does not maintain a live worker heartbeat; this field is not a readiness probe | Check the worker log for `registered worker` and job dispatch; do not use this field to decide readiness |
+| First call after worker restart fails with `Plugins must be registered on the main thread` | `livekit.plugins.sarvam` was imported lazily inside the job thread | Keep `sarvam` in the module-level `from livekit.plugins import ...` in `pipeline.py`; restart the worker |
+| Greeting starts ~10 s after answer | LLM client construction blocks the loop and the first Sarvam TTS WebSocket is cold | Share one HTTP client/SSL context across the chain; prewarm Sarvam TTS; see the §6 live-call note |
+| Groq `429 rate_limit_exceeded` | Groq org ITPM 7000 and a ~2776-token request; the five Qwen keys can share the org quota | Reduce prompt size or skip remaining Qwen keys on 429 and go to GPT-OSS/Sarvam; do not just retry the same org |
 | `docker compose` says no config file | Wrong path | Use `-f infra\docker-compose.yml` or `scripts\dev-up.ps1` |
 
 Useful log command:
@@ -424,5 +480,7 @@ TTS | ttfb=...
 > the Test Call page or `scripts\test_call.ps1 -To +91...`. Vobiz is configured
 > with `VOBIZ_AUTH_ID`/`VOBIZ_AUTH_TOKEN`/`VOBIZ_PHONE_NUMBER`; there is no SIP
 > trunk or `make_call.py`. The worker is already part of compose-do not start a
-> second one. Check `docker compose ... logs -f voice-agent` for
+> second one. The verified phone call worked, but first-greeting startup was
+> ~11 s and one Groq 429 turn was ~14 s; do not claim the 2.5-3 s target until
+> those are fixed. Check `docker compose ... logs -f voice-agent` for
 > `EOU |`, `STT |`, `LLM |`, and `TTS |` lines if anything is slow.

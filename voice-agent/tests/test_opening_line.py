@@ -33,7 +33,7 @@ def test_opening_line_lead_card() -> None:
 
 def test_opening_line_no_names_no_invention() -> None:
     out = build_opening_line(CONFIG, _tokens({}), {})
-    assert "Hello" in out
+    assert "May I know who I'm speaking with?" in out
     assert "[" not in out and "]" not in out
 
 
@@ -44,10 +44,80 @@ def test_opening_line_empty_without_disclosure() -> None:
 def test_opening_line_uses_short_sentences_for_tts_clarity() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(CONFIG, _tokens(contact), contact)
-    assert "Hello Suresh Kumar." in out
+    # CONFIG's disclosure already says "Hi", so the greeting contributes only
+    # the name: short standalone sentences, clean prosody for the TTS engine.
+    assert "Suresh Kumar." in out
+    assert "Hello Suresh Kumar." not in out
     # Disclosure already says who/where — the greeting must not repeat it.
     assert "This is an AI assistant calling from Demo School." not in out
+    # CONFIG's question already names the student, so "I'm calling about
+    # Aarav Kumar." would be a second mention of the same name right before the
+    # question. The question is the mention that survives.
+    assert "I'm calling about Aarav Kumar." not in out
+    assert "Why was Aarav Kumar absent?" in out
+
+
+def test_opening_line_keeps_the_about_clause_when_the_question_is_generic() -> None:
+    """A question that does not name the student leaves the purpose unstated —
+    then the "calling about X" clause is the only thing that says why we rang,
+    so it must stay."""
+    config = {
+        "disclosure_script": "Hi, this is [Agent Name] calling from [Company Name].",
+        "question_flow": [{"question": "Why were you absent today?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+
     assert "I'm calling about Aarav Kumar." in out
+    assert out.count("Aarav Kumar") == 1
+
+
+def test_opening_line_drops_the_greeting_the_disclosure_already_spoke() -> None:
+    """The authored disclosure opens with a greeting; the generated one must go.
+
+    Regression (call 15): the Telugu disclosure starts "నమస్కారం, నేను [Institution
+    Name] నుండి AI అసిస్టెంట్..." and the greeting prefixed another "నమస్కారం", so
+    every call opened with two welcomes back to back — callers read it as a
+    stuttering, broken agent.
+    """
+    config = {
+        "voice_settings": {"language": "te"},
+        "disclosure_script": (
+            "నమస్కారం, నేను [Institution Name] నుండి AI అసిస్టెంట్. "
+            "ఈ కాల్ రికార్డ్ అవుతుంది."
+        ),
+        "question_flow": [{"question": "[Student Name] ఎందుకు గైర్హాజరయ్యారు?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+
+    assert out.count("నమస్కారం") == 1, out
+    assert "Suresh Kumar." in out
+    # The question names the student, so the "calling about X" clause is dropped
+    # rather than naming the same child twice in a row.
+    assert "గురించి కాల్ చేస్తున్నాను" not in out
+    assert "ఎందుకు గైర్హాజరయ్యారు?" in out
+    assert out.count("Aarav Kumar") == 1, out
+
+
+def test_opening_line_drops_latin_greeting_duplicate() -> None:
+    """Latin greetings match on word boundaries: "Hi," in the disclosure counts,
+    but the "hi" inside "this" must not suppress the real greeting."""
+    config = {
+        "disclosure_script": "Hi, this is an AI assistant calling.",
+        "question_flow": [{"question": "Why was [Student Name] absent?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+    assert "Hello" not in out
+    assert "Suresh Kumar." in out
+
+    bare = {
+        "disclosure_script": "This is an AI assistant calling.",
+        "question_flow": [{"question": "Why was [Student Name] absent?"}],
+    }
+    out = build_opening_line(bare, _tokens(contact), contact)
+    assert "Hello Suresh Kumar." in out
 
 
 def test_opening_line_repeats_intro_when_disclosure_is_bare() -> None:
@@ -58,6 +128,109 @@ def test_opening_line_repeats_intro_when_disclosure_is_bare() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(config, _tokens(contact), contact)
     assert "This is an AI assistant calling from Demo School." in out
+
+
+def test_opening_line_never_names_two_institutions() -> None:
+    """A disclosure that already says "calling from X" must not then add the
+    token institution Y.
+
+    Regression: the seeded disclosure names the college verbatim while the call
+    context supplied a different institution, so the greeting named BOTH
+    ("...calling from Acme College... Hello Suresh Kumar. Calling from Demo
+    School."). Confusing for the callee and ~1s of extra TTS at the most
+    latency-sensitive moment.
+    """
+    config = {
+        "disclosure_script": "Hi, this is an AI assistant calling from Acme College.",
+        "question_flow": [{"question": "Why was [Student Name] absent?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact, "Demo School"), contact)
+    assert "Demo School" not in out
+    assert "Acme College" in out
+
+
+def test_opening_line_telugu_agent_speaks_no_english_sentences() -> None:
+    """A Telugu agent's generated greeting must be Telugu too.
+
+    Regression: the greeting fragments were hardcoded English, so a Telugu
+    call opened the authored Telugu disclosure with "Hello Suresh Kumar. This
+    is an AI assistant calling from Demo School. I'm calling about Aarav
+    Kumar." — an English sandwich around Telugu speech.
+    """
+    config = {
+        "voice_settings": {"language": "te"},
+        "disclosure_script": "[Institution Name] నుండి AI అసిస్టెంట్ మాట్లాడుతున్నాను.",
+        "question_flow": [{"question": "[Student Name] ఎందుకు గైర్హాజరయ్యారు?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+
+    assert "నమస్కారం" in out
+    assert "Suresh Kumar" in out and "Aarav Kumar" in out
+    # The Telugu connective phrases are Telugu, and no English "calling about"
+    # syntax leaks in when the redundant clause is dropped.
+    assert "I'm calling about" not in out
+    # The Telugu question survives; no English greeting syntax leaks in.
+    assert "ఎందుకు గైర్హాజరయ్యారు?" in out
+    assert "Hello" not in out
+    assert "I'm calling about" not in out
+    assert "[" not in out and "]" not in out
+
+
+def test_opening_line_telugu_without_names_asks_in_telugu() -> None:
+    config = {
+        "voice_settings": {"language": "te"},
+        "disclosure_script": "[Institution Name] నుండి AI అసిస్టెంట్.",
+        "question_flow": [],
+    }
+    out = build_opening_line(config, _tokens({}), {})
+    assert "మీరు ఎవరో తెలుసుకోవచ్చా?" in out
+
+
+def test_opening_line_telugu_disclosure_that_names_the_ai_drops_the_intro() -> None:
+    """A Telugu disclosure that already introduces the assistant must not be
+    followed by a generated English intro.
+
+    Regression: ``[Agent Name]`` falls back to the English default "an AI
+    assistant", which was spoken verbatim inside Telugu speech
+    ("...నేను an AI assistant మాట్లాడుతున్నాను.") — an English sandwich, and
+    redundant with the authored disclosure.
+    """
+    config = {
+        "voice_settings": {"language": "te"},
+        "disclosure_script": "[Institution Name] నుండి AI అసిస్టెంట్ మాట్లాడుతున్నాను.",
+        "question_flow": [{"question": "[Student Name] ఎందుకు గైర్హాజరయ్యారు?"}],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact), contact)
+
+    assert "an AI assistant" not in out
+    assert "This is" not in out
+    assert "నేను ఒక AI అసిస్టెంట్ మాట్లాడుతున్నాను" not in out
+    # The authored disclosure and the localized greeting/question still stand.
+    assert "AI అసిస్టెంట్ మాట్లాడుతున్నాను" in out
+    assert "నమస్కారం Suresh Kumar." in out
+    assert "[" not in out and "]" not in out
+
+
+def test_opening_line_telugu_unwritten_agent_name_uses_localized_phrase() -> None:
+    """Without an authored ``[Agent Name]`` the Telugu opening must introduce the
+    caller with the Telugu phrase, not the English token default."""
+    config = {
+        "voice_settings": {"language": "te"},
+        # Says nothing about who is calling, so the generated intro must appear.
+        "disclosure_script": "ఈ కాల్ రికార్డ్ అవుతుంది.",
+        "question_flow": [],
+    }
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    out = build_opening_line(config, _tokens(contact, "CMR College"), contact)
+
+    assert "ఒక AI అసిస్టెంట్" in out
+    assert "నేను ఒక AI అసిస్టెంట్ మాట్లాడుతున్నాను" in out
+    assert "an AI assistant" not in out
+    assert "CMR College నుండి" in out
+    assert "[" not in out and "]" not in out
 
 
 class _FakeSession:

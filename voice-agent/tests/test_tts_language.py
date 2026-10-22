@@ -111,3 +111,44 @@ def test_language_routing_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert bundle.tts_provider == "cartesia"
     assert cartesia_calls
+
+
+def _record_sarvam(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    class _SarvamRecorder:
+        def __init__(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(sarvam, "TTS", _SarvamRecorder)
+    return calls
+
+
+def test_phone_leg_asks_bulbul_for_mulaw(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A PSTN leg IS 8 kHz G.711, so the call path carries no mp3 layer.
+
+    mp3 at 8 kHz is an MPEG-2.5 mode with audible grain, and it costs an
+    encoder round trip plus a decoder per chunk (latency) on every call.
+    """
+    calls = _record_sarvam(monkeypatch)
+    build_providers(_settings(), {"language": "te"}, is_phone=True)
+
+    assert calls[0]["output_audio_codec"] == "mulaw"
+    assert calls[0]["speech_sample_rate"] == 8000
+
+
+def test_browser_room_keeps_mp3(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Narrowband G.711 would sound muffled in a browser room."""
+    calls = _record_sarvam(monkeypatch)
+    build_providers(_settings(), {"language": "te"})
+
+    assert calls[0]["output_audio_codec"] == "mp3"
+
+
+def test_tts_codec_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SARVAM_TTS_CODEC", "linear16")
+    calls = _record_sarvam(monkeypatch)
+    build_providers(_settings(), {"language": "te"}, is_phone=True)
+
+    assert calls[0]["output_audio_codec"] == "linear16"
+    assert calls[0]["speech_sample_rate"] == 8000

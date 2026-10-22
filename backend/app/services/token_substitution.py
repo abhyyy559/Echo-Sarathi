@@ -26,6 +26,18 @@ _NAME_KEYS = ("student_name", "name", "contact_name", "full_name", "lead_name")
 _PARENT_KEYS = ("parent_name", "parent", "guardian", "contact_person")
 
 
+def is_bracket_placeholder(value: Any) -> bool:
+    """True for an unfilled template token such as ``[Institution Name]``.
+
+    Presets ship bracket tokens for a tenant to fill in. One stored verbatim in
+    ``company_context`` is NOT a name: it used to win the institution lookup and
+    reach the call, where the worker strips the brackets and the caller hears a
+    hole ("I am from ." / "నేను నుండి AI అసిస్టెంట్").
+    """
+    text = str(value or "").strip()
+    return text.startswith("[") and text.endswith("]") and len(text) > 2
+
+
 def _first(contact: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     for key in keys:
         value = str(contact.get(key) or "").strip()

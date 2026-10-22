@@ -288,3 +288,26 @@ def test_room_options_none_without_hush() -> None:
     assert "livekit.plugins.hush" not in sys.modules
     # Local test venvs don't install hush: plain start, no crash.
     assert pipeline_module._room_options() is None
+
+
+def test_phone_room_pins_agent_output_to_8khz() -> None:
+    """A PSTN leg is 8 kHz G.711: publishing at 24 kHz made LiveKit upsample
+    and the media bridge decimate straight back, two resampler passes for
+    narrowband audio."""
+    import app.pipeline as pipeline_module
+
+    opts = pipeline_module._room_options(is_phone=True)
+    assert opts is not None
+    assert opts.audio_output.sample_rate == 8000
+
+
+def test_browser_room_keeps_default_output_rate() -> None:
+    """Only phone legs are repinned: RoomOptions leaves audio_output unset so
+    the SDK's own default applies to browser rooms."""
+    import app.pipeline as pipeline_module
+    from livekit.agents.types import NOT_GIVEN
+
+    opts = pipeline_module._room_options()
+    if opts is None:  # no noise-cancellation plugin in this venv
+        return
+    assert opts.audio_output is NOT_GIVEN

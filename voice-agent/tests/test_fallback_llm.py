@@ -91,11 +91,10 @@ class _FailingStream(_PrimaryStream):
         raise exc
 
 
-def test_402_marks_member_down_instead_of_killing_the_turn() -> None:
-    """Live gap: a zero-balance DeepSeek answers 402, which was not in the
-    retryable set, so voice raised it raw - the turn died in silence with a
-    working pool behind it. Now 402 cools the member down and the session's
-    retry serves the next member."""
+def test_402_marks_member_down_and_fails_over_in_turn() -> None:
+    """A zero-balance provider (402) cools down and the next member serves the
+    SAME turn. Before this, the turn died in silence with a working pool behind
+    it; the old test only expected the next turn to recover."""
     import time
 
     async def scenario() -> None:
@@ -106,11 +105,11 @@ def test_402_marks_member_down_instead_of_killing_the_turn() -> None:
         stream = _FallbackStream(owner, failing, 0)
         try:
             await stream.__anext__()
-            raise AssertionError("expected the 402 to propagate after cooldown")
-        except RuntimeError:
+            raise AssertionError("expected the failover stream to end")
+        except StopAsyncIteration:
             pass
         assert owner._down_until[0] > time.monotonic()
-        # The session retry now lands on the next member, not the dead one.
+        assert stream._member_index == 1
         retry = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
         assert isinstance(retry, _FallbackStream)
         assert retry._member_index == 1

@@ -129,9 +129,11 @@ def test_chain_serves_next_member_after_retryable_failure() -> None:
         assert first._member_index == 0
         try:
             await first.__anext__()
-            raise AssertionError("expected the 429 to propagate")
-        except _RateLimitedError:
+        except StopAsyncIteration:
             pass
+        # The proxy failed over INSIDE the turn: no 13s of dead air waiting
+        # for the session's next chat() call.
+        assert first._member_index == 1
 
         second = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
         assert isinstance(second, _FallbackStream)
@@ -190,13 +192,13 @@ def test_per_key_rpd_429_leaves_siblings_usable() -> None:
         stream = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
         try:
             await stream.__anext__()
-            raise AssertionError("expected the RPD 429 to propagate")
-        except _RpdLimitedError:
+        except StopAsyncIteration:
             pass
 
         now = time.monotonic()
         assert owner._down_until[0] > now
         assert owner._down_until[1] == 0.0
+        assert stream._member_index == 1
         nxt = owner.chat(chat_ctx=llm.ChatContext.empty(), tools=[])
         assert isinstance(nxt, _FallbackStream)
         assert nxt._member_index == 1
@@ -615,4 +617,69 @@ def test_norm_institution_ignores_ampersand_variant() -> None:
     tokens = {"[Institution Name]": "CMR College of Engineering & Technology"}
     opening = build_opening_line(config, tokens, {})
     assert opening.count("CMR College") == 1, f"college repeated: {opening}"
+
+
+def test_quota_hook_is_awaitable_by_httpx(monkeypatch) -> None:
+    """The response hook must survive ``await hook(response)``.
+
+    httpx's AsyncClient awaits EVERY response hook unconditionally, so a plain
+    function raised ``TypeError: object NoneType can't be used in 'await'
+    expression`` inside ``send()``. openai wrapped that in APIConnectionError,
+    so EVERY LLM request failed, the whole 8-member chain burned on each turn
+    and the caller heard silence (live calls phone-7 and phone-8). Driving the
+    hook through a real httpx client is the only way to catch it - calling
+    ``record_llm_response`` directly always passed.
+    """
+    import httpx
+
+    from app import usage_reporter
+
+    seen: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        usage_reporter,
+        "record_llm_response",
+        lambda provider, api_key, model, response: seen.append((provider, api_key, model)),
+    )
+
+    hook = pipeline_module._quota_hook("groq", "gsk_test", "qwen/qwen3.8-27b")
+    assert asyncio.iscoroutinefunction(hook), "httpx awaits response hooks; must be async"
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"x-ratelimit-remaining-tokens": "7000"},
+            json={"ok": True},
+        )
+    )
+
+    async def _call() -> int:
+        async with httpx.AsyncClient(
+            transport=transport, event_hooks={"response": [hook]}
+        ) as client:
+            resp = await client.get("https://api.example.com/v1/chat/completions")
+            return resp.status_code
+
+    assert asyncio.run(_call()) == 200
+    assert seen == [("groq", "gsk_test", "qwen/qwen3.8-27b")]
+
+
+def test_llm_pool_survives_a_member_failure_and_closes_once_released() -> None:
+    """A live pool must refuse teardown, then close once the session releases it."""
+    from app.pipeline import _new_llm_http_client
+
+    pool = _new_llm_http_client()
+
+    async def _live_close() -> bool:
+        await pool.aclose()
+        return pool.is_closed
+
+    # Mid-call close attempts are refused, so the next turn still has its pool.
+    assert asyncio.run(_live_close()) is False
+
+    async def _teardown() -> bool:
+        pool.release()
+        await pool.aclose()
+        return pool.is_closed
+
+    assert asyncio.run(_teardown()) is True
 

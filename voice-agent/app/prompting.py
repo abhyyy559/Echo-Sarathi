@@ -143,7 +143,7 @@ def build_token_map(
     ``[Expected Return Date]`` has no data source, so it maps to "" (dropped).
 
     ``agent_name`` fills ``[Agent Name]``; empty falls back to
-    "an AI assistant" so disclosures never dangle.
+    ``AI_ASSISTANT_FALLBACK`` so disclosures never dangle.
     """
     ctx = context if isinstance(context, Mapping) else {}
     ctx_contact = ctx.get("contact") if isinstance(ctx.get("contact"), Mapping) else {}
@@ -154,7 +154,7 @@ def build_token_map(
         ctx_contact,
         keys=("parent_name", "parent", "guardian", "contact_person"),
     )
-    who = str(agent_name or "").strip() or "an AI assistant"
+    who = str(agent_name or "").strip() or AI_ASSISTANT_FALLBACK
     return {
         "[Institution Name]": institution,
         "[Company Name]": institution,
@@ -199,6 +199,88 @@ def _norm_institution(text: str) -> str:
     return _DOUBLE_SPACE_RE.sub(" ", out).strip()
 
 
+#: Spoken ``who`` when a version has no ``[Agent Name]`` value. A module
+#: constant (not an inline string) so ``build_opening_line`` can tell "nothing
+#: authored" apart from a real name and use the LOCALIZED phrasing instead: a
+#: Telugu disclosure followed by the English words "an AI assistant" is the
+#: exact English sandwich localization is meant to avoid.
+AI_ASSISTANT_FALLBACK = "an AI assistant"
+
+#: Word-boundary (not substring) match on the Latin "AI": disclosures that
+#: introduce the assistant themselves ("... నుండి AI అసిస్టెంట్", "...this is an AI
+#: assistant calling from X") already said what the generated intro would
+#: repeat. \b keeps "said"/"email"/"may" from matching.
+_AI_MENTION_RE = re.compile(r"\bai\b", re.IGNORECASE)
+
+#: Greeting words across the supported languages. Most authored disclosure
+#: scripts open with one ("నమస్కారం, నేను [Institution Name] నుండి AI అసిస్టెంట్..."),
+#: and the generated greeting prefixes another, so every call started with two
+#: welcomes back to back — callers read that as a stuttering agent. Latin
+#: greetings match on word boundaries so "hi" cannot fire inside "this".
+_GREETING_WORDS: tuple[str, ...] = (
+    "hello", "hi", "namaste", "namaskar", "namaskaram", "vanakkam",
+    "నమస్కారం", "నమస్తే", "హలో",
+    "नमस्ते", "नमस्कार", "हैलो", "हेलो",
+)
+_GREETING_RE = re.compile(
+    "|".join(
+        rf"\b{re.escape(word)}\b" if word.isascii() else re.escape(word)
+        for word in _GREETING_WORDS
+    ),
+    re.IGNORECASE,
+)
+
+
+#: Connective phrases the platform generates around the AUTHORED disclosure and
+#: first flow question. Only these few fragments need localizing — everything
+#: else in the opening is authored by the agent creator in the target language.
+#: Proper nouns (institution, names) stay verbatim inside the local sentence,
+#: which is exactly how Indian code-switched speech sounds ("Demo School నుండి
+#: కాల్ చేస్తున్నాను").
+_OPENING_PHRASES: dict[str, dict[str, str]] = {
+    "en": {
+        "hello": "Hello",
+        "ai_assistant": "an AI assistant",
+        "self_intro": "This is {who} calling",
+        "from_suffix": " from {institution}",
+        "from_standalone": "Calling from {institution}.",
+        "about": " I'm calling about {subject}.",
+        "ask_who": "May I know who I'm speaking with?",
+    },
+    "te": {
+        "hello": "నమస్కారం",
+        "ai_assistant": "ఒక AI అసిస్టెంట్",
+        "self_intro": "నేను {who} మాట్లాడుతున్నాను",
+        "from_suffix": " {institution} నుండి",
+        "from_standalone": "{institution} నుండి కాల్ చేస్తున్నాను.",
+        "about": " {subject} గురించి కాల్ చేస్తున్నాను.",
+        "ask_who": "మీరు ఎవరో తెలుసుకోవచ్చా?",
+    },
+    "hi": {
+        "hello": "नमस्ते",
+        "ai_assistant": "एक AI असिस्टेंट",
+        "self_intro": "मैं {who} बोल रहा हूँ",
+        "from_suffix": " {institution} से",
+        "from_standalone": "{institution} से कॉल कर रहा हूँ।",
+        "about": " {subject} के बारे में कॉल कर रहा हूँ।",
+        "ask_who": "क्या मैं जान सकता हूँ कि आप कौन हैं?",
+    },
+}
+
+
+def _opening_language(config: Mapping[str, Any]) -> str:
+    """Agent language code from ``voice_settings`` (defaults to English)."""
+    voice_settings = config.get("voice_settings") if isinstance(config, Mapping) else {}
+    if isinstance(voice_settings, Mapping):
+        return str(voice_settings.get("language") or "en").strip().lower() or "en"
+    return "en"
+
+
+def _opening_phrases(config: Mapping[str, Any]) -> dict[str, str]:
+    """Localized connective phrases for the generated part of the opening."""
+    return _OPENING_PHRASES.get(_opening_language(config), _OPENING_PHRASES["en"])
+
+
 def build_opening_line(
     config: Mapping[str, Any],
     tokens: Optional[Mapping[str, str]] = None,
@@ -211,6 +293,7 @@ def build_opening_line(
     back to the prompt-driven auto-turn.
     """
     tok = dict(tokens or {})
+    phrases = _opening_phrases(config)
     disclosure = apply_token_substitution(_disclosure_text(config), tok)
     if not disclosure:
         return ""
@@ -224,41 +307,38 @@ def build_opening_line(
     # the duplicate.
     if institution and _norm_institution(institution) in _norm_institution(disclosure):
         institution = ""
-    who = tok.get("[Agent Name]", "") or "an AI assistant"
+    # A disclosure that already says "calling from X" has introduced the
+    # caller's origin. When the contact card / call context carries a DIFFERENT
+    # institution name than the authored script, the opening used to name both
+    # ("...calling from CMR College... Hello Ravi. Calling from Demo
+    # University.") - confusing for the callee and ~1s of extra TTS at the most
+    # latency-sensitive moment. The authored name wins; drop the token one.
+    if institution and "calling from" in _norm_institution(disclosure):
+        institution = ""
+    who = tok.get("[Agent Name]", "").strip()
+    if not who or who == AI_ASSISTANT_FALLBACK:
+        # No [Agent Name] was authored: speak the LOCALIZED assistant phrase
+        # ("ఒక AI అసిస్టెంట్"), never the English token default.
+        who = phrases["ai_assistant"]
     # Redundancy elimination: the disclosure usually already says who is
     # calling and from where — repeating either doubles TTS seconds for zero
     # information (callers experience it as the agent "taking forever").
     # The greeting carries only genuinely new information.
-    if who not in disclosure:
-        intro = f"This is {who} calling"
+    stated_assistant = bool(_AI_MENTION_RE.search(disclosure))
+    if who not in disclosure and not stated_assistant:
+        intro = phrases["self_intro"].format(who=who)
         if institution:
-            intro += f" from {institution}"
+            intro += phrases["from_suffix"].format(institution=institution)
         intro += "."
     elif institution:
-        intro = f"Calling from {institution}."
+        intro = phrases["from_standalone"].format(institution=institution)
     else:
         intro = ""
     # Short standalone sentences (not one long clause): the TTS engine
     # synthesizes sentence by sentence, so names get clean prosodic breaks
     # and are pronounced far more clearly than mid-sentence.
-    if parent and subject and parent != subject:
-        greet = f"Hello {parent}."
-        if intro:
-            greet += f" {intro}"
-        greet += f" I'm calling about {subject}."
-    elif subject:
-        greet = f"Hello {subject}."
-        if intro:
-            greet += f" {intro}"
-    elif intro:
-        greet = f"Hello. {intro}"
-    else:
-        greet = "Hello."
-    if not parent and not subject:
-        # No names anywhere on this record: every name-bearing flow question
-        # would speak dangling grammar ("Am I speaking with , parent of ,").
-        # Ask plainly instead of shipping a broken sentence.
-        return scrub_speech_text(f"{disclosure} {greet} May I know who I'm speaking with?")
+    # The greeting is dropped when the authored disclosure already opens with
+    # one, otherwise the caller hears "నమస్కారం, ... నమస్కారం ..." (two welcomes).
     first_question = ""
     flow = config.get("question_flow") if isinstance(config, Mapping) else []
     if isinstance(flow, list):
@@ -267,6 +347,38 @@ def build_opening_line(
             if text_value:
                 first_question = text_value
                 break
+    hello = "" if _GREETING_RE.search(disclosure) else phrases["hello"]
+    # The flow question normally names the student too ("...the reason for
+    # Demo Student's absence today?"). Saying "I'm calling about Demo Student."
+    # immediately before it repeats the same name for zero information, at the
+    # exact moment the caller is waiting for their turn to speak. Keep one
+    # mention and drop the other; the question is the one that must survive.
+    named_in_question = bool(
+        subject
+        and first_question
+        and subject.casefold() in first_question.casefold()
+    )
+    about = "" if named_in_question else phrases["about"].format(subject=subject)
+    if parent and subject and parent != subject:
+        greet = f"{hello} {parent}.".strip()
+        if intro:
+            greet += f" {intro}"
+        greet += about
+    elif subject:
+        greet = f"{hello} {subject}.".strip()
+        if intro:
+            greet += f" {intro}"
+    elif intro:
+        greet = f"{hello}. {intro}" if hello else intro
+    else:
+        greet = f"{hello}." if hello else ""
+    if not parent and not subject:
+        # No names anywhere on this record: every name-bearing flow question
+        # would speak dangling grammar ("Am I speaking with , parent of ,").
+        # Ask plainly instead of shipping a broken sentence.
+        return scrub_speech_text(
+            f"{disclosure} {greet} {phrases['ask_who']}"
+        )
     # Verify-style openers address the parent BY NAME ("Am I speaking with
     # Suresh, parent of Aarav...?"): prepending the standard greeting would
     # repeat the same name twice and push the opening past ~20 seconds of
