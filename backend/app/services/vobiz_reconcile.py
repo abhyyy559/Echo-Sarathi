@@ -21,7 +21,9 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL = ("completed", "failed", "canceled", "no_answer", "busy")
+TERMINAL_CALL_STATUSES = frozenset(
+    {"completed", "failed", "canceled", "no_answer", "busy"}
+)
 
 
 def map_vobiz_outcome(body: Mapping[str, Any]) -> str:
@@ -114,9 +116,9 @@ def apply_provider_status(
         maybe_complete_campaign,
     )
 
-    if status not in _TERMINAL:
+    if status not in TERMINAL_CALL_STATUSES:
         return str(call.status)
-    if call.status in _TERMINAL:
+    if call.status in TERMINAL_CALL_STATUSES:
         return str(call.status)  # never regress a final state
     call.status = status
     if call.ended_at is None:
@@ -150,7 +152,7 @@ def reconcile_vobiz_call(db: Session, settings: Any, call: Any, now: Any) -> str
     """
     if call.kind != "phone" or not call.provider_call_id:
         return str(call.status)
-    if call.status in _TERMINAL:
+    if call.status in TERMINAL_CALL_STATUSES:
         return str(call.status)
     body = fetch_vobiz_call(settings, str(call.provider_call_id))
     if not body:

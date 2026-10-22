@@ -37,6 +37,8 @@ from app.services.media_bridge import (
 from app.services.twilio_bridge import build_phone_room_token
 from app.services.vobiz_bridge import build_play_audio
 from app.services.vobiz_bridge import parse_vobiz_event as _parse_bridge_event
+from app.services.vobiz_reconcile import TERMINAL_CALL_STATUSES
+from app.services.vobiz_reconcile import map_vobiz_outcome
 from app.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,49 @@ VOBIZ_STATUS_MAP = {
     # Plivo-style hangup callback (Event=Hangup) â€” the call is over either way.
     "hangup": "completed",
 }
+
+
+def _webhook_terminal(payload: dict[str, Any], call_status: str) -> str:
+    """The provider's terminal outcome in a webhook payload, or ``""``.
+
+    Vobiz puts status fields on the *answer* webhook too: a refused leg arrives
+    as ``CallStatus=busy`` with ``HangupCause=USER_BUSY`` exactly where we used
+    to stamp ``in_progress``, so the call looked live, the agent never joined,
+    and it held the campaign's one dial slot until the sweeper ran. ``ringing``
+    and ``in-progress`` are in-flight and return ``""``; so does a payload with
+    no terminal evidence at all, because a webhook must never invent one.
+    """
+    raw = str(
+        payload.get("CallStatus")
+        or payload.get("callStatus")
+        or payload.get("status")
+        or payload.get("Status")
+        or payload.get("Event")
+        or payload.get("event")
+        or ""
+    ).lower()
+    mapped = VOBIZ_STATUS_MAP.get(raw, "")
+    if mapped in ("no_answer", "busy", "failed", "canceled"):
+        return mapped
+    if mapped == "completed":
+        # A bare Event=Hangup proves only that the leg ended, not that anyone
+        # spoke: a call still queued/ringing ended before answer.
+        if raw == "hangup" and call_status != "in_progress":
+            return "no_answer"
+        return "completed"
+    if not mapped:
+        cause = str(payload.get("HangupCause") or payload.get("EndCause") or "")
+        if cause:
+            outcome = map_vobiz_outcome(
+                {
+                    "hangup_cause": cause,
+                    "bill_duration": payload.get("BillDuration"),
+                    "answer_time": payload.get("AnswerTime"),
+                }
+            )
+            if outcome in TERMINAL_CALL_STATUSES:
+                return outcome
+    return ""
 
 
 def _build_answer_xml(
@@ -99,6 +144,11 @@ def _build_answer_xml(
         "</Stream>\n"
         "</Response>"
     )
+
+
+#: Returned instead of the media bridge when the provider already told us the
+#: leg is over: bridging a refused call only rings a dead line.
+_HANGUP_XML = '<?xml version="1.0" encoding="UTF-8"?>\n<Response><Hangup/></Response>'
 
 
 async def _payload_dict(request: Request) -> dict[str, Any]:
@@ -592,6 +642,36 @@ async def vobiz_answer(
         raise HTTPException(status_code=404, detail="unknown call_id")
 
     now = utcnow()
+    # Record the raw payload first: this webhook carries Vobiz's status fields,
+    # and the log is how we confirm their exact names.
+    log_call_event(db, call.id, "vobiz_answer", payload)
+    settings = request.app.state.settings
+
+    terminal = _webhook_terminal(payload, call.status)
+    if not terminal and call.status in TERMINAL_CALL_STATUSES:
+        # A status webhook or the sweeper already closed this leg; a late XML
+        # request must not reopen it.
+        terminal = call.status
+    if terminal:
+        if call.status not in TERMINAL_CALL_STATUSES:
+            billed = None
+            try:
+                billed = max(0.0, float(payload.get("BillDuration")))
+            except (TypeError, ValueError):
+                billed = None
+            contact = db.get(Contact, call.contact_id)
+            if contact is not None:
+                end_call(
+                    db, call, contact, terminal, settings,
+                    now=now, duration_seconds=billed,
+                )
+            else:
+                call.status = terminal
+                call.ended_at = now
+            log_call_event(db, call.id, f"vobiz_answer_terminal:{terminal}", {})
+        db.commit()
+        return Response(content=_HANGUP_XML, media_type=XML_MEDIA_TYPE)
+
     if call.status not in ("in_progress", "completed"):
         call.status = "in_progress"
     if call.answered_at is None:
@@ -599,12 +679,8 @@ async def vobiz_answer(
     contact = db.get(Contact, call.contact_id)
     if contact is not None and contact.status != "completed":
         contact.status = "calling"
-    # Record the raw payload: first live call reveals Vobiz's exact field
-    # names, and this log is how we confirm them.
-    log_call_event(db, call.id, "vobiz_answer", payload)
     db.commit()
 
-    settings = request.app.state.settings
     stream_status_url = f"{settings.public_base_url.rstrip('/')}/vobiz/stream-status"
     from app.services.media_bridge import build_bridge_token
 
@@ -701,14 +777,22 @@ async def vobiz_status(
     # late "answered"/"in-progress" or trailing Hangup must never resurrect a
     # call that already ended truthfully (busy/no_answer reverted to
     # in_progress corrupts reports and strands the contact in "calling").
-    if call.status in ("completed", "failed", "no_answer", "busy", "canceled"):
+    if call.status in TERMINAL_CALL_STATUSES:
         logger.info(
             "vobiz status %r ignored: call %s already terminal (%s)",
             raw_status, call.id, call.status,
         )
         db.commit()
         return Response(status_code=200)
-    if mapped == "in_progress":
+    terminal = _webhook_terminal(payload, call.status)
+    if terminal:
+        settings = request.app.state.settings
+        if contact is not None:
+            end_call(db, call, contact, terminal, settings, now=now)
+        else:
+            call.status = terminal
+            call.ended_at = now
+    elif mapped == "in_progress":
         call.status = "in_progress"
         if call.answered_at is None:
             call.answered_at = now
@@ -717,20 +801,5 @@ async def vobiz_status(
     elif mapped in ("queued", "ringing"):
         if call.status == "queued":
             call.status = mapped
-    elif mapped in ("completed", "no_answer", "busy", "failed", "canceled"):
-        # A bare Hangup (Event=Hangup with no CallStatus field) only proves
-        # the call ended, not its outcome: answered calls completed, but a
-        # call still queued/ringing was hung up before answer (no_answer).
-        # Without this, every unanswered hangup launders into "completed".
-        if raw_status == "hangup" and not any(
-            k in payload for k in ("CallStatus", "callStatus", "status", "Status")
-        ):
-            mapped = "completed" if call.status == "in_progress" else "no_answer"
-        settings = request.app.state.settings
-        if contact is not None:
-            end_call(db, call, contact, mapped, settings, now=now)
-        else:
-            call.status = mapped
-            call.ended_at = now
     db.commit()
     return Response(status_code=200)
