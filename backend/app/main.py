@@ -75,13 +75,20 @@ def _should_run_dialer(settings: Settings) -> bool:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the FastAPI app: DB engine, telephony client, routers, CORS."""
     app_settings = settings or get_settings()
+    # In production the schema itself is sensitive: /openapi.json enumerates
+    # every internal endpoint, so the interactive docs are development-only.
+    is_production = app_settings.environment.strip().lower() in {"production", "prod"}
     fast_app = FastAPI(
         title="AI Voice Calling Agent API",
         description=(
             "Multi-tenant AI voice calling platform. "
-            "Dev-only tools (/api/health, /api/dev/status) are removed in production."
+            "Health reporting lives at /api/health; interactive docs are "
+            "development-only."
         ),
         version="2.0.0",
+        docs_url=None if is_production else "/docs",
+        redoc_url=None if is_production else "/redoc",
+        openapi_url=None if is_production else "/openapi.json",
     )
     fast_app.state.settings = app_settings
     engine, session_factory = init_db(app_settings)

@@ -6,11 +6,11 @@ the four services, and nothing scales to a paid plan on its own.
 ```
 Browser / faculty
    |
-   |  https://<vercel-app>
+   |  https://echo-sarathi.vercel.app
    v
 Vercel  ── direct fetch (VITE_API_URL) ──►  Render free web service
 (Vite SPA)                                  echosarathi-api (FastAPI)
-        └── /api/* proxy fallback ─────────►      |
+        └── /api/* rewrite ───────────────►      |
                                                   ├── Neon free Postgres
                                                   └── webhooks from Vobiz
 LiveKit Cloud  ◄── browser playground
@@ -89,11 +89,11 @@ Five steps, all idempotent — re-run after changing anything:
 
 1. **Resolve the Vercel origin** from the project domains (`APP_ORIGIN`).
 2. **Render**: find or create `echosarathi-api` (free, Singapore, Python
-   3.12) with the full environment baked into the create call, then wait for
+   3.11) with the full environment baked into the create call, then wait for
    the deploy to go `live`.
 3. **Vercel**: set `VITE_API_URL` (direct cross-origin calls), refresh the
-   `/api/*` proxy fallback in `frontend/vercel.json`, link the existing
-   project, and run `vercel deploy --prod`.
+   `/api/*` proxy target in both `vercel.json` files, then deploy a production
+   build from the repo root.
 4. **LiveKit Cloud**: write `voice-agent/livekit.toml` if missing (first
    `agent create`, then `agent deploy`), push secrets, deploy the worker.
 5. **Verify**: run the smoke suite and fail loudly.
@@ -129,13 +129,26 @@ Both steps are idempotent, so every cold start is safe. `seed_demo.py` reads
 
 Vercel's rewrite proxy will cut a request off long before a sleeping Render
 instance finishes booting. With `VITE_API_URL` set, the browser talks to Render
-directly, so the first request after a sleep is slow instead of broken. The
-`/api/*` rewrite stays in `vercel.json` as a same-origin fallback for anything
-that ignores the baked-in URL.
+directly, so the first request after a sleep is slow instead of broken.
+
+### Which `vercel.json` is the real one
+
+The Vercel project's **root directory is the repo root**, so the root
+`vercel.json` is the config that ships. It declares the `frontend` service
+(`root: "frontend"`, Vite) and rewrites `/api`, `/vobiz`, `/twilio`, `/plivo`
+and `/internal` to the Render URL, so the public domain and the API cannot
+drift apart. Do **not** add a `backend` service there: a serverless backend
+cannot run the dialer (it starts a long-lived asyncio task in `lifespan`) and
+its environment would have to be duplicated. `frontend/vercel.json` is kept in
+sync only for the case where someone links that directory as its own project.
+
+`/docs`, `/redoc` and `/openapi.json` are disabled when `ENVIRONMENT=production`
+(the schema enumerates every internal endpoint); `/api/health` stays public
+because the deploy and verify scripts depend on it.
 
 The only files the deploy writes are `.deploy.env` (service id/URL, detected
-origin) and the `/api` `dest` line in `frontend/vercel.json` — both are
-reviewable with `git diff` after a run.
+origin) and the Render URL inside the two `vercel.json` files — all reviewable
+with `git diff` after a run.
 
 ---
 
@@ -175,8 +188,8 @@ What it asserts:
 - demo login returns a token, and `/api/agents` shows the seeded agent
 - CORS preflight from the Vercel origin is allowed
 - the Vercel page serves the SPA shell, and `/api/health` through the proxy
-  also answers
-- LiveKit agent status (warning only — a cold agent is not an error)
+  answers with the same database state as Render
+- a LiveKit agent deployment is registered and `Running`
 
 Manual spot check:
 
@@ -240,8 +253,11 @@ Free-tier gotchas that were deliberately designed around:
   numbers you own.
 - `/api/health` exposes only booleans, model names, and TCP reachability —
   never key values.
+- `/docs`, `/redoc` and `/openapi.json` are off when `ENVIRONMENT=production`.
+- The Vercel domain has exactly one backend behind it (Render). No second,
+  unconfigured API service is deployed alongside it.
 - `.deploy.env` is gitignored; `.deploy.env.example` is the tracked template.
-- `frontend/vercel.json`, `render.yaml`, and the scripts contain no secrets.
+- `vercel.json` files, `render.yaml`, and the scripts contain no secrets.
 
 Rotate after the demo: Groq, Sarvam, Deepgram, Cartesia, Vobiz, LiveKit keys,
 the Render API key, the Vercel token, and `DEMO_PASSWORD`. Rotating
@@ -275,7 +291,8 @@ accounts on purpose.
 | Deploy `live` but health shows `db: false` | `DATABASE_URL` must be the Neon connection string with `sslmode=require`; check the Render logs for a psycopg/PgBouncer error |
 | Login fails with the password from `.deploy.env` | The tenant was seeded on a previous run with a different password; see below |
 | Vercel page loads, every API call fails | Service asleep → `wake.ps1`; confirm `VITE_API_URL` in Vercel → Settings → Environment Variables |
-| `vercel link` creates a new project | The project name changed; run `deploy-vercel.ps1` (it links by name from the API) |
+| `vercel link` creates a new project | The project name changed; `deploy-vercel.ps1` skips `link` when `.vercel/project.json` already names the project |
+| The domain's `/api/health` reports `db:false` but Render's own URL is healthy | Something else is answering `/api/*` on Vercel — the root `vercel.json` must rewrite those paths to Render, with no `backend` service declared |
 | Playground connects but the agent is silent | Provider keys missing on the **worker**, not just the backend — re-run `deploy-livekit.ps1` |
 | Call rings then silence | Vobiz media WS URL, `INTERNAL_API_TOKEN` matching on both sides |
 | Test call returns 422 | The number is not in `TEST_PHONE_NUMBERS` |

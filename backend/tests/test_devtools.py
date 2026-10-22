@@ -15,7 +15,7 @@ def test_health_reports_presence_booleans(client):
     assert resp.status_code == 200
     body: dict[str, Any] = resp.json()
     assert body["db"] is True  # sqlite in-memory answers SELECT 1
-    assert isinstance(body["redis"], bool)
+    assert body["redis"] is None  # nothing configures redis in the test settings
     assert body["voice_agent"] == "unknown"  # no registry this phase
 
     providers = body["providers"]

@@ -100,10 +100,16 @@ if ((Test-Path -LiteralPath $lk) -and $cfg["LIVEKIT_API_SECRET"]) {
             "--api-secret", $cfg["LIVEKIT_API_SECRET"],
             "agent", "status", "--json"
         )
-        # The CLI prints "Using agent [...]" to stderr; keep only the JSON body.
-        $json = @($res.Output | Where-Object { $_ -match '^\s*[\{\[]' })
-        if ($json.Count -eq 0) { throw "no JSON in the CLI output (exit $($res.ExitCode))" }
-        $parsed = ($json -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        # The CLI prints "Using agent [...]" and similar notices to stderr;
+        # the JSON body starts at the first line that opens an object.
+        $lines = @($res.Output)
+        $start = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].TrimStart().StartsWith("{")) { $start = $i; break }
+        }
+        if ($start -lt 0) { throw "no JSON in the CLI output (exit $($res.ExitCode))" }
+        $json = $lines[$start..($lines.Count - 1)] -join "`n"
+        $parsed = $json | ConvertFrom-Json -ErrorAction Stop
         $agents = @($parsed.agents)
         if ($agents.Count -eq 0) { throw "no agent registered on this LiveKit project" }
         $running = @($agents | ForEach-Object { $_.agentDeployments } | Where-Object { $_.status -eq "Running" })
