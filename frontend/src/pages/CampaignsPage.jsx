@@ -154,7 +154,11 @@ export default function CampaignsPage() {
                     <td>
                       <b>{c.name || `Campaign ${c.id}`}</b>
                     </td>
-                    <td style={{ color: 'var(--muted)' }}>{c.agent_name || c.domain_config_name || '—'}</td>
+                    <td style={{ color: 'var(--muted)' }}>
+                      {c.agent_name
+                        ? `${c.agent_name}${c.agent_version != null ? ` · v${c.agent_version}` : ''}`
+                        : c.domain_config_name || '—'}
+                    </td>
                     <td>
                       <span className={`chip ${statusClass(c.status)}`}>{statusLabel(c.status)}</span>
                     </td>

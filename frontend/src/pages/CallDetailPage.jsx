@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { API_BASE, callExportUrl } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import { resolveCallActivity } from '../utils/callActivity.js';
@@ -157,6 +157,31 @@ export default function CallDetailPage() {
       </div>
 
       {error && <div className="banner banner-error">{error}</div>}
+
+      <p className="meta-line">
+        <span>
+          <strong>{call.contact_name || 'Unknown contact'}</strong>
+          {call.contact_phone ? <span className="mono"> · {call.contact_phone}</span> : null}
+        </span>
+        <span>
+          <strong>Agent:</strong>{' '}
+          {call.agent_name ? (
+            <>
+              {call.agent_name}
+              {call.agent_version != null ? ` · v${call.agent_version}` : ''}
+              {call.agent_role ? <span className="text-muted"> — {call.agent_role}</span> : null}
+            </>
+          ) : (
+            <span className="text-muted">not recorded</span>
+          )}
+        </span>
+        {call.campaign_id ? (
+          <span>
+            <strong>Campaign:</strong>{' '}
+            <Link to={`/campaigns/${call.campaign_id}`}>#{call.campaign_id}</Link>
+          </span>
+        ) : null}
+      </p>
 
       {call.flagged_for_human && (
         <div className="banner gold">⚑ Escalated — needs human follow-up.</div>

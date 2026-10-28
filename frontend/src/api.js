@@ -312,6 +312,8 @@ export const api = {
   listCampaigns: () => apiFetch('/api/campaigns'),
   createCampaign: (data) => apiFetch('/api/campaigns', { method: 'POST', body: JSON.stringify(data) }),
   getCampaign: (id) => apiFetch(`/api/campaigns/${id}`),
+  patchCampaign: (id, data) =>
+    apiFetch(`/api/campaigns/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   launchCampaign: (id) => apiFetch(`/api/campaigns/${id}/launch`, { method: 'POST' }),
   pauseCampaign: (id) => apiFetch(`/api/campaigns/${id}/pause`, { method: 'POST' }),
   cancelCampaign: (id) => apiFetch(`/api/campaigns/${id}/cancel`, { method: 'POST' }),
@@ -320,6 +322,11 @@ export const api = {
 
   importContacts: (campaignId, formData) =>
     apiFetch(`/api/campaigns/${campaignId}/contacts/import`, { method: 'POST', body: formData }),
+  copyContacts: (campaignId, sourceCampaignId) =>
+    apiFetch(`/api/campaigns/${campaignId}/contacts/copy`, {
+      method: 'POST',
+      body: JSON.stringify({ source_campaign_id: sourceCampaignId }),
+    }),
   listContacts: (campaignId, { page = 1, pageSize = 50, status = '' } = {}) => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (status) params.set('status', status);

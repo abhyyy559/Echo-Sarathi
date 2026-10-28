@@ -9,8 +9,26 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Agent, AgentVersion, Campaign, Call, Contact, DomainConfig, IN_FLIGHT_CALL_STATUSES, User
-from app.schemas import CampaignCreate, CampaignDetail, CampaignListItem, CampaignOut
+from app.models import (
+    Agent,
+    AgentVersion,
+    Campaign,
+    Call,
+    ConsentRecord,
+    Contact,
+    DomainConfig,
+    IN_FLIGHT_CALL_STATUSES,
+    User,
+)
+from app.schemas import (
+    CampaignCreate,
+    CampaignDetail,
+    CampaignListItem,
+    CampaignOut,
+    CampaignPatch,
+    CopyContactsRequest,
+    CopyContactsResult,
+)
 from app.services.calls_service import in_flight_call_count
 from app.timeutil import is_within_calling_hours, utcnow
 
@@ -48,13 +66,29 @@ def _get_campaign_or_404(db: Session, campaign_id: int, user: User) -> Campaign:
     return campaign
 
 
+def _campaign_agent(db: Session, campaign: Campaign) -> dict[str, Any]:
+    """The agent version this campaign dials with, resolved for display."""
+    if not campaign.agent_version_id:
+        return {}
+    version = db.get(AgentVersion, campaign.agent_version_id)
+    if version is None:
+        return {}
+    agent = db.get(Agent, version.agent_id)
+    return {
+        "agent_id": agent.id if agent else None,
+        "agent_name": agent.name if agent else None,
+        "agent_role": agent.description if agent else None,
+        "agent_version": version.version,
+    }
+
+
 def _campaign_out(db: Session, campaign: Campaign) -> dict[str, Any]:
     domain_config = (
         db.get(DomainConfig, campaign.domain_config_id)
         if campaign.domain_config_id
         else None
     )
-    return {
+    out = {
         "id": campaign.id,
         "org_id": campaign.org_id,
         "name": campaign.name,
@@ -67,6 +101,8 @@ def _campaign_out(db: Session, campaign: Campaign) -> dict[str, Any]:
         "created_at": campaign.created_at,
         "updated_at": campaign.updated_at,
     }
+    out.update(_campaign_agent(db, campaign))
+    return out
 
 
 def consent_ok(db: Session, contact: Contact, settings) -> bool:
@@ -245,6 +281,93 @@ def delete_campaign(
     return Response(status_code=204)
 
 
+@router.patch("/{campaign_id}", response_model=CampaignOut)
+def patch_campaign(
+    campaign_id: int,
+    payload: CampaignPatch,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Rename a campaign or change the agent it will dial with.
+
+    Repointing is refused mid-run so a batch is never split across two scripts;
+    calls already placed keep the version recorded on their own row.
+    """
+    campaign = _get_campaign_or_404(db, campaign_id, user)
+    if payload.agent_version_id is not None:
+        if campaign.status == "running":
+            raise HTTPException(
+                status_code=422, detail="pause the campaign before changing its agent"
+            )
+        version = db.get(AgentVersion, payload.agent_version_id)
+        parent_agent = db.get(Agent, version.agent_id) if version is not None else None
+        if version is None or parent_agent is None or parent_agent.org_id != user.org_id:
+            raise HTTPException(status_code=404, detail="agent version not found")
+        campaign.agent_version_id = version.id
+    if payload.name is not None:
+        campaign.name = payload.name.strip()
+    campaign.updated_at = utcnow()
+    db.commit()
+    db.refresh(campaign)
+    return _campaign_out(db, campaign)
+
+
+@router.post("/{campaign_id}/contacts/copy", response_model=CopyContactsResult)
+def copy_contacts(
+    campaign_id: int,
+    payload: CopyContactsRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Clone another campaign's roster into this one, skipping phones already here."""
+    campaign = _get_campaign_or_404(db, campaign_id, user)
+    source = _get_campaign_or_404(db, payload.source_campaign_id, user)
+    if source.id == campaign.id:
+        raise HTTPException(status_code=422, detail="cannot copy a campaign into itself")
+
+    existing = set(
+        db.scalars(select(Contact.phone).where(Contact.campaign_id == campaign.id)).all()
+    )
+    source_contacts = db.scalars(
+        select(Contact).where(Contact.campaign_id == source.id).order_by(Contact.id)
+    ).all()
+    copied = 0
+    skipped = 0
+    now = utcnow()
+    for contact in source_contacts:
+        if contact.phone in existing:
+            skipped += 1
+            continue
+        existing.add(contact.phone)
+        clone = Contact(
+            campaign_id=campaign.id,
+            org_id=campaign.org_id,
+            name=contact.name,
+            phone=contact.phone,
+            external_id=contact.external_id,
+            custom_fields=dict(contact.custom_fields or {}),
+            status="invalid" if contact.status == "invalid" else "pending_review",
+            consent=contact.consent,
+            consent_source=f"copy:campaign:{source.id}",
+        )
+        db.add(clone)
+        db.flush()
+        if contact.consent:
+            db.add(
+                ConsentRecord(
+                    contact_id=clone.id,
+                    phone=clone.phone,
+                    consent_type="calling",
+                    consent_given=True,
+                    source=f"copy:campaign:{source.id}",
+                    captured_at=now,
+                )
+            )
+        copied += 1
+    db.commit()
+    return {"copied": copied, "skipped": skipped, "total": len(source_contacts)}
+
+
 @router.get("/{campaign_id}/dashboard")
 def campaign_dashboard(
     campaign_id: int,
@@ -253,8 +376,10 @@ def campaign_dashboard(
 ) -> dict[str, Any]:
     campaign = _get_campaign_or_404(db, campaign_id, user)
     recent_calls = db.execute(
-        select(Call, Contact.name, Contact.phone)
-        .join(Contact, Contact.id == Call.contact_id)
+        select(Call, Contact.name, Contact.phone, Agent.name, AgentVersion.version)
+        .outerjoin(Contact, Contact.id == Call.contact_id)
+        .outerjoin(AgentVersion, AgentVersion.id == Call.agent_version_id)
+        .outerjoin(Agent, Agent.id == AgentVersion.agent_id)
         .where(Call.campaign_id == campaign_id)
         .order_by(Call.id.desc())
         .limit(20)
@@ -273,7 +398,9 @@ def campaign_dashboard(
                 "started_at": call.started_at,
                 "duration_seconds": call.duration_seconds,
                 "outcome": call.outcome,
+                "agent_name": agent_name,
+                "agent_version": version_number,
             }
-            for call, name, phone in recent_calls
+            for call, name, phone, agent_name, version_number in recent_calls
         ],
     }

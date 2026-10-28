@@ -255,7 +255,7 @@ def list_campaign_calls(
         raise HTTPException(status_code=404, detail="campaign not found")
     rows = db.execute(
         select(Call, Contact.name, Contact.phone)
-        .join(Contact, Contact.id == Call.contact_id)
+        .outerjoin(Contact, Contact.id == Call.contact_id)
         .where(Call.campaign_id == campaign_id)
         .order_by(Call.id.desc())
     ).all()
@@ -308,10 +308,16 @@ def get_call(
     pickup_to_first_audio_seconds, opening_duration_seconds = _activity_timing(
         call, activity_events
     )
+    version = db.get(AgentVersion, call.agent_version_id) if call.agent_version_id else None
+    agent = db.get(Agent, version.agent_id) if version is not None else None
     return {
         "id": call.id,
         "campaign_id": call.campaign_id,
         "contact_id": call.contact_id,
+        "agent_version_id": call.agent_version_id,
+        "agent_name": agent.name if agent else None,
+        "agent_role": agent.description if agent else None,
+        "agent_version": version.version if version else None,
         "provider_call_id": call.provider_call_id,
         "status": call.status,
         "started_at": call.started_at,

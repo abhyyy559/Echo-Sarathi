@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, downloadCampaignExport } from '../api.js';
+import { api, agentsApi, campaignExportUrl } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import StatusBadge, { statusLabel } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
@@ -70,6 +70,14 @@ function consentValue(v) {
   if (v === true || v === 'true' || v === 1 || v === '1') return true;
   if (v === false || v === 'false' || v === 0 || v === '0') return false;
   return null;
+}
+
+function ruleText(rule) {
+  if (rule == null) return '';
+  if (typeof rule === 'string') return rule;
+  const trigger = rule.trigger || '';
+  const action = rule.action || '';
+  return action ? `${trigger} → ${action}` : String(trigger);
 }
 
 function friendlyActionError(e) {
@@ -183,8 +191,151 @@ export default function CampaignDetailPage() {
   const refreshContacts = () => setContactsNonce((n) => n + 1);
   const totalPages = contactsData ? Math.max(1, Math.ceil((contactsData.total || 0) / (contactsData.page_size || PAGE_SIZE))) : 1;
 
-  // ---- import ----
+  // ---- import / copy from another campaign ----
   const [importResult, setImportResult] = useState(null);
+  const [copyResult, setCopyResult] = useState(null);
+  const [copyModal, setCopyModal] = useState(false);
+  const [copySources, setCopySources] = useState([]);
+  const [copyPick, setCopyPick] = useState('');
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState(null);
+
+  async function openCopyModal() {
+    setCopyModal(true);
+    setCopyPick('');
+    setCopyError(null);
+    try {
+      const list = await api.listCampaigns();
+      setCopySources(
+        (Array.isArray(list) ? list : []).filter((c) => String(c.id) !== String(id))
+      );
+    } catch (e) {
+      setCopyError(e.message || 'Could not load campaigns.');
+    }
+  }
+
+  async function runCopy() {
+    if (!copyPick) return;
+    setCopyBusy(true);
+    setCopyError(null);
+    try {
+      const result = await api.copyContacts(id, Number(copyPick));
+      setCopyModal(false);
+      setCopyResult(result);
+      setPage(1);
+      refreshContacts();
+      reloadDash();
+      reloadCampaign();
+    } catch (e) {
+      setCopyError(e.message || 'Copy failed.');
+    } finally {
+      setCopyBusy(false);
+    }
+  }
+
+  // ---- agent pinned to this campaign ----
+  const [agents, setAgents] = useState([]);
+  const [agentModal, setAgentModal] = useState(false);
+  const [agentPick, setAgentPick] = useState('');
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentError, setAgentError] = useState(null);
+
+  async function openAgentModal() {
+    setAgentModal(true);
+    setAgentError(null);
+    setAgentPick(campaign?.agent_version_id ? String(campaign.agent_version_id) : '');
+    try {
+      const list = await agentsApi.list();
+      setAgents(
+        (Array.isArray(list) ? list : []).filter(
+          (a) => a.current_version_id != null && a.status !== 'archived'
+        )
+      );
+    } catch (e) {
+      setAgentError(e.message || 'Could not load agents.');
+    }
+  }
+
+  async function saveAgent() {
+    if (!agentPick) return;
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      await api.patchCampaign(id, { agent_version_id: Number(agentPick) });
+      setAgentModal(false);
+      reloadCampaign();
+      reloadDash();
+    } catch (e) {
+      setAgentError(e.message || 'Could not change the agent.');
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  // ---- escalation rules of the pinned version ----
+  const rulesVersionId = campaign?.agent_version_id ?? null;
+  const [rulesVersion, setRulesVersion] = useState(null);
+  const [rulesError, setRulesError] = useState(null);
+  const [rulesNotice, setRulesNotice] = useState(null);
+  const [rulesBusy, setRulesBusy] = useState(false);
+  const [removedRules, setRemovedRules] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRulesVersion(null);
+    setRulesError(null);
+    setRulesNotice(null);
+    setRemovedRules([]);
+    if (!rulesVersionId) return () => { cancelled = true; };
+    agentsApi
+      .getVersion(rulesVersionId)
+      .then((v) => {
+        if (!cancelled) setRulesVersion(v);
+      })
+      .catch((e) => {
+        if (!cancelled) setRulesError(e.message || 'Could not load the agent rules.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rulesVersionId]);
+
+  function toggleRule(index) {
+    setRemovedRules((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+    );
+    setRulesNotice(null);
+  }
+
+  async function saveRules() {
+    if (!rulesVersion || removedRules.length === 0) return;
+    setRulesBusy(true);
+    setRulesError(null);
+    setRulesNotice(null);
+    try {
+      const version = await agentsApi.createVersion(rulesVersion.agent_id, {
+        system_prompt: rulesVersion.system_prompt,
+        company_context: rulesVersion.company_context || {},
+        question_flow: rulesVersion.question_flow || [],
+        extraction_schema: rulesVersion.extraction_schema || {},
+        disclosure_script: rulesVersion.disclosure_script,
+        escalation_rules: (rulesVersion.escalation_rules || []).filter(
+          (_, i) => !removedRules.includes(i)
+        ),
+        voice_settings: rulesVersion.voice_settings || {},
+      });
+      await api.patchCampaign(id, { agent_version_id: version.id });
+      setRulesNotice(
+        `Saved as ${campaign?.agent_name || 'agent'} v${version.version} — this campaign now dials with it.`
+      );
+      reloadCampaign();
+      reloadDash();
+    } catch (e) {
+      setRulesError(e.message || 'Could not save the rules.');
+    } finally {
+      setRulesBusy(false);
+    }
+  }
 
   function onImported(result) {
     setImportResult(result || {});
@@ -429,6 +580,27 @@ export default function CampaignDetailPage() {
           </div>
           <p className="meta-line">
             <span>
+              <strong>Agent:</strong>{' '}
+              {campaign.agent_name ? (
+                <>
+                  {campaign.agent_name}
+                  {campaign.agent_version != null ? ` · v${campaign.agent_version}` : ''}
+                  {campaign.agent_role ? <span className="text-muted"> — {campaign.agent_role}</span> : null}
+                </>
+              ) : (
+                <span className="text-muted">none pinned</span>
+              )}{' '}
+              <button
+                type="button"
+                className="link-btn"
+                onClick={openAgentModal}
+                disabled={running}
+                title={running ? 'Pause the campaign to change its agent' : 'Dial this campaign with a different agent'}
+              >
+                Change
+              </button>
+            </span>
+            <span>
               <strong>Domain:</strong> {campaign.domain_config_name || '—'}
             </span>
             <span>
@@ -462,10 +634,10 @@ export default function CampaignDetailPage() {
           )}
           <div className="export-group">
             <span className="export-label">Export:</span>
-            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'csv'))}>
+            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'csv'), '_blank')}>
               CSV
             </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'xlsx'))}>
+            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'xlsx'), '_blank')}>
               XLSX
             </button>
           </div>
@@ -507,6 +679,15 @@ export default function CampaignDetailPage() {
             </div>
           )}
 
+          {copyResult && (
+            <div className={`banner ${copyResult.copied > 0 ? 'banner-success' : 'banner-info'}`}>
+              <strong>
+                Copied {copyResult.copied} contact{copyResult.copied === 1 ? '' : 's'}
+              </strong>
+              {copyResult.skipped ? ` · ${copyResult.skipped} skipped (phone already on this roster)` : ''}
+            </div>
+          )}
+
           <div className="card flush">
             <div className="table-toolbar">
               <h3 className="card-title">Contacts</h3>
@@ -514,6 +695,14 @@ export default function CampaignDetailPage() {
                 <span className="hint inline-hint" title="Skipped contacts stay on the roster but are never dialed">
                   Launch calls everyone pending review — skip the rest
                 </span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={contactsLoading}
+                  title="Copy contacts from another campaign into this one"
+                  onClick={openCopyModal}
+                >
+                  Copy from campaign…
+                </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   disabled={bulkBusy || contactsLoading}
@@ -621,12 +810,61 @@ export default function CampaignDetailPage() {
                 ))}
               </div>
 
+              <div className="card">
+                <div className="table-toolbar">
+                  <div>
+                    <h3 className="card-title">Escalation rules</h3>
+                    <p className="hint">
+                      {campaign.agent_name
+                        ? `${campaign.agent_name}${campaign.agent_version != null ? ` · v${campaign.agent_version}` : ''}`
+                        : 'No agent pinned'}
+                      {' '}— removing a rule saves a new agent version and repoints this campaign at it.
+                    </p>
+                  </div>
+                  <div className="toolbar-right">
+                    <button
+                      className="btn btn-primary btn-sm"
+                      disabled={rulesBusy || removedRules.length === 0}
+                      onClick={saveRules}
+                    >
+                      {rulesBusy
+                        ? 'Saving…'
+                        : removedRules.length
+                          ? `Save rules (${removedRules.length} removed)`
+                          : 'Save rules'}
+                    </button>
+                  </div>
+                </div>
+                {rulesError && <div className="banner banner-error inset">{rulesError}</div>}
+                {rulesNotice && <div className="banner banner-success inset">{rulesNotice}</div>}
+                {!rulesVersion && !rulesError && <p className="hint">Loading rules…</p>}
+                {rulesVersion && (rulesVersion.escalation_rules || []).length === 0 && (
+                  <p className="hint">This agent has no escalation rules.</p>
+                )}
+                {rulesVersion && (rulesVersion.escalation_rules || []).length > 0 && (
+                  <ul className="rule-list">
+                    {(rulesVersion.escalation_rules || []).map((rule, i) => {
+                      const removed = removedRules.includes(i);
+                      return (
+                        <li key={i} className={`rule-row${removed ? ' removed' : ''}`}>
+                          <span className="rule-text">{ruleText(rule)}</span>
+                          <button type="button" className="link-btn" onClick={() => toggleRule(i)}>
+                            {removed ? 'Undo' : 'Remove'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
               <div className="card" style={{ overflowX: 'auto' }}>
                 <table className="tbl">
                   <thead>
                     <tr>
                       <th>Contact</th>
                       <th>Phone</th>
+                      <th>Agent</th>
                       <th>Status</th>
                       <th>Last outcome</th>
                       <th>Duration</th>
@@ -636,13 +874,18 @@ export default function CampaignDetailPage() {
                   <tbody>
                     {(dash.recent_calls || []).length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="table-state">No calls yet for this campaign.</td>
+                        <td colSpan={7} className="table-state">No calls yet for this campaign.</td>
                       </tr>
                     ) : (
                       (dash.recent_calls || []).map((c) => (
                         <tr key={c.id} onClick={() => navigate(`/calls/${c.id}`)}>
                           <td><span className="cell-strong">{c.contact_name || '—'}</span></td>
                           <td className="mono">{c.phone || '—'}</td>
+                          <td>
+                            {c.agent_name
+                              ? `${c.agent_name}${c.agent_version != null ? ` · v${c.agent_version}` : ''}`
+                              : '—'}
+                          </td>
                           <td><StatusBadge status={c.status} /></td>
                           <td>{c.outcome ? <span className="chip">{String(c.outcome)}</span> : '—'}</td>
                           <td className="mono">{fmtDuration(c.duration_seconds)}</td>
@@ -656,6 +899,95 @@ export default function CampaignDetailPage() {
             </>
           )}
         </div>
+      )}
+
+      {copyModal && (
+        <Modal
+          title="Copy contacts from another campaign"
+          onClose={() => setCopyModal(false)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setCopyModal(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" disabled={copyBusy || !copyPick} onClick={runCopy}>
+                {copyBusy ? 'Copying…' : 'Copy contacts'}
+              </button>
+            </>
+          }
+        >
+          <p className="hint">
+            Copies every contact from the source campaign, keeping names, fields and consent. Phones already on this
+            roster are skipped.
+          </p>
+          {copyError && <div className="banner banner-error">{copyError}</div>}
+          <div className="field">
+            <label htmlFor="copy-source">Source campaign</label>
+            <select id="copy-source" value={copyPick} onChange={(e) => setCopyPick(e.target.value)}>
+              <option value="">Select a campaign…</option>
+              {copySources.map((c) => {
+                const total = (c.counts && c.counts.total) || 0;
+                return (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({total} contact{total === 1 ? '' : 's'})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        </Modal>
+      )}
+
+      {agentModal && (
+        <Modal
+          title="Change the agent"
+          onClose={() => setAgentModal(false)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setAgentModal(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={
+                  agentBusy ||
+                  !agentPick ||
+                  String(agentPick) === String(campaign?.agent_version_id ?? '')
+                }
+                onClick={saveAgent}
+              >
+                {agentBusy ? 'Saving…' : 'Use this agent'}
+              </button>
+            </>
+          }
+        >
+          <p className="hint">
+            Calls already placed keep the agent recorded on them; your next launch dials with the agent you pick here.
+          </p>
+          {agentError && <div className="banner banner-error">{agentError}</div>}
+          <div className="field">
+            <label htmlFor="campaign-agent">Agent</label>
+            <select id="campaign-agent" value={agentPick} onChange={(e) => setAgentPick(e.target.value)}>
+              <option value="">Select an agent…</option>
+              {campaign?.agent_version_id &&
+                !agents.some(
+                  (a) => String(a.current_version_id) === String(campaign.agent_version_id)
+                ) && (
+                  <option value={campaign.agent_version_id}>
+                    {campaign.agent_name || 'Current agent'}
+                    {campaign.agent_version != null ? ` · v${campaign.agent_version}` : ''} — currently
+                    pinned
+                  </option>
+                )}
+              {agents.map((a) => (
+                <option key={a.id} value={a.current_version_id}>
+                  {a.name}
+                  {a.description ? ` — ${a.description}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </Modal>
       )}
 
       {showCancelConfirm && (

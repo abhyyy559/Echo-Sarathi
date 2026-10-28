@@ -39,6 +39,10 @@ class CampaignOut(BaseModel):
     domain_config_id: Optional[int]
     domain_config_name: Optional[str] = None
     agent_version_id: Optional[int] = None
+    agent_id: Optional[int] = None
+    agent_name: Optional[str] = None
+    agent_role: Optional[str] = None
+    agent_version: Optional[int] = None
     schedule_window_start: Optional[datetime] = None
     schedule_window_end: Optional[datetime] = None
     created_at: Optional[datetime] = None
@@ -67,8 +71,29 @@ class CampaignListItem(BaseModel):
     domain_config_id: Optional[int]
     domain_config_name: Optional[str] = None
     agent_version_id: Optional[int] = None
+    agent_id: Optional[int] = None
+    agent_name: Optional[str] = None
+    agent_role: Optional[str] = None
+    agent_version: Optional[int] = None
     counts: ContactCounts
     created_at: Optional[datetime] = None
+
+
+class CampaignPatch(BaseModel):
+    """Rename a campaign or repoint it at another of the org's agent versions."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    agent_version_id: Optional[int] = None
+
+
+class CopyContactsRequest(BaseModel):
+    source_campaign_id: int
+
+
+class CopyContactsResult(BaseModel):
+    copied: int
+    skipped: int
+    total: int
 
 
 class CampaignDetail(CampaignOut):
@@ -242,6 +267,9 @@ class CallActivityResponse(BaseModel):
 class CallDetailOut(CallOut):
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    agent_name: Optional[str] = None
+    agent_role: Optional[str] = None
+    agent_version: Optional[int] = None
     transcript: list[TranscriptTurnOut]
     extracted_fields: list[ExtractedFieldOut]
     activity: Optional[CallActivityOut] = None
