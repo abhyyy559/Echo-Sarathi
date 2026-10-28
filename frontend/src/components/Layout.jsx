@@ -43,15 +43,6 @@ function IconCalls() {
   );
 }
 
-function IconGuide() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z" />
-      <path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5" />
-    </svg>
-  );
-}
-
 function IconPlayground() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -108,7 +99,6 @@ const NAV_ITEMS = [
   { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
   { to: '/team', icon: <IconTeam />, label: 'Team' },
   { to: '/credits', icon: <IconCredits />, label: 'Billing' },
-  { to: '/guide', icon: <IconGuide />, label: 'Guide' },
 ];
 
 const ADMIN_ITEM = { to: '/admin', icon: <IconAdmin />, label: 'Platform admin' };
@@ -136,7 +126,6 @@ function titleFor(pathname) {
   if (pathname.match(/^\/invoices\/\d+\/?$/)) return ['Invoice', 'GST tax invoice for a plan or top-up payment'];
   if (pathname.startsWith('/team')) return ['Team', 'Members, roles and seats'];
   if (pathname.startsWith('/admin')) return ['Platform admin', 'Every organization, contracts and credit adjustments'];
-  if (pathname.startsWith('/guide')) return ['Guide', 'From empty account to first campaign'];
   return ['Echo Sarathi', 'AI voice calling console'];
 }
 

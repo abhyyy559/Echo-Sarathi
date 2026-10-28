@@ -11,7 +11,6 @@ import CampaignsPage from './pages/CampaignsPage.jsx';
 import CampaignDetailPage from './pages/CampaignDetailPage.jsx';
 import CallDetailPage from './pages/CallDetailPage.jsx';
 import CallsIndexPage from './pages/CallsIndexPage.jsx';
-import GuidePage from './pages/GuidePage.jsx';
 import CreditsPage from './pages/CreditsPage.jsx';
 import TeamPage from './pages/TeamPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
@@ -88,7 +87,6 @@ export default function App() {
             <Route path="campaigns/:id" element={<CampaignDetailPage />} />
             <Route path="calls" element={<CallsIndexPage />} />
             <Route path="calls/:id" element={<CallDetailPage />} />
-            <Route path="guide" element={<GuidePage />} />
             <Route path="credits" element={<CreditsPage />} />
             <Route path="invoices/:id" element={<InvoicePage />} />
             <Route path="team" element={<TeamPage />} />

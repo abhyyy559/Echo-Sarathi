@@ -567,7 +567,7 @@ export default function LandingPage() {
       </div>
       <div className="f-col"><h6>Platform</h6><Link to="/">Overview</Link><Link to="/agents">Agents</Link><Link to="/campaigns">Campaigns</Link><Link to="/calls">Call history</Link></div>
       <div className="f-col"><h6>Experience</h6><Link to="/playground">Playground</Link><Link to="/agents/new">Agent builder</Link><Link to="/pricing">Pricing</Link><Link to="/roadmap">Roadmap</Link><Link to="/login">Sign in</Link></div>
-      <div className="f-col"><h6>Company</h6><a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a><Link to="/roadmap">Languages</Link><Link to="/guide">Guide</Link></div>
+      <div className="f-col"><h6>Company</h6><a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a><Link to="/roadmap">Languages</Link></div>
     </div>
     <div className="f-base">
       <span>&copy; 2026 Echo Sarathi Labs</span>

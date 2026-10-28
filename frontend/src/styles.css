@@ -3228,58 +3228,6 @@ button:focus-visible {
   font-size: 12.5px;
 }
 
-/* ---------- Guide page ---------- */
-
-.guide-journey {
-  list-style: none;
-  margin: 0 0 16px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 800px;
-}
-
-.guide-step-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.guide-step-num {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--brand-soft);
-  border: 1px solid rgba(233, 228, 218, 0.28);
-  color: var(--brand);
-  font-size: 14px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.guide-step h3 {
-  font-size: 15.5px;
-}
-
-.guide-list {
-  margin: 8px 0;
-  padding-left: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13.5px;
-  color: var(--text-secondary);
-}
-
-.guide-step-link {
-  margin-top: 8px;
-}
-
 /* ---------- Contact import flow ---------- */
 
 .dropzone {
