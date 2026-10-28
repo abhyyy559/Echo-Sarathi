@@ -69,13 +69,36 @@ Add-EnvVar "CORS_ORIGINS" $AppOrigin
 Add-EnvVar "JWT_SECRET" $cfg["JWT_SECRET"]
 Add-EnvVar "INTERNAL_API_TOKEN" $cfg["INTERNAL_API_TOKEN"]
 Add-EnvVar "JWT_EXPIRE_MINUTES" "10080"
-Add-EnvVar "ALLOW_PUBLIC_REGISTRATION" "false"
+# Self-serve sign-up. "true" opens public org creation (needed for the pricing
+# CTAs and Google sign-up); "false" keeps onboarding invite-only. Read from
+# .deploy.env / .env so flipping it never requires editing this script.
+$registration = Get-ProviderValue -Maps @($local, $cfg) -Key "ALLOW_PUBLIC_REGISTRATION"
+if ([string]::IsNullOrWhiteSpace($registration)) { $registration = "false" }
+Add-EnvVar "ALLOW_PUBLIC_REGISTRATION" $registration
 # Deliberately off in production: operator top-ups only. Customer purchases go
 # through Razorpay checkout and are credited only after signature verification.
 Add-EnvVar "ALLOW_MANUAL_PAYMENTS" "false"
-Add-EnvVar "RAZORPAY_KEY_ID" $cfg["RAZORPAY_KEY_ID"]
-Add-EnvVar "RAZORPAY_KEY_SECRET" $cfg["RAZORPAY_KEY_SECRET"]
-Add-EnvVar "RAZORPAY_WEBHOOK_SECRET" $cfg["RAZORPAY_WEBHOOK_SECRET"]
+Add-EnvVar "RAZORPAY_KEY_ID" (Get-ProviderValue -Maps @($local, $cfg) -Key "RAZORPAY_KEY_ID")
+Add-EnvVar "RAZORPAY_KEY_SECRET" (Get-ProviderValue -Maps @($local, $cfg) -Key "RAZORPAY_KEY_SECRET")
+Add-EnvVar "RAZORPAY_WEBHOOK_SECRET" (Get-ProviderValue -Maps @($local, $cfg) -Key "RAZORPAY_WEBHOOK_SECRET")
+
+# --- SaaS billing, email and tax invoices ----------------------------------
+# Invite, reset and invoice-email links must point at the deployed frontend.
+# config.py otherwise falls back to http://localhost:5173.
+Add-EnvVar "FRONTEND_BASE_URL" $AppOrigin.TrimEnd("/")
+# Empty SMTP_HOST means log-only delivery: invites and resets would never
+# reach the user on a deployed stack. COMPANY_* feed the invoice seller block;
+# PLATFORM_ADMIN_EMAILS unlocks /api/platform. Absent values keep the code
+# defaults (invoice GSTIN blank, no platform admin).
+foreach ($key in @(
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
+    "SMTP_FROM", "SMTP_TLS",
+    "COMPANY_LEGAL_NAME", "COMPANY_GSTIN", "COMPANY_ADDRESS", "COMPANY_STATE",
+    "PLATFORM_ADMIN_EMAILS"
+)) {
+    Add-EnvVar $key (Get-ProviderValue -Maps @($local, $cfg) -Key $key)
+}
+Add-EnvVar "BILLING_LIFECYCLE_INTERVAL_HOURS" "6"
 Add-EnvVar "DEMO_EMAIL" $cfg["DEMO_EMAIL"]
 Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 

@@ -64,6 +64,50 @@ services:
       - key: GOOGLE_CLIENT_ID
         sync: false
 
+      # --- SaaS billing, email and tax invoices ---------------------------
+      # Emailed invite/reset links point at this origin; config.py otherwise
+      # falls back to http://localhost:5173.
+      - key: FRONTEND_BASE_URL
+        sync: false
+      # Operator top-ups stay off: card/UPI purchases go through Razorpay and
+      # are credited only after signature verification.
+      - key: ALLOW_MANUAL_PAYMENTS
+        value: "false"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      # Invites, password resets and renewal reminders. Empty SMTP_HOST keeps
+      # delivery log-only.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        value: "Echo Sarathi <hello@echosarathi.ai>"
+      - key: SMTP_TLS
+        value: "true"
+      # Seller block printed on GST invoices.
+      - key: COMPANY_LEGAL_NAME
+        sync: false
+      - key: COMPANY_GSTIN
+        sync: false
+      - key: COMPANY_ADDRESS
+        sync: false
+      - key: COMPANY_STATE
+        sync: false
+      # Comma-separated emails that unlock the platform admin UI and API.
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false
+      - key: BILLING_LIFECYCLE_INTERVAL_HOURS
+        value: "6"
+
       # Demo tenant created by the boot seed. Set a non-default password on
       # any internet-exposed deployment.
       - key: DEMO_EMAIL
@@ -98,6 +142,10 @@ services:
       # One live call at a time until multi-job worker capacity is proven.
       - key: DEFAULT_CONCURRENCY_LIMIT
         value: "1"
+      # Keeps this free instance awake while a campaign is running, so closing
+      # the browser tab (or an overnight calling-hours pause) cannot stop it.
+      - key: KEEPALIVE_INTERVAL_SECONDS
+        value: "600"
       - key: TIMEZONE
         value: Asia/Kolkata
       - key: CALLING_HOURS_START
