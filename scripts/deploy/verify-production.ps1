@@ -100,7 +100,7 @@ $null = Check "Frontend proxy /api/health" {
 Write-Section "Voice worker (LiveKit Cloud)"
 $lk = Join-Path $script:RepoRoot ".tools\lk\lk.exe"
 if ((Test-Path -LiteralPath $lk) -and $cfg["LIVEKIT_API_SECRET"]) {
-    $livekit = Check "LiveKit agent is running" {
+    $livekit = Check "LiveKit agent is deployed" {
         $res = Invoke-Native -FilePath $lk -Arguments @(
             "--url", $cfg["LIVEKIT_URL"],
             "--api-key", $cfg["LIVEKIT_API_KEY"],
@@ -119,10 +119,12 @@ if ((Test-Path -LiteralPath $lk) -and $cfg["LIVEKIT_API_SECRET"]) {
         $parsed = $json | ConvertFrom-Json -ErrorAction Stop
         $agents = @($parsed.agents)
         if ($agents.Count -eq 0) { throw "no agent registered on this LiveKit project" }
-        $running = @($agents | ForEach-Object { $_.agentDeployments } | Where-Object { $_.status -eq "Running" })
+        # The free plan scales to zero: "Sleeping" is a healthy, deployed
+        # worker that will cold-start on the next call, not an outage.
+        $running = @($agents | ForEach-Object { $_.agentDeployments } | Where-Object { $_.status -in @("Running", "Sleeping") })
         if ($running.Count -eq 0) {
             $states = @($agents | ForEach-Object { $_.agentDeployments } | ForEach-Object { $_.status }) -join ", "
-            throw "agent not running yet (state: $states)"
+            throw "agent not deployed (state: $states)"
         }
         $agents
     }
