@@ -23,7 +23,7 @@ import math
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Call, Campaign, CreditLedger, Organization
@@ -244,9 +244,9 @@ def summary(db: Session, org_id: int, limit: int = 25) -> dict[str, Any]:
     )
     minutes_used = db.scalar(
         select(func.coalesce(func.sum(Call.duration_seconds), 0.0))
-        .join(Campaign, Campaign.id == Call.campaign_id)
+        .outerjoin(Campaign, Campaign.id == Call.campaign_id)
         .where(
-            Campaign.org_id == org_id,
+            or_(Call.org_id == org_id, Campaign.org_id == org_id),
             Call.kind == "phone",
             Call.answered_at.is_not(None),
             Call.started_at >= month_start(),

@@ -166,3 +166,31 @@ def test_billing_summary_is_org_scoped(client) -> None:
     assert a["balance_paise"] == 3000 and b["balance_paise"] == 3000
     assert a["price_per_minute_rupees"] == 3.0
     assert len(a["packs"]) == 3
+
+
+def test_test_calls_count_toward_monthly_usage(session_factory) -> None:
+    """Campaign-less test calls must show up in minutes used, like their debit does."""
+    from app.services.billing import charge_call, summary
+    from app.timeutil import utcnow
+
+    org_id = _org_with_balance(session_factory, 3000)
+    with session_factory() as db:
+        now = utcnow()
+        call = Call(
+            org_id=org_id,
+            kind="phone",
+            status="completed",
+            started_at=now - timedelta(seconds=90),
+            answered_at=now - timedelta(seconds=90),
+            ended_at=now,
+            duration_seconds=90,
+        )
+        db.add(call)
+        db.commit()
+        charge_call(db, call)
+        db.commit()
+        body = summary(db, org_id)
+
+    assert body["minutes_used_this_month"] == 1.5
+    assert body["spent_this_month_paise"] == 450
+    assert body["balance_paise"] == 2550
