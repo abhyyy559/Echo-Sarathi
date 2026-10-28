@@ -5,7 +5,10 @@ from app.services.token_substitution import (
     KNOWN_TOKENS,
     apply_token_substitution,
     build_token_map,
+    declares_own_enterprise,
     resolve_org_name,
+    resolve_spoken_name,
+    unfilled_enterprise_keys,
 )
 
 
@@ -75,17 +78,56 @@ def test_build_token_map_resolves_vertical_tokens_from_company_context() -> None
     assert tokens["[Locality]"] == "Kondapur"
 
 
-def test_build_token_map_clinic_name_falls_back_to_institution() -> None:
+def test_build_token_map_unfilled_clinic_name_never_borrows_institution() -> None:
+    """A clinic agent belongs to its own practice; the tenant's name is not it."""
     tokens = build_token_map(
-        {}, institution="Sunrise Dental", company_context={"clinic_name": "[Clinic Name]"}
+        {}, institution="CMR College of Engineering & Technology",
+        company_context={"clinic_name": "[Clinic Name]"},
     )
-    assert tokens["[Clinic Name]"] == "Sunrise Dental"
+    assert tokens["[Company Name]"] == "our company"
+    assert tokens["[Clinic Name]"] == "our clinic"
 
 
 def test_resolve_org_name_skips_unfilled_placeholders() -> None:
     assert resolve_org_name({"company_name": "[Company Name]"}, "Acme Realty") == "Acme Realty"
     assert resolve_org_name({"clinic_name": "Sunrise Dental"}, "Acme Realty") == "Sunrise Dental"
     assert resolve_org_name(None, "Acme Realty") == "Acme Realty"
+
+
+def test_resolve_spoken_name_keeps_tenant_name_for_absence_agents() -> None:
+    """The absence agent represents the tenant's college, so CMR is correct."""
+    assert resolve_spoken_name(
+        {"institution_name": "[Institution Name]"},
+        "CMR College of Engineering & Technology",
+    ) == "CMR College of Engineering & Technology"
+    assert resolve_spoken_name({}, "CMR College of Engineering & Technology") == (
+        "CMR College of Engineering & Technology"
+    )
+
+
+def test_resolve_spoken_name_never_borrows_tenant_for_own_enterprise() -> None:
+    """Kavya's service-feedback agent is a different enterprise from the college."""
+    assert resolve_spoken_name(
+        {"company_name": "[Company Name]"}, "CMR College of Engineering & Technology"
+    ) == ""
+    assert resolve_spoken_name(
+        {"clinic_name": "[Clinic Name]"}, "CMR College of Engineering & Technology"
+    ) == ""
+    assert resolve_spoken_name(
+        {"company_name": "Skyline Estates"}, "CMR College of Engineering & Technology"
+    ) == "Skyline Estates"
+
+
+def test_declares_own_enterprise_counts_unfilled_keys() -> None:
+    assert declares_own_enterprise({"company_name": "[Company Name]"}) is True
+    assert declares_own_enterprise({"institution_name": "[Institution Name]"}) is False
+    assert declares_own_enterprise({}) is False
+
+
+def test_unfilled_enterprise_keys_flags_placeholders_only() -> None:
+    assert unfilled_enterprise_keys({"company_name": "[Company Name]"}) == ["company_name"]
+    assert unfilled_enterprise_keys({"company_name": "Skyline Estates"}) == []
+    assert unfilled_enterprise_keys({"institution_name": "[Institution Name]"}) == []
 
 
 def test_apply_token_substitution_leaves_no_holes_in_preset_opening() -> None:

@@ -202,6 +202,25 @@ def _context_value(company_context: Any, *keys: str) -> str:
     return ""
 
 
+#: Keys that say "this agent belongs to its OWN company/clinic/brand";
+#: an absence agent instead represents the tenant's school. Mirrors
+#: backend/app/services/token_substitution.py.
+_OWN_ENTERPRISE_KEYS: tuple[str, ...] = (
+    "company_name",
+    "clinic_name",
+    "business_name",
+    "organization_name",
+)
+
+
+def declares_own_enterprise(company_context: Any) -> bool:
+    if not isinstance(company_context, Mapping):
+        return False
+    return any(
+        str(company_context.get(key) or "").strip() for key in _OWN_ENTERPRISE_KEYS
+    )
+
+
 def build_token_map(
     contact: Optional[Mapping[str, Any]] = None,
     context: Optional[Mapping[str, Any]] = None,
@@ -229,10 +248,16 @@ def build_token_map(
         keys=("parent_name", "parent", "guardian", "contact_person"),
     )
     who = str(agent_name or "").strip() or AI_ASSISTANT_FALLBACK
+    # An agent authored for its own enterprise never borrows the tenant's
+    # name; an unfilled name speaks neutrally ("our company") until filled.
+    own = declares_own_enterprise(company_context)
+    own_name = _context_value(company_context, *_OWN_ENTERPRISE_KEYS)
+    company_name = own_name or ("our company" if own else institution)
+    clinic_name = own_name or ("our clinic" if own else institution)
     return {
         "[Institution Name]": institution,
-        "[Company Name]": _context_value(company_context, "company_name") or institution,
-        "[Clinic Name]": _context_value(company_context, "clinic_name") or institution,
+        "[Company Name]": company_name,
+        "[Clinic Name]": clinic_name,
         "[Property Name]": _context_value(company_context, "property_name"),
         "[Locality]": _context_value(company_context, "locality"),
         "[Service Type]": _context_value(company_context, "service_type"),
@@ -894,6 +919,14 @@ def render_system_prompt(
 
     # 3. Company context.
     company_context = config.get("company_context")
+    if isinstance(company_context, Mapping):
+        # An unfilled "[Service Date]" is not a fact; leaving it here invites
+        # the model to read the bracket out loud.
+        company_context = {
+            str(key): value
+            for key, value in company_context.items()
+            if not (isinstance(value, str) and _unfilled(value))
+        }
     if company_context:
         sections.append(
             f"{CONTEXT_HEADER}\n"

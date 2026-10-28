@@ -107,8 +107,9 @@ def test_build_token_map_agent_name_defaults_to_assistant() -> None:
 
 
 def test_build_token_map_fills_vertical_tokens_from_company_context() -> None:
-    """Real-estate and clinic presets put their names and details here; a
-    bracket left unfilled must lose to the tenant's resolved institution."""
+    """Real-estate and clinic presets put their names and details here. An
+    unfilled alias (clinic on a real-estate agent) borrows the enterprise's
+    own name, never the tenant's."""
     m = build_token_map(
         contact={"lead_name": "Riya"},
         context={"institution_name": "Skyline Estates"},
@@ -123,6 +124,17 @@ def test_build_token_map_fills_vertical_tokens_from_company_context() -> None:
     assert m["[Property Name]"] == "Green Meadows"
     assert m["[Locality]"] == "Kondapur"
     assert m["[Clinic Name]"] == "Skyline Estates"
+
+
+def test_unfilled_company_name_never_borrows_the_tenant_name() -> None:
+    """Kavya's service-feedback agent is a different enterprise from the
+    college that owns the account; the tenant's name must not fill the slot."""
+    m = build_token_map(
+        context={"institution_name": "CMR College of Engineering & Technology"},
+        company_context={"company_name": "[Company Name]"},
+    )
+    assert m["[Company Name]"] == "our company"
+    assert m["[Institution Name]"] == "CMR College of Engineering & Technology"
 
 
 def test_preset_opening_has_no_holes_after_substitution() -> None:

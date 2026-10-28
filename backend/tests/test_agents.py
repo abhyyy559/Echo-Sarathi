@@ -126,6 +126,36 @@ def test_preset_payload_saves_as_agent_version(client):
     assert "absence" in body["system_prompt"].lower()
 
 
+def test_version_rejects_unfilled_company_name(client):
+    """A service-feedback agent authored for its own enterprise must not ship
+    with the preset's "[Company Name]" still in place: the tenant's name is a
+    different enterprise and must never be spoken in its slot."""
+    token, _user = register(client)
+    agent = _create_agent(client, token)
+    resp = client.post(
+        f"/api/agents/{agent['id']}/versions",
+        json=version_payload(company_context={"company_name": "[Company Name]"}),
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 422, resp.text
+    assert "company_name" in resp.text
+
+
+def test_version_allows_unfilled_institution_for_absence_agents(client):
+    """Absence agents may inherit the tenant's name, so their placeholder is
+    not an authoring error."""
+    token, _user = register(client)
+    agent = _create_agent(client, token)
+    resp = client.post(
+        f"/api/agents/{agent['id']}/versions",
+        json=version_payload(
+            company_context={"institution_name": "[Institution Name]"}
+        ),
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 201, resp.text
+
+
 def test_list_presets_requires_auth(client):
     assert client.get("/api/agents/presets").status_code in (401, 403)
 

@@ -97,6 +97,19 @@ export function hydrateFromVersion(v) {
  */
 export function validateVersionPayload(payload, config) {
   const errs = {};
+  // An agent authored for its own company/clinic must name it. Saving the
+  // preset's "[Company Name]" would make the agent answer as the account's
+  // organization instead (a college's feedback agent introducing itself as
+  // the college).
+  const ownEnterpriseKeys = ['company_name', 'clinic_name', 'business_name', 'organization_name'];
+  const unresolved = ownEnterpriseKeys.filter((key) => {
+    const value = payload.company_context ? payload.company_context[key] : null;
+    return typeof value === 'string' && /^\[[^\]]+\]$/.test(value.trim());
+  });
+  if (unresolved.length) {
+    errs['company_context'] =
+      `Fill in the enterprise name (${unresolved.join(', ')}) — this agent belongs to its own company, not the account's organization.`;
+  }
   if (!payload.system_prompt || payload.system_prompt.length < 10) {
     errs['system_prompt'] = 'System prompt must be at least 10 characters.';
   }

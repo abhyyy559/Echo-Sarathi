@@ -23,6 +23,7 @@ from app.database import get_db
 from app.deps import get_current_user, get_org_or_404, require_roles
 from app.models import AGENT_STATUSES, Agent, AgentVersion, DomainConfig, User
 from app.services import plans
+from app.services.token_substitution import unfilled_enterprise_keys
 from domain_config_schema import validate_agent_version_payload
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -268,6 +269,21 @@ def create_version(
         validated = validate_agent_version_payload(payload)
     except Exception as exc:  # pydantic ValidationError -> field-level 422
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # A preset ships "[Company Name]" for the author to replace. Saving it
+    # as-is would launch an agent that represents no one (or, worse, the
+    # account's own organization — a college's feedback agent answering as
+    # the college). Institution is exempt: absence agents may inherit it.
+    unfilled = unfilled_enterprise_keys(validated.company_context)
+    if unfilled:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Fill in the enterprise name before saving: "
+                f"{', '.join(unfilled)} still holds a placeholder. This agent "
+                "belongs to its own company, not to the account's organization."
+            ),
+        )
 
     agent = _get_own_agent(db, agent_id, user)
     latest = db.scalar(

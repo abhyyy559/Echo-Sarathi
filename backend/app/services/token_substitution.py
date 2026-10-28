@@ -66,6 +66,17 @@ _ORG_NAME_KEYS: tuple[str, ...] = (
     "organization_name",
 )
 
+# Keys that say "this agent belongs to its OWN company/clinic/brand", as
+# opposed to an absence agent, which represents the tenant's school. The
+# tenant's name may stand in for an unfilled institution; it must never stand
+# in here, or a college's service-feedback agent answers as the college.
+_OWN_ENTERPRISE_KEYS: tuple[str, ...] = (
+    "company_name",
+    "clinic_name",
+    "business_name",
+    "organization_name",
+)
+
 
 def _context_value(company_context: Any, *keys: str) -> str:
     if not isinstance(company_context, Mapping):
@@ -77,9 +88,69 @@ def _context_value(company_context: Any, *keys: str) -> str:
     return ""
 
 
+def filled_context(company_context: Any) -> dict[str, Any]:
+    """Company facts with unfilled preset tokens removed.
+
+    ``"[Service Date]"`` is not a fact; leaving it in the prompt's context
+    block invites the model to read the bracket out loud.
+    """
+    if not isinstance(company_context, Mapping):
+        return {}
+    return {
+        str(key): value
+        for key, value in company_context.items()
+        if not is_bracket_placeholder(value)
+    }
+
+
 def resolve_org_name(company_context: Any, fallback: str = "") -> str:
     """Name this tenant wants spoken, from its vertical's company_context."""
     return _context_value(company_context, *_ORG_NAME_KEYS) or str(fallback or "").strip()
+
+
+def declares_own_enterprise(company_context: Any) -> bool:
+    """True when the version says it belongs to its own company/clinic/brand.
+
+    The key counts even while its value is still the preset's ``[Company
+    Name]``: the agent was authored for a different enterprise, and the
+    tenant's name (a college, say) is not that enterprise.
+    """
+    if not isinstance(company_context, Mapping):
+        return False
+    return any(
+        str(company_context.get(key) or "").strip() for key in _OWN_ENTERPRISE_KEYS
+    )
+
+
+def unfilled_enterprise_keys(company_context: Any) -> list[str]:
+    """Own-enterprise keys still holding an unfilled preset token.
+
+    ``institution`` is deliberately excluded: an absence agent is allowed to
+    inherit the tenant's name, so its placeholder is not an authoring error.
+    """
+    if not isinstance(company_context, Mapping):
+        return []
+    return [
+        key
+        for key in _OWN_ENTERPRISE_KEYS
+        if is_bracket_placeholder(company_context.get(key))
+    ]
+
+
+def resolve_spoken_name(company_context: Any, tenant_name: str = "") -> str:
+    """Enterprise name this call may speak.
+
+    ``tenant_name`` is the account's own organization. It is the right
+    fallback for an absence agent (the tenant IS the college) or a version
+    with no vertical identity at all — but not for an agent authored as
+    another enterprise. Returning "" there lets the caller-facing templates
+    use their neutral fallback instead of introducing the agent with the
+    tenant's name.
+    """
+    name = resolve_org_name(company_context)
+    if name or declares_own_enterprise(company_context):
+        return name
+    return str(tenant_name or "").strip()
 
 
 def build_token_map(
@@ -94,10 +165,16 @@ def build_token_map(
     parent = _first(card, _PARENT_KEYS)
     org = str(institution or "").strip()
     who = str(agent_name or "").strip() or "an AI assistant"
+    # An agent authored for its own enterprise never borrows the tenant's
+    # name; an unfilled name speaks neutrally ("our company") until filled.
+    own = declares_own_enterprise(company_context)
+    own_name = _context_value(company_context, *_OWN_ENTERPRISE_KEYS)
+    company_name = own_name or ("our company" if own else org)
+    clinic_name = own_name or ("our clinic" if own else org)
     return {
         "[Institution Name]": org,
-        "[Company Name]": _context_value(company_context, "company_name") or org,
-        "[Clinic Name]": _context_value(company_context, "clinic_name") or org,
+        "[Company Name]": company_name,
+        "[Clinic Name]": clinic_name,
         "[Property Name]": _context_value(company_context, "property_name"),
         "[Locality]": _context_value(company_context, "locality"),
         "[Service Type]": _context_value(company_context, "service_type"),

@@ -269,10 +269,12 @@ def test_context_reads_vertical_clinic_name(client, session_factory):
     assert resp.json()["institution_name"] == "Sunrise Dental"
 
 
-def test_context_unfilled_vertical_name_falls_back_to_organization(
+def test_context_unfilled_vertical_name_never_borrows_organization(
     client, session_factory
 ):
-    token, user = register(client, org_name="Acme Realty")
+    """A service-feedback agent belongs to its own company: the college that
+    owns the account must not become its spoken enterprise name."""
+    token, user = register(client, org_name="CMR College of Engineering & Technology")
     with session_factory() as db:
         version = _make_agent_version(
             db, user["org_id"], {"company_name": "[Company Name]"}
@@ -281,7 +283,7 @@ def test_context_unfilled_vertical_name_falls_back_to_organization(
 
     resp = client.get(f"/internal/calls/{call_id}/context", headers=INTERNAL)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["institution_name"] == "Acme Realty"
+    assert resp.json()["institution_name"] == ""
 
 
 def _activity_payload(

@@ -48,7 +48,10 @@ from app.services.calls_service import (
     log_call_event,
     maybe_complete_campaign,
 )
-from app.services.token_substitution import resolve_org_name
+from app.services.token_substitution import (
+    declares_own_enterprise,
+    resolve_spoken_name,
+)
 from app.timeutil import parse_iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -179,23 +182,23 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     org_id = call.org_id
     if org_id is None and campaign is not None:
         org_id = campaign.org_id
-    institution_name = ""
+    company_context: Any = {}
     if call.agent_version_id is not None:
         version = db.get(AgentVersion, call.agent_version_id)
         company_context = version.company_context if version is not None else {}
-        # A preset's unfilled "[Institution Name]" is not a name: holding it
-        # here made the agent say "I am from ." on every call. resolve_org_name
-        # skips placeholders and reads each vertical's key (company_name,
-        # clinic_name, ...), falling back to the tenant's real name below.
-        institution_name = resolve_org_name(company_context)
-    if not institution_name and org_id is not None:
+    tenant_name = ""
+    if org_id is not None:
         org = db.get(Organization, org_id)
         if org is not None and isinstance(org.name, str):
-            institution_name = org.name.strip()
-    if not institution_name and campaign is not None:
-        campaign_name = campaign.name
-        if isinstance(campaign_name, str):
-            institution_name = campaign_name.strip()
+            tenant_name = org.name.strip()
+    # The tenant's own name is only a stand-in for an absence agent (the
+    # college IS the tenant). A version authored for another enterprise keeps
+    # its own name; speaking the tenant's here is how a service-feedback agent
+    # introduced itself as "CMR College of Engineering & Technology".
+    institution_name = resolve_spoken_name(company_context, tenant_name)
+    if not institution_name and not declares_own_enterprise(company_context):
+        if campaign is not None and isinstance(campaign.name, str):
+            institution_name = campaign.name.strip()
     return {
         "call": {
             "id": call.id,
