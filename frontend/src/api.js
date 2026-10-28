@@ -229,12 +229,6 @@ export const playgroundApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  // SIMULATION ONLY: run campaign contacts through text-mode turns. No telephony.
-  runDryRun: (campaignId, body) =>
-    apiFetch(`/api/playground/campaigns/${campaignId}/dry-run`, {
-      method: 'POST',
-      body: JSON.stringify(body || {}),
-    }),
   // Verification aid: what is configured, which provider served, what fell back.
   diagnostics: () => apiFetch('/api/playground/diagnostics'),
   // Live feed, polled with the last seq so nothing is re-fetched.

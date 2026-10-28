@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, campaignExportUrl, playgroundApi } from '../api.js';
+import { api, downloadCampaignExport } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import StatusBadge, { statusLabel } from '../components/StatusBadge.jsx';
-import DryRunReport from '../components/DryRunReport.jsx';
 import Modal from '../components/Modal.jsx';
 import DataTable from '../components/DataTable.jsx';
 import ContactImport from '../components/ContactImport.jsx';
@@ -186,27 +185,6 @@ export default function CampaignDetailPage() {
 
   // ---- import ----
   const [importResult, setImportResult] = useState(null);
-
-  // ---- text dry-run (SIMULATION — no calls placed) ----
-  const [dryRunPersona, setDryRunPersona] = useState('');
-  const [dryRunReport, setDryRunReport] = useState(null);
-  const [dryRunBusy, setDryRunBusy] = useState(false);
-  const [dryRunError, setDryRunError] = useState(null);
-
-  async function runDryRun() {
-    setDryRunBusy(true);
-    setDryRunError(null);
-    setDryRunReport(null);
-    try {
-      const body = dryRunPersona ? { persona: dryRunPersona } : {};
-      const report = await playgroundApi.runDryRun(id, body);
-      setDryRunReport(report || null);
-    } catch (e) {
-      setDryRunError(e.message || 'Dry run failed.');
-    } finally {
-      setDryRunBusy(false);
-    }
-  }
 
   function onImported(result) {
     setImportResult(result || {});
@@ -484,10 +462,10 @@ export default function CampaignDetailPage() {
           )}
           <div className="export-group">
             <span className="export-label">Export:</span>
-            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'csv'), '_blank')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'csv'))}>
               CSV
             </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'xlsx'), '_blank')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'xlsx'))}>
               XLSX
             </button>
           </div>
@@ -498,29 +476,6 @@ export default function CampaignDetailPage() {
       {canLaunch && launchBlockedReason && !actionError && (
         <div className="banner banner-info">{launchBlockedReason}</div>
       )}
-
-      <div className="card">
-        <h3 className="page-title">Test campaign (text simulation)</h3>
-        <p className="page-sub">Runs every queued contact against scripted caller personas. No real calls, no minutes.</p>
-        <div className="field">
-          <label htmlFor="dryrun-persona">Persona</label>
-          <select id="dryrun-persona" value={dryRunPersona} onChange={(e) => setDryRunPersona(e.target.value)}>
-            <option value="">Round-robin (all five)</option>
-            <option value="cooperative">Cooperative</option>
-            <option value="terse">Terse</option>
-            <option value="distracted">Distracted</option>
-            <option value="refuses">Refuses</option>
-            <option value="clueless">Clueless</option>
-          </select>
-        </div>
-        {dryRunError && <div className="banner banner-error">{dryRunError}</div>}
-        <div className="form-actions">
-          <button className="btn btn-primary" disabled={dryRunBusy} onClick={runDryRun}>
-            {dryRunBusy ? 'Simulating…' : 'Run text dry-run'}
-          </button>
-        </div>
-      </div>
-      {dryRunReport && <DryRunReport report={dryRunReport} />}
 
       <div className="tabs">
         <button className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')}>

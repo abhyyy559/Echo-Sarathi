@@ -31,8 +31,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.database import get_db
 from app.deps import get_current_user, get_org_or_404
-from app.models import Agent, AgentVersion, Call, Campaign, Contact, ExtractedField, Organization, Transcript, User
-from app.schemas import DryRunCreate
+from app.models import Agent, AgentVersion, Call, ExtractedField, Organization, Transcript, User
 from app.timeutil import utcnow
 from app.services.telemetry import recorder as telemetry
 from app.services.token_substitution import (
@@ -2122,8 +2121,7 @@ async def _run_agent_turn(
 ) -> dict[str, Any]:
     """One text-mode agent turn: build prompt, call Groq, run tools, persist.
 
-    Shared by the HTTP turns endpoint and the campaign dry-run runner so
-    simulated calls go through byte-identical conversation logic.
+    Used by the HTTP turns endpoint for every text-mode playground session.
     """
     contact = (call.context or {}).get("contact") or {}
     org = db.get(Organization, call.org_id) if call.org_id else None
@@ -2550,71 +2548,3 @@ def _persist_serving_provider(
     )
     context["llm_turn_providers"] = providers_seen
     call.context = context
-
-
-@router.post("/campaigns/{campaign_id}/dry-run")
-async def dry_run_campaign(
-    campaign_id: int,
-    payload: DryRunCreate,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """SIMULATION ONLY: run campaign contacts through text-mode turns.
-
-    No telephony, no dialer. Each contact gets a scripted caller persona and
-    a persisted ``Call(kind="dry-run")`` for inspection via call detail.
-    """
-    from app.services.dry_run import PERSONA_ORDER, run_campaign_dry_run, validate_persona
-
-    settings: Settings = request.app.state.settings
-    if not settings.groq_api_key_list:
-        raise HTTPException(
-            status_code=503,
-            detail="Text mode needs GROQ_API_KEY configured on the backend.",
-        )
-    campaign = db.get(Campaign, campaign_id)
-    if campaign is None or campaign.org_id != user.org_id:
-        raise HTTPException(status_code=404, detail="not found")
-    version = None
-    if campaign.agent_version_id:
-        version = db.get(AgentVersion, campaign.agent_version_id)
-    if version is None:
-        version = db.scalar(
-            select(AgentVersion)
-            .join(Agent, Agent.id == AgentVersion.agent_id)
-            .where(Agent.org_id == user.org_id)
-            .order_by(AgentVersion.id.desc())
-        )
-    if version is None:
-        raise HTTPException(status_code=422, detail="no agent versions in org")
-    if payload.persona is not None:
-        try:
-            persona_names = [validate_persona(payload.persona)]
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    else:
-        persona_names = list(PERSONA_ORDER)
-    contacts = list(
-        db.scalars(
-            select(Contact)
-            .where(
-                Contact.campaign_id == campaign.id,
-                Contact.status.in_(["queued", "pending_review"]),
-            )
-            .order_by(Contact.id)
-            .limit(payload.contact_limit)
-        ).all()
-    )
-    report = await run_campaign_dry_run(
-        db, settings, _run_agent_turn,
-        campaign=campaign, version=version,
-        contacts=contacts, persona_names=persona_names,
-    )
-    return {
-        "campaign_id": campaign.id,
-        "persona": payload.persona,
-        "contacts_total": len(contacts),
-        "contacts_run": len(report["results"]),
-        "results": report["results"],
-    }

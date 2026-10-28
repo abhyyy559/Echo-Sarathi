@@ -380,36 +380,3 @@ class RetentionRunOut(BaseModel):
     calls_older_than_cutoff: int
     transcripts_deleted: int
     recording_urls_cleared: int
-
-
-# --- campaign dry-run (text-mode simulation) ---------------------------------
-
-
-class DryRunCreate(BaseModel):
-    persona: Optional[str] = None  # one of dry_run.PERSONA_ORDER; None = round-robin
-    contact_limit: int = Field(default=20, gt=0, le=100)
-
-
-class DryRunTranscriptTurn(BaseModel):
-    role: str
-    text: str
-
-
-class DryRunContactResult(BaseModel):
-    contact_id: int
-    name: str
-    phone: str  # masked
-    persona: str
-    transcript: list[DryRunTranscriptTurn]
-    extracted_fields: list[dict[str, Any]]
-    status: str
-    outcome: Optional[str] = None
-    turns: int
-
-
-class DryRunReport(BaseModel):
-    campaign_id: int
-    persona: Optional[str] = None
-    contacts_total: int
-    contacts_run: int
-    results: list[DryRunContactResult]
