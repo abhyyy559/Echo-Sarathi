@@ -24,7 +24,22 @@ const PROVIDER_LABELS = {
   deepgram: 'Deepgram',
   cartesia: 'Cartesia',
   sarvam: 'Sarvam',
+  velona: 'Velona',
 };
+
+/** Collapse consecutive identical members (one entry per Groq key slot). */
+function chainMembers(chain) {
+  const out = [];
+  for (const member of chain || []) {
+    const last = out[out.length - 1];
+    if (last && last.name === member.name && last.model === member.model) {
+      last.count += 1;
+    } else {
+      out.push({ name: member.name, model: member.model, count: 1 });
+    }
+  }
+  return out;
+}
 
 const USAGE_BADGE = {
   ok: { cls: 'ok', label: 'Healthy' },
@@ -585,12 +600,13 @@ function DevToolsInner() {
           call; Sarvam is metered per character; Deepgram and Cartesia balances are polled daily or on demand.
         </p>
 
-        {status && Array.isArray(status.llm_chain) && status.llm_chain.length > 0 && (
+        {health && Array.isArray(health.llm_chain) && health.llm_chain.length > 0 && (
           <div className="quota-chain">
             <span className="quota-chain-label">Active LLM chain</span>
-            {status.llm_chain.map((member, i) => (
-              <span key={`${member.name}-${member.model}`} className="quota-chip" title={`Fallback ${i + 1}`}>
+            {chainMembers(health.llm_chain).map((member, i) => (
+              <span key={`${member.name}-${member.model}`} className="quota-chip" title={`Tried ${i + 1} in order`}>
                 {i + 1}. {PROVIDER_LABELS[member.name] || member.name} · {member.model}
+                {member.count > 1 ? ` ×${member.count}` : ''}
               </span>
             ))}
           </div>
