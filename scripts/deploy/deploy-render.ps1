@@ -8,7 +8,7 @@
 
 #
 # A second environment for another branch shares the production database:
-#   deploy-render.ps1 -AppOrigin https://echo-sarathi-loki.vercel.app `
+#   deploy-render.ps1 -AppOrigin https://echosarathi-web-loki.onrender.com `
 #       -ServiceName echosarathi-api-loki -Branch loki -Secondary
 # -Secondary turns off the dialer and background jobs (the primary service
 # already runs them against the same database) and leaves the primary's
