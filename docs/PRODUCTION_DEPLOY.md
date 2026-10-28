@@ -126,6 +126,28 @@ powershell -File scripts\deploy\deploy-vercel.ps1 -OriginOnly   # just resolve t
 powershell -File scripts\deploy\deploy-livekit.ps1 -StatusOnly
 ```
 
+### A second branch at production level
+
+`master` is the customer site. Another branch can run as its own public
+environment, sharing the Neon database:
+
+```powershell
+powershell -File scripts\deploy\deploy-render.ps1 -AppOrigin https://echosarathi-web-loki.onrender.com `
+    -ServiceName echosarathi-api-loki -Branch loki -Secondary
+```
+
+`-Secondary` disables the dialer, retention, usage and billing loops (the
+primary API already runs them against the same database) and leaves the
+primary's `RENDER_SERVICE_ID` / `RENDER_SERVICE_URL` untouched. Both services
+run the same idempotent seed at boot.
+
+The `loki` frontend is a Render **static site** (`echosarathi-web-loki`,
+branch `loki`, `VITE_API_URL` pointing at the loki API) because the Vercel
+token on this account is scoped to the existing project and cannot create a
+second one; Vercel previews of other branches stay behind Deployment
+Protection. A Render static site is public, auto-deploys on push to its
+branch, and needs the `/* -> /index.html` rewrite for client-side routes.
+
 ### Why the migrations run in the start command
 
 Render's `preDeployCommand` is a paid-plan feature. On the free plan the start
