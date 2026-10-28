@@ -52,8 +52,14 @@ def test_list_presets_returns_valid_payloads(client):
     assert resp.status_code == 200, resp.text
     presets = resp.json()
     ids = {p["preset_id"] for p in presets}
-    # Attendance preset plus its Telugu twin (multilingual support).
-    assert ids == {"absent-student-followup", "absent-student-followup-telugu"}
+    # Every shipped starter template; each one is a complete, saveable payload.
+    assert ids == {
+        "absent-student-followup",
+        "absent-student-followup-telugu",
+        "real-estate-site-visit",
+        "clinic-appointment-confirmation",
+        "service-feedback",
+    }
     for preset in presets:
         assert preset["name"]
         payload = preset["version_payload"]
