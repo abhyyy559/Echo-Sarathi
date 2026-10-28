@@ -149,9 +149,18 @@ class Settings(BaseSettings):
 
     # --- billing -------------------------------------------------------------
     # Self-service top-ups without a payment gateway exist for local demos and
-    # for an operator taking payment offline. Production stays false until a
-    # real checkout (Razorpay) is wired, otherwise this endpoint mints money.
+    # for an operator taking payment offline. Production stays false; the UI
+    # never surfaces this path, it survives only for operator scripts.
     allow_manual_payments: bool = False
+    # Razorpay checkout: a pack is credited only after the payment signature
+    # verifies (or the webhook confirms capture). Empty keys = checkout off.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+
+    @property
+    def checkout_enabled(self) -> bool:
+        return bool(self.razorpay_key_id and self.razorpay_key_secret)
 
     # --- domain configs ------------------------------------------------------
     # Default: ../domain-configs relative to repo root. In container: /domain-configs.

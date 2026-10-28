@@ -240,11 +240,17 @@ export const analyticsApi = {
 export const billingApi = {
   /** Wallet balance, this month's spend, packs and the recent ledger. */
   summary: () => apiFetch('/api/billing'),
-  /** Credits a pack. The backend refuses unless a payment path is enabled. */
-  topup: (packId) =>
-    apiFetch('/api/billing/topup', {
+  /** Creates a gateway order. Credits are granted only after /verify. */
+  checkout: (packId) =>
+    apiFetch('/api/billing/checkout', {
       method: 'POST',
       body: JSON.stringify({ pack_id: packId }),
+    }),
+  /** Verifies the gateway signature and credits the pack once. */
+  verify: (payload) =>
+    apiFetch('/api/billing/verify', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
 };
 

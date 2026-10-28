@@ -23,10 +23,10 @@ import math
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.models import Call, Campaign, CreditLedger, Organization
+from app.models import Call, Campaign, CreditLedger, Organization, Payment
 from app.timeutil import utcnow
 
 #: What a connected call minute sells for (Rs 3.00).
@@ -159,6 +159,58 @@ def purchase_pack(
         description=f"{pack['name']} pack · {pack['minutes']} minutes",
         created_by=created_by,
     )
+
+
+def open_payment(
+    db: Session,
+    *,
+    org_id: int,
+    pack: dict[str, Any],
+    provider_order_id: str,
+    created_by: Optional[int] = None,
+) -> Payment:
+    """Record a checkout attempt before the customer is sent to the gateway."""
+    payment = Payment(
+        org_id=org_id,
+        pack_id=str(pack["id"]),
+        amount_paise=int(pack["price_paise"]),
+        provider="razorpay",
+        provider_order_id=provider_order_id,
+        status="created",
+        created_by=created_by,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def settle_payment(
+    db: Session, payment: Payment, provider_payment_id: str
+) -> bool:
+    """Mark a payment paid and credit its pack exactly once.
+
+    The status flip is a conditional UPDATE, so a browser verify callback and
+    a webhook for the same payment cannot both credit the wallet: only one
+    row update reports ``rowcount == 1``.
+    """
+    if payment.status == "paid":
+        return False
+    pack = get_pack(payment.pack_id)
+    if pack is None:
+        raise ValueError(f"unknown pack on payment {payment.id}: {payment.pack_id}")
+    flipped = db.execute(
+        update(Payment)
+        .where(Payment.id == payment.id, Payment.status != "paid")
+        .values(
+            status="paid",
+            provider_payment_id=provider_payment_id,
+            paid_at=utcnow(),
+        )
+    ).rowcount
+    if not flipped:
+        return False
+    purchase_pack(db, payment.org_id, pack, created_by=payment.created_by)
+    return True
 
 
 def _call_org_id(db: Session, call: Call) -> Optional[int]:

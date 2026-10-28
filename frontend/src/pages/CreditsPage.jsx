@@ -8,6 +8,26 @@ const KIND_LABELS = {
   usage: { cls: 'warn', label: 'Call usage' },
 };
 
+let razorpayLoader = null;
+
+/** Injects the Razorpay checkout script once; resolves when it is ready. */
+function loadRazorpay() {
+  if (window.Razorpay) return Promise.resolve();
+  if (razorpayLoader) return razorpayLoader;
+  razorpayLoader = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      razorpayLoader = null;
+      reject(new Error('Could not load the payment window. Check your connection.'));
+    };
+    document.body.appendChild(script);
+  });
+  return razorpayLoader;
+}
+
 function inr(value, digits = 2) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
@@ -52,19 +72,63 @@ export default function CreditsPage() {
     setBuying(pack.id);
     setNotice(null);
     billingApi
-      .topup(pack.id)
-      .then((next) => {
-        setData(next);
-        setNotice(`${pack.name} pack added — ${pack.minutes} minutes credited.`);
+      .checkout(pack.id)
+      .then(async (order) => {
+        await loadRazorpay();
+        const rzp = new window.Razorpay({
+          key: order.key_id,
+          amount: order.amount,
+          currency: order.currency,
+          name: 'Echo Sarathi',
+          description: `${order.pack_name} pack · ${order.minutes} minutes`,
+          order_id: order.order_id,
+          theme: { color: '#5b8cff' },
+          modal: {
+            ondismiss: () => {
+              setBuying(null);
+              setNotice('Payment cancelled — your card was not charged and no credits were added.');
+            },
+          },
+          handler: async (response) => {
+            try {
+              const next = await billingApi.verify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                pack_id: pack.id,
+              });
+              setData(next);
+              setNotice(
+                next.credits_granted
+                  ? `Payment received — ${pack.minutes} minutes added.`
+                  : 'This payment was already credited — your balance is unchanged.'
+              );
+            } catch (e) {
+              setNotice(
+                e.message ||
+                  'Payment succeeded but verification failed. Contact support with your payment id — you will not be charged twice.'
+              );
+            } finally {
+              setBuying(null);
+            }
+          },
+        });
+        rzp.on('payment.failed', (resp) => {
+          setBuying(null);
+          setNotice(`Payment failed: ${resp?.error?.description || 'no credits were added.'}`);
+        });
+        rzp.open();
       })
-      .catch((e) => setNotice(e.message || String(e)))
-      .finally(() => setBuying(null));
+      .catch((e) => {
+        setBuying(null);
+        setNotice(e.message || String(e));
+      });
   }
 
   const balance = data ? Number(data.balance_rupees) : 0;
   const minutes = data ? Number(data.minutes_remaining) : 0;
   const lowBalance = Boolean(data && data.low_balance);
-  const paymentsOn = Boolean(data && data.manual_payments_enabled);
+  const paymentsOn = Boolean(data && data.checkout_enabled);
   const ledger = data && Array.isArray(data.ledger) ? data.ledger : [];
   const packs = data && Array.isArray(data.packs) ? data.packs : [];
 
@@ -172,16 +236,16 @@ export default function CreditsPage() {
                     onClick={() => buy(pack)}
                     title={paymentsOn ? '' : 'Online payments are not enabled yet'}
                   >
-                    {buying === pack.id ? 'Adding…' : `Buy ${pack.name}`}
+                    {buying === pack.id ? 'Opening…' : `Buy ${pack.name}`}
                   </button>
                 </div>
               ))}
             </div>
             {!paymentsOn && (
               <div style={{ padding: '0 20px 18px', fontSize: 12.5, color: 'var(--dim)' }}>
-                Online checkout is not enabled in this environment. To add credits,
-                write to <a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a> —
-                packs are credited to your organization manually.
+                Online checkout is not enabled in this environment yet. Nothing is charged
+                here and no credits are added automatically. To buy a pack,
+                write to <a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a>.
               </div>
             )}
           </div>

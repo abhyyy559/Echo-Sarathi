@@ -69,9 +69,12 @@ Add-EnvVar "JWT_SECRET" $cfg["JWT_SECRET"]
 Add-EnvVar "INTERNAL_API_TOKEN" $cfg["INTERNAL_API_TOKEN"]
 Add-EnvVar "JWT_EXPIRE_MINUTES" "10080"
 Add-EnvVar "ALLOW_PUBLIC_REGISTRATION" "false"
-# Deliberately off in production: top-ups are manual until a payment gateway is
-# wired, so the API cannot mint credits. Local .env flips this for testing.
+# Deliberately off in production: operator top-ups only. Customer purchases go
+# through Razorpay checkout and are credited only after signature verification.
 Add-EnvVar "ALLOW_MANUAL_PAYMENTS" "false"
+Add-EnvVar "RAZORPAY_KEY_ID" $cfg["RAZORPAY_KEY_ID"]
+Add-EnvVar "RAZORPAY_KEY_SECRET" $cfg["RAZORPAY_KEY_SECRET"]
+Add-EnvVar "RAZORPAY_WEBHOOK_SECRET" $cfg["RAZORPAY_WEBHOOK_SECRET"]
 Add-EnvVar "DEMO_EMAIL" $cfg["DEMO_EMAIL"]
 Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 

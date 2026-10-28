@@ -393,6 +393,37 @@ class CreditLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Payment(Base):
+    """One checkout attempt for a credit pack, keyed by the provider order.
+
+    Credits are granted only when ``status`` flips to ``paid`` after the
+    gateway signature verifies or its webhook confirms capture. The unique
+    provider ids make both paths idempotent: a retried verify call or a
+    webhook arriving after the browser callback can never credit twice.
+    """
+
+    __tablename__ = "payments"
+    __table_args__ = (Index("ix_payments_org_created", "org_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    pack_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False, default="razorpay")
+    provider_order_id: Mapped[str] = mapped_column(
+        String(120), nullable=False, unique=True, index=True
+    )
+    provider_payment_id: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True, unique=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="created")
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class UsageSnapshot(Base):
     """One provider quota/credit observation.
     Rows are append-only observations, not counters: the latest row for a

@@ -194,3 +194,176 @@ def test_test_calls_count_toward_monthly_usage(session_factory) -> None:
     assert body["minutes_used_this_month"] == 1.5
     assert body["spent_this_month_paise"] == 450
     assert body["balance_paise"] == 2550
+
+
+# --- gateway checkout -------------------------------------------------------
+
+
+def _checkout_app(session_factory, **overrides):
+    from fastapi.testclient import TestClient
+
+    from conftest import make_settings
+    from app.main import create_app
+
+    settings = make_settings(
+        razorpay_key_id="rzp_test_key",
+        razorpay_key_secret="rzp_test_secret",
+        razorpay_webhook_secret="rzp_test_hook",
+        **overrides,
+    )
+    application = create_app(settings)
+    application.state.session_factory = session_factory
+    return application, settings
+
+
+def test_checkout_is_refused_when_gateway_is_not_configured(client) -> None:
+    token, _ = register(client, "No Pay Org")
+    resp = client.post(
+        "/api/billing/checkout",
+        json={"pack_id": "starter"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 503
+
+
+def test_verify_credits_once_and_replays_are_idempotent(session_factory) -> None:
+    import hashlib
+    import hmac
+
+    from fastapi.testclient import TestClient
+
+    application, settings = _checkout_app(session_factory)
+    with TestClient(application) as client:
+        token, user = register(client, "Gateway Org")
+        with session_factory() as db:
+            from app.services import billing
+
+            org_id = int(user["org_id"])
+            pack = billing.get_pack("starter")
+            billing.open_payment(
+                db, org_id=org_id, pack=pack, provider_order_id="order_test_1"
+            )
+            db.commit()
+            before = billing.balance_paise(db, org_id)
+
+        signature = hmac.new(
+            settings.razorpay_key_secret.encode(),
+            b"order_test_1|pay_test_1",
+            hashlib.sha256,
+        ).hexdigest()
+        payload = {
+            "razorpay_order_id": "order_test_1",
+            "razorpay_payment_id": "pay_test_1",
+            "razorpay_signature": signature,
+            "pack_id": "starter",
+        }
+        first = client.post(
+            "/api/billing/verify", json=payload, headers=auth_headers(token)
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["credits_granted"] is True
+        with session_factory() as db:
+            from app.services import billing
+
+            after_first = billing.balance_paise(db, org_id)
+        assert after_first == before + 60 * 300
+
+        replay = client.post(
+            "/api/billing/verify", json=payload, headers=auth_headers(token)
+        )
+        assert replay.status_code == 200
+        assert replay.json()["credits_granted"] is False
+        with session_factory() as db:
+            from app.services import billing
+
+            after_replay = billing.balance_paise(db, org_id)
+        assert after_replay == after_first
+
+
+def test_verify_rejects_a_bad_signature(session_factory) -> None:
+    from fastapi.testclient import TestClient
+
+    application, _ = _checkout_app(session_factory)
+    with TestClient(application) as client:
+        token, user = register(client, "Forged Org")
+        with session_factory() as db:
+            from app.services import billing
+
+            billing.open_payment(
+                db,
+                org_id=int(user["org_id"]),
+                pack=billing.get_pack("growth"),
+                provider_order_id="order_test_forged",
+            )
+            db.commit()
+        resp = client.post(
+            "/api/billing/verify",
+            json={
+                "razorpay_order_id": "order_test_forged",
+                "razorpay_payment_id": "pay_forged",
+                "razorpay_signature": "deadbeef",
+                "pack_id": "growth",
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 400
+
+
+def test_webhook_credits_captured_payment_and_checks_signature(session_factory) -> None:
+    import hashlib
+    import hmac
+    import json
+
+    from fastapi.testclient import TestClient
+
+    application, settings = _checkout_app(session_factory)
+    with TestClient(application) as client:
+        _, user = register(client, "Webhook Org")
+        org_id = int(user["org_id"])
+        with session_factory() as db:
+            from app.services import billing
+
+            billing.open_payment(
+                db,
+                org_id=org_id,
+                pack=billing.get_pack("scale"),
+                provider_order_id="order_test_hook",
+            )
+            db.commit()
+
+        body = json.dumps(
+            {
+                "event": "payment.captured",
+                "payload": {
+                    "payment": {
+                        "entity": {
+                            "id": "pay_hook_1",
+                            "order_id": "order_test_hook",
+                            "amount": 280000,
+                            "status": "captured",
+                        }
+                    }
+                },
+            }
+        ).encode()
+
+        bad = client.post(
+            "/api/billing/webhook", content=body, headers={"X-Razorpay-Signature": "nope"}
+        )
+        assert bad.status_code == 403
+
+        good_sig = hmac.new(
+            settings.razorpay_webhook_secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+        good = client.post(
+            "/api/billing/webhook",
+            content=body,
+            headers={"X-Razorpay-Signature": good_sig},
+        )
+        assert good.status_code == 200, good.text
+        assert good.json()["credits_granted"] is True
+        with session_factory() as db:
+            from app.services import billing
+
+            # 10 free minutes from registration + the 1000-minute Scale pack.
+            assert billing.balance_paise(db, org_id) == 3000 + 1000 * 300
