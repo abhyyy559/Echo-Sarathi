@@ -183,6 +183,15 @@ export default function CampaignsPage() {
                       {c.status === 'paused' && (
                         <button className="btn sm ghost" onClick={() => act(c.id, api.launchCampaign)}>Resume</button>
                       )}
+                      {(c.status === 'completed' || c.status === 'canceled') && (
+                        <button
+                          className="btn sm ghost"
+                          title="Dial whoever is pending now — earlier calls stay on record"
+                          onClick={() => act(c.id, api.launchCampaign)}
+                        >
+                          Start new run
+                        </button>
+                      )}
                       {c.status !== 'completed' && c.status !== 'canceled' && c.status !== 'draft' && (
                         <button className="btn sm danger" style={{ marginLeft: 6 }} onClick={() => act(c.id, api.cancelCampaign)}>
                           Cancel

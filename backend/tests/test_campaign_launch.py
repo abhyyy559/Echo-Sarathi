@@ -2,13 +2,16 @@
 
 Regression context (2026-08-24): a launch click in the UI surfaced 422 twice.
 The endpoint takes NO request body; its 422s are business guards only:
-  - campaign already running / completed / canceled
-  - zero contacts on the roster
+  - campaign already running
+  - nothing left to call for this run (no contacts, or none pending)
   - outside the calling-hours window (default 09:00-21:00 IST, PRD §8)
 
-These tests pin the successful call shape (empty-body POST -> 200, status
-"running", consenting pending_review contacts queued) and the two rejections
-users are most likely to hit, so frontend work has a stable contract to mirror.
+A campaign is a reusable daily roster, not a one-shot batch: `completed` and
+`canceled` campaigns launch again with whoever is pending that day, and
+cancelling hands un-dialled people back to review so tomorrow's operator picks
+the roster afresh. These tests pin that contract, plus the successful call
+shape (empty-body POST -> 200, status "running", consenting pending_review
+contacts queued).
 
 The clock is injected via ``app.state.clock`` — the same seam the router reads
 (campaigns.py: ``getattr(request.app.state, "clock", None) or utcnow``).
@@ -129,6 +132,104 @@ def test_launch_twice_second_attempt_rejected(app, client, session_factory):
     assert second.json()["detail"] == "campaign is already running"
 
 
+def _set_status(session_factory: Any, campaign_id: int, campaign: str, contact: str) -> None:
+    from app.models import Campaign, Contact
+
+    with session_factory() as db:
+        db.get(Campaign, campaign_id).status = campaign
+        db.query(Contact).filter_by(campaign_id=campaign_id).update({"status": contact})
+        db.commit()
+
+
+def test_cancel_hands_queued_contacts_back_for_review(app, client, session_factory):
+    """Cancelling mid-run must not leave the roster stuck as `queued`."""
+    from app.models import Contact
+
+    token, campaign = _seed_campaign_with_contact(client, session_factory)
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/launch", headers=auth_headers(token)
+    ).status_code == 200
+
+    resp = client.post(
+        f"/api/campaigns/{campaign['id']}/cancel", headers=auth_headers(token)
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "canceled"
+
+    with session_factory() as db:
+        statuses = {
+            c.status for c in db.query(Contact).filter_by(campaign_id=campaign["id"])
+        }
+    assert statuses == {"pending_review"}
+
+
+def test_relaunch_after_cancel_and_completion(app, client, session_factory):
+    """The same campaign is launched every day with a changing roster."""
+    from app.models import Contact
+
+    token, campaign = _seed_campaign_with_contact(client, session_factory)
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+    launch_url = f"/api/campaigns/{campaign['id']}/launch"
+
+    assert client.post(launch_url, headers=auth_headers(token)).status_code == 200
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/cancel", headers=auth_headers(token)
+    ).status_code == 200
+
+    again = client.post(launch_url, headers=auth_headers(token))
+    assert again.status_code == 200, again.text
+    assert again.json()["status"] == "running"
+    detail = client.get(
+        f"/api/campaigns/{campaign['id']}", headers=auth_headers(token)
+    ).json()
+    assert detail["counts"]["queued"] == 1
+
+    # Yesterday's calls stay on record; only the still-pending people redial.
+    # Next day: the earlier student is `completed`, today's absentee is imported.
+    _set_status(session_factory, campaign["id"], "completed", "completed")
+    with session_factory() as db:
+        db.add(
+            Contact(
+                campaign_id=campaign["id"],
+                org_id=campaign["org_id"],
+                name="Today Absent",
+                phone="+919000000003",
+                consent=True,
+            )
+        )
+        db.commit()
+
+    done = client.post(launch_url, headers=auth_headers(token))
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "running"
+
+    with session_factory() as db:
+        by_phone = {
+            c.phone: c.status
+            for c in db.query(Contact).filter_by(campaign_id=campaign["id"])
+        }
+    assert by_phone == {"+919000000001": "completed", "+919000000003": "queued"}
+
+
+def test_relaunch_with_nobody_pending_is_422_and_keeps_status(app, client, session_factory):
+    """An empty day must not flip the campaign to running and instantly complete."""
+    from app.models import Campaign
+
+    token, campaign = _seed_campaign_with_contact(client, session_factory)
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+    _set_status(session_factory, campaign["id"], "completed", "completed")
+
+    resp = client.post(
+        f"/api/campaigns/{campaign['id']}/launch", headers=auth_headers(token)
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"].startswith("no contacts are pending for this run")
+
+    with session_factory() as db:
+        assert db.get(Campaign, campaign["id"]).status == "completed"
+
+
 def test_delete_campaign_removes_contacts(app, client, session_factory):
     token, campaign = _seed_campaign_with_contact(client, session_factory)
 
@@ -206,8 +307,8 @@ def test_launch_without_an_agent_is_422(app, client, session_factory):
 
 
 def test_dialer_pins_the_agent_version_on_each_call(app, client, session_factory):
-    """vobiz/twilio/plivo all close the media socket when the call has no
-    agent version, so a dialer-placed call must carry the campaign's."""
+    """vobiz/twilio close the media socket when the call has no agent
+    version, so a dialer-placed call must carry the campaign's."""
     from app.models import Call
     from app.services.dialer import DialerService
     from conftest import make_settings

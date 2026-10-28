@@ -21,7 +21,8 @@ const CONTACT_STATUS_FILTERS = [
   'opted_out',
   'skipped',
 ];
-const LAUNCHABLE = ['draft', 'created', 'paused'];
+const LAUNCHABLE = ['draft', 'created', 'paused', 'completed', 'canceled', 'cancelled'];
+const RERUN_STATUSES = ['completed', 'canceled', 'cancelled'];
 const CANCELED_like = ['canceled', 'cancelled'];
 
 // Calling window enforced by POST /api/campaigns/{id}/launch (PRD §8):
@@ -88,6 +89,9 @@ function friendlyActionError(e) {
   }
   if (msg === 'campaign has no contacts to call') {
     return 'This campaign has no contacts yet — upload a contact list on the Contacts tab, then launch.';
+  }
+  if (msg.startsWith('no contacts are pending for this run')) {
+    return 'Nobody is pending for this run — import today’s list or re-include the people to call, then launch.';
   }
   return msg;
 }
@@ -436,6 +440,13 @@ export default function CampaignDetailPage() {
 
   // ---- derived ----
   const canLaunch = LAUNCHABLE.includes(campaignStatus);
+  const isRerun = RERUN_STATUSES.includes(campaignStatus);
+  const launchLabel =
+    campaignStatus === 'paused'
+      ? 'Resume campaign'
+      : isRerun
+        ? 'Start new run'
+        : 'Launch campaign';
   const canPause = campaignStatus === 'running';
   const canCancel =
     campaignStatus != null && campaignStatus !== 'completed' && !CANCELED_like.includes(campaignStatus);
@@ -623,10 +634,15 @@ export default function CampaignDetailPage() {
             <button
               className="btn btn-primary"
               disabled={actionBusy || !!launchBlockedReason}
-              title={launchBlockedReason || undefined}
+              title={
+                launchBlockedReason ||
+                (isRerun
+                  ? 'Queue whoever is pending now and dial again — yesterday’s calls stay on record'
+                  : undefined)
+              }
               onClick={() => runAction(() => api.launchCampaign(id))}
             >
-              Launch campaign
+              {launchLabel}
             </button>
           )}
           {canPause && (
@@ -697,11 +713,13 @@ export default function CampaignDetailPage() {
 
           <div className="card flush">
             <div className="table-toolbar">
-              <h3 className="card-title">Contacts</h3>
+              <div>
+                <h3 className="card-title">Contacts</h3>
+                <p className="hint" style={{ margin: '4px 0 0' }}>
+                  Each run dials only the contacts still pending review — skip anyone who should not be called today.
+                </p>
+              </div>
               <div className="toolbar-right">
-                <span className="hint inline-hint" title="Skipped contacts stay on the roster but are never dialed">
-                  Launch calls everyone pending review — skip the rest
-                </span>
                 <button
                   className="btn btn-secondary btn-sm"
                   disabled={contactsLoading}

@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -180,12 +180,18 @@ def launch_campaign(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Queue a campaign's pending contacts and start dialling.
+
+    A campaign is a reusable roster, not a one-shot batch: the same campaign is
+    launched again the next day with whoever is pending (newly imported
+    absentees, or contacts an operator re-included). So only ``running`` is
+    refused outright; ``completed`` and ``canceled`` simply start a new run,
+    and yesterday's completed contacts are never redialled.
+    """
     campaign = _get_campaign_or_404(db, campaign_id, user)
     settings = request.app.state.settings
     if campaign.status == "running":
         raise HTTPException(status_code=422, detail="campaign is already running")
-    if campaign.status in ("completed", "canceled"):
-        raise HTTPException(status_code=422, detail=f"campaign is {campaign.status}")
 
     contact_count = (
         db.scalar(select(func.count()).select_from(Contact).where(Contact.campaign_id == campaign.id))
@@ -212,15 +218,37 @@ def launch_campaign(
             ),
         )
 
-    campaign.status = "running"
+    already_queued = (
+        db.scalar(
+            select(func.count())
+            .select_from(Contact)
+            .where(Contact.campaign_id == campaign.id, Contact.status == "queued")
+        )
+        or 0
+    )
     pending = db.scalars(
         select(Contact).where(
             Contact.campaign_id == campaign.id, Contact.status == "pending_review"
         )
     ).all()
+    queued_now = 0
     for contact in pending:
         if contact.phone and consent_ok(db, contact, settings):
             contact.status = "queued"
+            queued_now += 1
+    if already_queued + queued_now == 0:
+        # Nothing to dial: stay in the previous state instead of flipping to
+        # running and instantly completing on the next dialer tick.
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "no contacts are pending for this run — import this run's list "
+                "or re-include the people to call, then launch"
+            ),
+        )
+
+    campaign.status = "running"
     db.commit()
     db.refresh(campaign)
     return _campaign_out(db, campaign)
@@ -247,10 +275,21 @@ def cancel_campaign(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Stop dialling and hand un-dialled contacts back for review.
+
+    ``queued`` contacts are returned to ``pending_review`` so a cancel really
+    stops the run: the operator reviews the roster and launches again when
+    ready. Calls already in flight finish on their own.
+    """
     campaign = _get_campaign_or_404(db, campaign_id, user)
     if campaign.status in ("completed", "canceled"):
         raise HTTPException(status_code=422, detail=f"campaign is already {campaign.status}")
     campaign.status = "canceled"
+    db.execute(
+        update(Contact)
+        .where(Contact.campaign_id == campaign.id, Contact.status == "queued")
+        .values(status="pending_review")
+    )
     db.commit()
     db.refresh(campaign)
     return _campaign_out(db, campaign)
