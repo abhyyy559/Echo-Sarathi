@@ -1,6 +1,6 @@
-﻿import React, { useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { API_BASE, getToken } from '../api.js';
+import { API_BASE, analyticsApi, devApi, getToken } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import HealthDot, { boolToState } from '../components/HealthDot.jsx';
 
@@ -17,6 +17,44 @@ const PROVIDER_ENV_VARS = {
   twilio: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
   livekit: ['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'],
 };
+
+const PROVIDER_LABELS = {
+  groq: 'Groq',
+  'groq-secondary': 'Groq (2nd model)',
+  deepgram: 'Deepgram',
+  cartesia: 'Cartesia',
+  sarvam: 'Sarvam',
+};
+
+const USAGE_BADGE = {
+  ok: { cls: 'ok', label: 'Healthy' },
+  warn: { cls: 'warn', label: 'Running low' },
+  critical: { cls: 'crit', label: 'Nearly exhausted' },
+  unknown: { cls: 'cyan', label: 'No data yet' },
+};
+
+function fmtUsageTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function fmtCount(n) {
+  return Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+/** Request-rate headroom, when the provider publishes it alongside tokens. */
+function requestQuota(metrics) {
+  const m = metrics || {};
+  if (m.remaining_requests == null || m.limit_requests == null) return null;
+  return `${fmtCount(m.remaining_requests)} of ${fmtCount(m.limit_requests)} req/min left`;
+}
 
 function toState(v) {
   if (v === true || v === 'ok' || v === 'up' || v === 'healthy') return 'ok';
@@ -264,7 +302,7 @@ const CATALOG_GROUPS = [
         key: 'dev-health',
         method: 'GET',
         path: '/api/health',
-        desc: 'DB/Redis pings + provider-key presence booleans.',
+        desc: 'DB ping + provider-key presence booleans.',
       },
       {
         key: 'dev-status',
@@ -324,6 +362,42 @@ export default function DevToolsPage() {
 function DevToolsInner() {
   const { data: health, error: healthError, loading: healthLoading } = usePoll('/api/health', 10000);
   const { data: status, error: statusError } = usePoll('/api/dev/status', 10000);
+
+  const [usage, setUsage] = useState(null);
+  const [usageError, setUsageError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  function loadUsage() {
+    analyticsApi
+      .usage()
+      .then((data) => {
+        setUsage(data);
+        setUsageError(null);
+      })
+      .catch((e) => setUsageError(e.message || String(e)));
+  }
+
+  useEffect(loadUsage, []);
+
+  // Deepgram/Cartesia balances are polled daily by the backend; this asks for
+  // a fresh pull right now.
+  function refreshUsage() {
+    setRefreshing(true);
+    devApi
+      .refreshUsage()
+      .catch(() => {})
+      .then(() => analyticsApi.usage())
+      .then((data) => {
+        setUsage(data);
+        setUsageError(null);
+      })
+      .catch((e) => setUsageError(e.message || String(e)))
+      .finally(() => setRefreshing(false));
+  }
+
+  const usageKeys = usage && Array.isArray(usage.keys) ? usage.keys : [];
+  const usageAlerts = usage && Array.isArray(usage.alerts) ? usage.alerts : [];
+  const sarvam = usage && usage.sarvam ? usage.sarvam : null;
 
   const [outputs, setOutputs] = useState({});
   const idsRef = useRef({});
@@ -473,7 +547,6 @@ function DevToolsInner() {
           <>
             <div className="health-grid">
               <HealthDot label="Database" state={boolToState(health.db)} />
-              <HealthDot label="Redis" state={boolToState(health.redis)} />
               <HealthDot label="Voice worker" state={toState(health.voice_agent)} note={String(health.voice_agent)} />
               {Object.entries(providers).map(([name, ok]) => (
                 <HealthDot key={name} label={`Provider: ${name}`} state={boolToState(ok)} />
@@ -492,6 +565,119 @@ function DevToolsInner() {
             )}
           </>
         )}
+      </section>
+
+      {/* ---- Provider quotas ---- */}
+      <section className="card">
+        <div className="table-toolbar">
+          <h3 className="card-title">Provider quotas</h3>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={refreshUsage}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh balances'}
+          </button>
+        </div>
+        <p className="hint">
+          Which limit gets exhausted first. Groq reports token and request headroom in its response headers on every
+          call; Sarvam is metered per character; Deepgram and Cartesia balances are polled daily or on demand.
+        </p>
+
+        {status && Array.isArray(status.llm_chain) && status.llm_chain.length > 0 && (
+          <div className="quota-chain">
+            <span className="quota-chain-label">Active LLM chain</span>
+            {status.llm_chain.map((member, i) => (
+              <span key={`${member.name}-${member.model}`} className="quota-chip" title={`Fallback ${i + 1}`}>
+                {i + 1}. {PROVIDER_LABELS[member.name] || member.name} · {member.model}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {usageError && !usage && (
+          <div className="banner banner-error" style={{ marginTop: 10 }}>
+            Could not load usage: {usageError}
+          </div>
+        )}
+
+        {usageAlerts.map((alert, i) => (
+          <div
+            key={`${alert.provider}-${alert.key_id}-${i}`}
+            className={`banner ${alert.level === 'critical' ? 'banner-error' : 'banner-info'}`}
+            style={{ marginTop: 10 }}
+          >
+            <strong>{alert.level === 'critical' ? 'Nearly exhausted' : 'Running low'}</strong>
+            {' — '}
+            {alert.message}
+          </div>
+        ))}
+
+        <table className="tbl" style={{ marginTop: 10 }}>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Key</th>
+              <th>Model</th>
+              <th>Remaining</th>
+              <th>Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {usageKeys.length === 0 && !usageError && (
+              <tr>
+                <td colSpan={6} className="table-state">
+                  No provider usage recorded yet — place a call or hit <em>Refresh balances</em>. Groq quota fills in
+                  automatically from the next call.
+                </td>
+              </tr>
+            )}
+            {usageKeys.map((key) => {
+              const badge = USAGE_BADGE[key.status] || USAGE_BADGE.unknown;
+              const requests = requestQuota(key.metrics);
+              return (
+                <tr key={`${key.provider}-${key.key_id}-${key.model}`}>
+                  <td>{PROVIDER_LABELS[key.provider] || key.provider}</td>
+                  <td className="mono">{key.key_id || '—'}</td>
+                  <td className="mono">{key.model || '—'}</td>
+                  <td>
+                    {key.headline}
+                    {requests && (
+                      <div className="quota-sub">{requests}</div>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`badge ${badge.cls}`}>{badge.label}</span>
+                  </td>
+                  <td className="mono">{fmtUsageTime(key.updated_at)}</td>
+                </tr>
+              );
+            })}
+            {sarvam && (
+              <tr>
+                <td>Sarvam (TTS)</td>
+                <td className="mono">—</td>
+                <td className="mono">
+                  {sarvam.models && sarvam.models.length ? sarvam.models.join(', ') : '—'}
+                </td>
+                <td>
+                  {fmtCount(sarvam.characters || 0)} chars · ₹{Number(sarvam.cost_inr || 0).toFixed(2)}
+                  <div className="quota-sub">{sarvam.requests_last_minute ?? 0} req/min last minute</div>
+                </td>
+                <td>
+                  <span className="badge cyan">metered per char</span>
+                </td>
+                <td className="mono">{fmtUsageTime(usage && usage.generated_at)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <p className="hint" style={{ marginTop: 8 }}>
+          Keys are masked and never leave the backend. Rows turn amber below 25% remaining and red below 10%. Only
+          providers that publish a quota API appear here.
+        </p>
       </section>
 
       {/* ---- Provider setup checklist ---- */}

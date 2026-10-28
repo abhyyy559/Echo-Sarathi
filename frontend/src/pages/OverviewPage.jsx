@@ -1,36 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { analyticsApi, billingApi, devApi } from '../api.js';
+import { analyticsApi, billingApi } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 const LATENCY_TARGET_MS = 900;
-
-const PROVIDER_LABELS = {
-  groq: 'Groq',
-  'groq-secondary': 'Groq (2nd model)',
-  deepgram: 'Deepgram',
-  cartesia: 'Cartesia',
-  sarvam: 'Sarvam',
-};
-
-const USAGE_BADGE = {
-  ok: { cls: 'ok', label: 'Healthy' },
-  warn: { cls: 'warn', label: 'Running low' },
-  critical: { cls: 'crit', label: 'Nearly exhausted' },
-  unknown: { cls: 'cyan', label: 'No data yet' },
-};
-
-function fmtUsageTime(value) {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 function fmtDuration(seconds) {
   if (seconds == null || Number.isNaN(Number(seconds))) return '—';
@@ -54,9 +27,6 @@ export default function OverviewPage() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
   const [billing, setBilling] = useState(null);
-  const [usage, setUsage] = useState(null);
-  const [usageError, setUsageError] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -72,29 +42,6 @@ export default function OverviewPage() {
       .summary()
       .then(setBilling)
       .catch(() => setBilling(null));
-    analyticsApi
-      .usage()
-      .then((data) => {
-        setUsage(data);
-        setUsageError(null);
-      })
-      .catch((e) => setUsageError(e.message || String(e)));
-  }
-
-  // The Deepgram/Cartesia balances are polled daily by the backend; this asks
-  // for a fresh pull right now so the operator can act on the numbers.
-  function refreshUsage() {
-    setRefreshing(true);
-    devApi
-      .refreshUsage()
-      .catch(() => {})
-      .then(() => analyticsApi.usage())
-      .then((data) => {
-        setUsage(data);
-        setUsageError(null);
-      })
-      .catch((e) => setUsageError(e.message || String(e)))
-      .finally(() => setRefreshing(false));
   }
 
   useEffect(load, []);
@@ -111,9 +58,6 @@ export default function OverviewPage() {
   const calls7d = summary && Array.isArray(summary.calls_last_7d) ? summary.calls_last_7d : [];
   const recentCalls = summary && Array.isArray(summary.recent_calls) ? summary.recent_calls : [];
   const maxDayCount = Math.max(1, ...calls7d.map((d) => d.count));
-  const usageKeys = usage && Array.isArray(usage.keys) ? usage.keys : [];
-  const usageAlerts = usage && Array.isArray(usage.alerts) ? usage.alerts : [];
-  const sarvam = usage && usage.sarvam ? usage.sarvam : null;
 
   return (
     <div>
@@ -258,103 +202,6 @@ export default function OverviewPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginTop: 18 }}>
-            <div className="card-h">
-              <h3>API keys &amp; limits</h3>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={refreshUsage}
-                disabled={refreshing}
-              >
-                {refreshing ? 'Refreshing…' : 'Refresh balances'}
-              </button>
-            </div>
-
-            {usageError && (
-              <div style={{ padding: '12px 22px', fontSize: 13, color: 'var(--red)' }}>
-                Could not load usage: {usageError}
-              </div>
-            )}
-
-            {usageAlerts.length > 0 && (
-              <div style={{ padding: '12px 22px 0' }}>
-                {usageAlerts.map((alert, i) => (
-                  <div
-                    key={`${alert.provider}-${alert.key_id}-${i}`}
-                    className={`banner ${alert.level === 'critical' ? 'banner-error' : 'banner-info'}`}
-                    style={{ marginBottom: 8 }}
-                  >
-                    <strong>{alert.level === 'critical' ? 'Nearly exhausted' : 'Running low'}</strong>
-                    {' — '}
-                    {alert.message}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Key</th>
-                  <th>Model</th>
-                  <th>Remaining</th>
-                  <th>Status</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usageKeys.length === 0 && !usageError && (
-                  <tr>
-                    <td colSpan={6} className="table-state">
-                      No provider usage recorded yet — place a call or hit{' '}
-                      <em>Refresh balances</em>. Groq quota fills in automatically
-                      from the next call.
-                    </td>
-                  </tr>
-                )}
-                {usageKeys.map((key) => {
-                  const badge = USAGE_BADGE[key.status] || USAGE_BADGE.unknown;
-                  return (
-                    <tr key={`${key.provider}-${key.key_id}-${key.model}`}>
-                      <td>{PROVIDER_LABELS[key.provider] || key.provider}</td>
-                      <td className="mono">{key.key_id || '—'}</td>
-                      <td className="mono">{key.model || '—'}</td>
-                      <td>{key.headline}</td>
-                      <td>
-                        <span className={`badge ${badge.cls}`}>{badge.label}</span>
-                      </td>
-                      <td className="mono">{fmtUsageTime(key.updated_at)}</td>
-                    </tr>
-                  );
-                })}
-                {sarvam && (
-                  <tr>
-                    <td>Sarvam (TTS)</td>
-                    <td className="mono">
-                      {sarvam.models && sarvam.models.length ? sarvam.models.join(', ') : '—'}
-                    </td>
-                    <td className="mono">{sarvam.requests_last_minute ?? 0} req/min</td>
-                    <td>
-                      {Number(sarvam.characters || 0).toLocaleString()} chars · ₹
-                      {Number(sarvam.cost_inr || 0).toFixed(2)}
-                    </td>
-                    <td>
-                      <span className="badge cyan">metered per char</span>
-                    </td>
-                    <td className="mono">{fmtUsageTime(usage && usage.generated_at)}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            <div style={{ padding: '10px 22px 16px', fontSize: 12, color: 'var(--dim)' }}>
-              Groq quota is captured from live response headers (shared across all
-              keys in the org); Deepgram and Cartesia balances refresh daily or on
-              demand. Rows turn amber below 25% remaining and red below 10%.
             </div>
           </div>
         </>
