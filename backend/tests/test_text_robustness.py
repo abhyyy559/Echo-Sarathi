@@ -783,6 +783,66 @@ def test_deterministic_close_on_a_farewell_after_all_fields(groq_client, session
         assert call.duration_seconds is not None
 
 
+def test_farewell_closes_without_the_agent_derived_outcome(groq_client, session_factory):
+    """Live loop: the agent said "Thanks for your feedback. Have a great" and
+    never called end_call. call_outcome is a disposition the agent concludes,
+    never a question it can ask, so waiting for it kept the session open and
+    every backchannel ("yeah", "hmm") got another micro-goodbye."""
+    from test_playground_text import chat, script, start_session
+    from app.models import Call, ExtractedField
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(chat("Thanks for your feedback. Have a great"))
+    with session_factory() as db:
+        db.add_all(
+            [
+                ExtractedField(call_id=call_id, field_name="reason_for_absence", field_value="fever", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="expected_return_date", field_value="2026-10-02", confidence=1.0, source_turn_index=0),
+            ]
+        )
+        db.commit()
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "nothing"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["done"] is True, resp.json()
+    with session_factory() as db:
+        call = db.get(Call, call_id)
+        assert call.status == "completed"
+        assert "call_outcome" in (call.summary or "")
+
+
+def test_bare_thanks_does_not_close_before_the_outcome(groq_client, session_factory):
+    """A short "Thanks" is also what the model says right after banking a
+    field; it must not end the call while a required disposition is pending."""
+    from test_playground_text import chat, script, start_session
+    from app.models import ExtractedField
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    script(chat("Thanks"))
+    with session_factory() as db:
+        db.add_all(
+            [
+                ExtractedField(call_id=call_id, field_name="reason_for_absence", field_value="fever", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="expected_return_date", field_value="2026-10-02", confidence=1.0, source_turn_index=0),
+            ]
+        )
+        db.commit()
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "4 out of 5"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["done"] is False, resp.json()
+
+
 def test_session_exhausted_set_persists_across_turns() -> None:
     """A billing-dead provider skipped on turn N must still be skipped on
     turn N+1: the old per-invocation set re-learned the 402 every turn."""

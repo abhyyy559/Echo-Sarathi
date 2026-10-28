@@ -38,7 +38,8 @@ from app.services.telemetry import recorder as telemetry
 from app.services.token_substitution import (
     apply_token_substitution,
     build_token_map,
-    resolve_org_name,
+    filled_context,
+    resolve_spoken_name,
 )
 from app.services.usage import record_response as record_provider_response
 
@@ -908,7 +909,7 @@ def _render_text_system_prompt(
         )
 
     # 3. Company context.
-    company_context = config.company_context or {}
+    company_context = filled_context(config.company_context or {})
     if company_context:
         sections.append(
             "COMPANY KNOWLEDGE - facts you may use; never invent anything beyond this:\n"
@@ -1261,10 +1262,21 @@ _CLOSING_PHRASES = (
     "good bye",
     "have a good day",
     "have a great day",
+    "have a great",
     "thank you for your time",
     "thanks for your time",
     "take care",
     "talk to you later",
+)
+
+
+#: Dispositions the agent concludes from the conversation - never a question
+#: it can ask the caller. Waiting for one to be "recorded" before a goodbye
+#: left text sessions open forever: the model spoke its farewell, the caller
+#: answered "yeah", and it replied with another micro-goodbye ("Great.
+#: Thanks", "Thanks", "Is there", "I") because nothing marked the call done.
+_AGENT_DERIVED_FIELDS = frozenset(
+    {"call_outcome", "escalation_needed", "needs_human_help"}
 )
 
 
@@ -1283,6 +1295,21 @@ def _is_closing_line(text: str) -> bool:
     if len(words) <= 4 and ("thank" in lowered or "thanks" in lowered):
         return True
     return False
+
+
+def _is_explicit_farewell(text: str) -> bool:
+    """A farewell the model clearly meant, not an acknowledgment.
+
+    "Thanks" is ambiguous (it just recorded a field), so it may only close a
+    call once the closing dispositions are recorded. "Goodbye", "bye" or
+    "have a great day" are unambiguous and may close regardless.
+    """
+    lowered = str(text or "").strip().lower()
+    if not lowered or "?" in lowered:
+        return False
+    if any(phrase in lowered for phrase in _CLOSING_PHRASES):
+        return True
+    return re.search(r"\bbye\b", lowered) is not None
 
 
 def _fields_known(
@@ -2103,7 +2130,7 @@ async def _run_agent_turn(
     agent = db.get(Agent, version.agent_id)
     agent_name = (agent.name or "") if agent else ""
     agent_role = (agent.description or "") if agent else ""
-    institution = resolve_org_name(
+    institution = resolve_spoken_name(
         version.company_context, org.name if org and org.name else ""
     )
     history_rows = list(
@@ -2361,16 +2388,29 @@ async def _run_agent_turn(
         for name, spec in (getattr(version, "extraction_schema", None) or {}).items()
         if isinstance(spec, dict) and str(spec.get("validation") or "").lower() == "required"
     ]
-    required_known = _fields_known(db, call, required, extracted_now)
-    if (
-        required
-        and all(required_known)
-        and _is_closing_line(assistant_text)
-        and not done
-    ):
-        # Summarize ALL known required fields (DB + this turn), not just
-        # this turn's: fields captured on earlier turns would otherwise leave
-        # an empty summary on exactly the calls that closed cleanly.
+    # Only caller-answerable fields can hold the call open. A disposition the
+    # agent derives at the end (call_outcome) is not something it can ask, so
+    # waiting for it meant a farewell never closed the session. A bare
+    # "Thanks" still needs those dispositions recorded - it is also what the
+    # model says right after banking a field - but an explicit goodbye does not.
+    all_known = _fields_known(db, call, required, extracted_now)
+    blocking_known = [
+        known
+        for name, known in zip(required, all_known)
+        if name not in _AGENT_DERIVED_FIELDS
+    ]
+    derived_pending = [
+        name
+        for name, known in zip(required, all_known)
+        if name in _AGENT_DERIVED_FIELDS and not known
+    ]
+    closes = all(blocking_known) and (
+        not derived_pending or _is_explicit_farewell(assistant_text)
+    )
+    if required and closes and _is_closing_line(assistant_text) and not done:
+        # Summarize ALL known fields (DB + this turn), not just this turn's:
+        # fields captured on earlier turns would otherwise leave an empty
+        # summary on exactly the calls that closed cleanly.
         known_rows = {
             f.field_name: f.field_value
             for f in db.scalars(
@@ -2381,8 +2421,14 @@ async def _run_agent_turn(
             if item.get("field_name"):
                 known_rows[str(item.get("field_name"))] = item.get("field_value")
         summary = "; ".join(
-            f"{name}={known_rows.get(name)}" for name in required
+            f"{name}={known_rows.get(name)}" for name in required if name in known_rows
         )
+        unfilled = [name for name in required if name not in known_rows]
+        if unfilled:
+            summary = (
+                f"{summary} | Unfilled required fields (flagged, never "
+                f"fabricated): {', '.join(unfilled)}"
+            ).strip(" |")
         done = True
         # Finalize the row exactly like end_call: without this the session
         # stays in_progress forever and accepts more turns after goodbye.
