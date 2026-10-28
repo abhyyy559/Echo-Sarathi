@@ -1,11 +1,11 @@
 """Vobiz provider-status reconciliation.
 
-Vobiz pushes no status webhooks for calls we create (we register no status
-callback at Call-create), so without this our rows stick in
-``ringing``/``in_progress`` forever and carrier outcomes (USER_BUSY,
-NO_ANSWER, …) never surface. This module pulls the authoritative Call
-resource (GET /api/v1/Account/{auth_id}/Call/{provider_id}/) and applies it
-to our call + contact rows with the dialer's retry policy.
+Call-create now registers ``hangup_url`` so most outcomes arrive as webhooks.
+This module is the backstop for a lost callback (dead tunnel, provider bug):
+without it our rows stick in ``ringing``/``in_progress`` forever and carrier
+outcomes (USER_BUSY, NO_ANSWER, …) never surface. It pulls the authoritative
+Call resource (GET /api/v1/Account/{auth_id}/Call/{provider_id}/) and applies
+it to our call + contact rows with the dialer's retry policy.
 
 Shape verified against the live API (2026-09-28): the resource carries
 ``hangup_cause`` (e.g. USER_BUSY), ``bill_duration``/``billed_duration``,

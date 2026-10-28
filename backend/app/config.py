@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 3
     retry_backoff_minutes: int = 15
     dialer_enabled: bool = True
+    # Render free instances sleep after ~15 min without inbound traffic. While
+    # any campaign is running the dialer pings its own public URL this often so
+    # the campaign survives a closed browser tab. 0 disables the ping.
+    keepalive_interval_seconds: int = 600
 
     # --- compliance --------------------------------------------------------
     consent_enforcement: bool = True

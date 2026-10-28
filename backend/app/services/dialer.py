@@ -147,6 +147,9 @@ class DialerService:
     async def run(self, interval_seconds: float = 1.0) -> None:
         """Background loop; each tick runs in a worker thread."""
         logger.info("dialer started (cps=%s concurrency=%s)", self.settings.default_cps_limit, self.settings.default_concurrency_limit)
+        loop = asyncio.get_running_loop()
+        keepalive_every = max(0, int(self.settings.keepalive_interval_seconds or 0))
+        last_keepalive = 0.0
         while True:
             try:
                 await asyncio.to_thread(self.tick)
@@ -155,7 +158,44 @@ class DialerService:
                 raise
             except Exception:  # noqa: BLE001 — never let the loop die
                 logger.exception("dialer tick failed")
+            if keepalive_every and loop.time() - last_keepalive >= keepalive_every:
+                last_keepalive = loop.time()
+                try:
+                    await asyncio.to_thread(self.keepalive_ping)
+                except Exception:  # noqa: BLE001 — a failed ping must not stop dialing
+                    logger.debug("keepalive ping failed", exc_info=True)
             await asyncio.sleep(interval_seconds)
+
+    def keepalive_ping(self) -> bool:
+        """Ping our own public URL while a campaign is running.
+
+        Render's free tier sleeps a service after ~15 minutes without
+        *inbound* HTTP; a background dialer alone does not count. Without this
+        a campaign stops the moment the operator closes the tab, and a
+        campaign that is still running at 9pm never wakes to resume at 9am.
+        Returns True when a ping was sent.
+        """
+        if not self.settings.keepalive_interval_seconds:
+            return False
+        with self.session_factory() as db:
+            running = db.scalar(
+                select(Campaign.id).where(Campaign.status == "running").limit(1)
+            )
+        if running is None:
+            return False
+        base = (self.settings.public_base_url or "").strip().rstrip("/")
+        if not base:
+            return False
+        import httpx
+
+        try:
+            resp = httpx.get(f"{base}/", timeout=20.0)
+        except Exception:  # noqa: BLE001 — best effort only
+            logger.warning("keepalive ping to %s failed", base, exc_info=True)
+            return False
+        if resp.status_code >= 400:
+            logger.warning("keepalive ping to %s -> %s", base, resp.status_code)
+        return True
 
     def tick(self) -> int:
         """One dialer pass. Returns the number of calls placed."""
@@ -231,15 +271,16 @@ class DialerService:
         return max(1, min(plans.concurrency_limit(db, campaign.org_id), deployment_cap))
 
     def _sweep_stale_ringing(self, db: Session, now: datetime, limit: int = 5) -> int:
-        """Reconcile phone calls stuck ringing with no media leg.
+        """Reconcile phone calls stuck with no media leg.
 
-        Vobiz pushes no status webhooks, so a call whose PSTN leg never
-        connects (carrier refuse, dead tunnel at answer time) would sit in
-        ``ringing``/``in_progress`` forever with its contact glued to
-        ``calling`` — freezing the campaign. Anything still live after 10
-        minutes gets one provider reconciliation per tick (bounded,
-        best-effort). Genuinely connected calls reconcile as non-terminal
-        and are left untouched.
+        Vobiz now posts hangup_url, so most outcomes close event-driven; this
+        sweep is the backstop when that callback is lost (dead tunnel, provider
+        bug). A call that never left ``ringing`` cannot be a live conversation,
+        so it is checked after two minutes — waiting ten made one unanswered
+        contact stall every following campaign dial for ten minutes. Connected
+        ``in_progress`` calls keep the ten-minute grace so a real conversation
+        is never closed early. Each check asks the provider and only a terminal
+        outcome changes the row, so an early check is safe.
         """
         from datetime import timedelta
 
@@ -247,25 +288,29 @@ class DialerService:
 
         if not (self.settings.vobiz_auth_id and self.settings.vobiz_auth_token):
             return 0
-        cutoff = now - timedelta(minutes=10)
-        stale = db.scalars(
-            select(Call)
-            .where(
-                Call.kind == "phone",
-                Call.status.in_(("ringing", "in_progress")),
-                Call.started_at.is_not(None),
-                Call.started_at <= cutoff,
-            )
-            .order_by(Call.id)
-            .limit(limit)
-        ).all()
         synced = 0
-        for call in stale:
-            try:
-                reconcile_vobiz_call(db, self.settings, call, now)
-                synced += 1
-            except Exception:  # noqa: BLE001 — sweeper never breaks the tick
-                logger.exception("stale ringing sweep failed for call %s", call.id)
+        for status, age in (("ringing", timedelta(minutes=2)), ("in_progress", timedelta(minutes=10))):
+            remaining = limit - synced
+            if remaining <= 0:
+                break
+            cutoff = now - age
+            stale = db.scalars(
+                select(Call)
+                .where(
+                    Call.kind == "phone",
+                    Call.status == status,
+                    Call.started_at.is_not(None),
+                    Call.started_at <= cutoff,
+                )
+                .order_by(Call.id)
+                .limit(remaining)
+            ).all()
+            for call in stale:
+                try:
+                    reconcile_vobiz_call(db, self.settings, call, now)
+                    synced += 1
+                except Exception:  # noqa: BLE001 — sweeper never breaks the tick
+                    logger.exception("stale ringing sweep failed for call %s", call.id)
         return synced
 
     def _process_next(self, db: Session, campaign: Campaign, now: datetime) -> str:

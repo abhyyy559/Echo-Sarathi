@@ -1,7 +1,8 @@
 """Provider-status reconciliation: carrier truth reaches our rows.
 
-Vobiz pushes no status webhooks, so without this: stuck ringing rows,
-USER_BUSY reported as completed, and worker error sessions shown as success.
+Vobiz now posts hangup_url; this backstop still covers a lost callback, which
+used to mean stuck ringing rows, USER_BUSY reported as completed, and worker
+error sessions shown as success.
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ def _seed_call(db, org_name="Recon Org", status="ringing", minutes_old=0):
         org_id=org.id,
         kind="phone",
         status=status,
-        provider_call_id="VBtest0001",
+        provider_call_id=f"VBtest-{org_name.lower().replace(' ', '-')}",
         started_at=utcnow() - timedelta(minutes=minutes_old),
     )
     db.add(call)
@@ -118,6 +119,66 @@ def test_sweeper_recovers_stale_ringing(session_factory, monkeypatch) -> None:
     with session_factory() as db:
         assert dialer._sweep_stale_ringing(db, dialer.clock()) == 1
         assert db.get(Call, call_id).status == "busy"
+
+
+def test_sweeper_checks_unanswered_rings_after_two_minutes(
+    session_factory, monkeypatch
+) -> None:
+    """A ringing leg cannot be a live conversation; ten minutes stalled campaigns."""
+    import app.services.vobiz_reconcile as recon
+    from app.models import Call
+    from app.services.dialer import DialerService
+
+    monkeypatch.setattr(
+        recon,
+        "fetch_vobiz_call",
+        lambda settings, provider_id: {"hangup_cause": "NO_ANSWER"},
+    )
+    settings = make_settings(vobiz_auth_id="A", vobiz_auth_token="T")
+
+    class _NeverDial:
+        def place_call(self, to: str, call_id: int) -> str:
+            raise AssertionError("sweeper must not place calls")
+
+    with session_factory() as db:
+        ringing = _seed_call(db, org_name="Recon Org 6", status="ringing", minutes_old=3)
+        connected = _seed_call(db, org_name="Recon Org 7", status="in_progress", minutes_old=3)
+        ringing_id, connected_id = ringing.id, connected.id
+
+    dialer = DialerService(settings, session_factory, _NeverDial())
+    with session_factory() as db:
+        assert dialer._sweep_stale_ringing(db, dialer.clock()) == 1
+        assert db.get(Call, ringing_id).status == "no_answer"
+        # A real conversation keeps its ten-minute grace period.
+        assert db.get(Call, connected_id).status == "in_progress"
+
+
+def test_keepalive_pings_only_while_a_campaign_runs(session_factory, monkeypatch) -> None:
+    """Render sleeps without inbound HTTP; a running campaign must stay awake."""
+    import httpx
+
+    from app.services.dialer import DialerService
+
+    pings: list[str] = []
+
+    class _Response:
+        status_code = 200
+
+    monkeypatch.setattr(httpx, "get", lambda url, timeout: pings.append(url) or _Response())
+    settings = make_settings(public_base_url="https://api.example.com")
+
+    class _NeverDial:
+        def place_call(self, to: str, call_id: int) -> str:
+            raise AssertionError("keepalive must not dial")
+
+    dialer = DialerService(settings, session_factory, _NeverDial())
+    assert dialer.keepalive_ping() is False
+    assert pings == []
+
+    with session_factory() as db:
+        _seed_call(db, org_name="Keep Alive Org")  # creates a running campaign
+    assert dialer.keepalive_ping() is True
+    assert pings == ["https://api.example.com/"]
 
 
 def test_internal_complete_honors_worker_error(client, session_factory) -> None:

@@ -155,3 +155,18 @@ def test_a_late_answer_cannot_resurrect_a_closed_call(client, session_factory) -
     with session_factory() as db:
         call = db.get(Call, call_id)
         assert call.status == "no_answer"
+
+
+def test_the_status_webhook_falls_back_to_our_query_call_id(client, session_factory) -> None:
+    """Call-create does not always return a provider id, so hangup_url keys on ours."""
+    from app.models import Call
+
+    call_id = _seed_call(client, session_factory, status="ringing")
+    resp = client.post(
+        f"/vobiz/status?call_id={call_id}",
+        json={"CallUUID": "unknown-provider-id", "CallStatus": "no-answer"},
+    )
+
+    assert resp.status_code == 200
+    with session_factory() as db:
+        assert db.get(Call, call_id).status == "no_answer"

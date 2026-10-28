@@ -185,6 +185,13 @@ class VobizClient:
             )
         return f"{base}/vobiz/answer?call_id={call_id}"
 
+    def _status_webhook(self, call_id: int) -> str:
+        base = self.settings.public_base_url.rstrip("/")
+        # The carrier fetches hangup_url itself and signs nothing, so carry
+        # call_id in the query: it is the fallback key when the Call-create
+        # response had no provider id to store on the row.
+        return f"{base}/vobiz/status?call_id={call_id}"
+
     @staticmethod
     def _error_reason(resp: Any) -> str:
         """Vobiz puts the human-readable cause in {error} (or {message})."""
@@ -237,6 +244,12 @@ class VobizClient:
                     "to": to,
                     "answer_url": self._answer_webhook(call_id),
                     "answer_method": "POST",
+                    # Without this the campaign only learns a no-answer/busy
+                    # outcome when the stale-ringing sweeper reconciles 10
+                    # minutes later, so one unanswered contact stalls every
+                    # following dial for ten minutes.
+                    "hangup_url": self._status_webhook(call_id),
+                    "hangup_method": "POST",
                 },
             )
             try:

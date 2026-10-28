@@ -765,6 +765,13 @@ async def vobiz_status(
         else None
     )
     if call is None:
+        # hangup_url carries our call_id: the Call-create response does not
+        # always include a provider id, and without this fallback those legs
+        # could only ever be closed by the ten-minute sweeper.
+        query_call_id = request.query_params.get("call_id", "")
+        if query_call_id.isdigit():
+            call = db.get(Call, int(query_call_id))
+    if call is None:
         logger.warning("vobiz status webhook for unknown call keys=%s", sorted(payload.keys()))
         return Response(status_code=200)
 

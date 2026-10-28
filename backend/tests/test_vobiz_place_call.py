@@ -1,6 +1,7 @@
 """Vobiz call-create: carrier refusals must reach the operator in plain words."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -65,3 +66,18 @@ def test_queued_call_returns_provider_id(monkeypatch) -> None:
 
     client = _client(monkeypatch, handler)
     assert client.place_call("+919000000001", 7) == "abc-123"
+
+
+def test_call_create_registers_hangup_callback(monkeypatch) -> None:
+    sent: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(201, json={"request_uuid": "abc-123"}, request=request)
+
+    client = _client(monkeypatch, handler)
+    client.place_call("+919000000001", 7)
+
+    assert sent["answer_url"].endswith("/vobiz/answer?call_id=7")
+    assert sent["hangup_url"] == "https://api.example.com/vobiz/status?call_id=7"
+    assert sent["hangup_method"] == "POST"
