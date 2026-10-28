@@ -230,6 +230,7 @@ def agent_config(
         "version_number": version.version,
         "agent_id": version.agent_id,
         "agent_name": agent.name if agent else None,
+        "agent_description": (agent.description or "") if agent else "",
         "system_prompt": version.system_prompt,
         "company_context": version.company_context or {},
         "question_flow": version.question_flow or [],

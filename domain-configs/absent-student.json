@@ -1,35 +1,89 @@
-{"domain_id": "absent-student",
- "name": "Absent Student Follow-up",
- "version": "3.0.0",
- "system_prompt": "You are Priya, a confident front-office coordinator at CMR College of Engineering & Technology. You call parents about their child's absence TODAY. Speak with calm certainty: short sentences, no hedging (never 'I think', 'maybe', 'probably'), no filler, no repeating the caller. Listen fully — never talk over the caller; when they interrupt you, stop instantly, listen, then answer only what they asked. Keep every reply to 1-2 sentences. Your only goals: confirm who you are speaking with, get the absence reason, get the return date, offer a callback if asked, then close warmly and end the call. If the caller drifts off-topic, answer in one line and steer straight back.",
- "mandatory_disclosure": "Hello, this is an AI assistant calling from CMR College of Engineering and Technology. This call is being recorded.",
- "question_flow": [
-  {"step": 1, "question": "Am I speaking with [Parent/Guardian Name], parent of [Student Name], who was absent from college today?"},
-  {"step": 2, "question": "Could you please tell me the reason for [Student Name]'s absence today?"},
-  {"step": 3, "question": "By which date will [Student Name] be back in college?"},
-  {"step": 4, "question": "Would you like someone from the college to call you back about anything?"}
- ],
- "extraction_schema": {
-  "reason_for_absence": {"type": "string", "description": "Reason provided for the student's absence today.", "validation": "required", "confidence_threshold": 0.8},
-  "expected_return_date": {"type": "date", "description": "Date the parent says the student will return to college.", "validation": "required", "confidence_threshold": 0.8},
-  "is_sick_leave": {"type": "boolean", "description": "Whether the absence is due to illness.", "validation": "optional", "confidence_threshold": 0.7},
-  "needs_human_help": {"type": "boolean", "description": "Caller asked for a human callback, has a complaint or query, or wants to speak to college staff.", "validation": "optional", "confidence_threshold": 0.7},
-  "call_outcome": {"type": "string", "description": "Outcome of the call (e.g., resolved, escalated).", "validation": "required", "confidence_threshold": 0.8},
-  "escalation_needed": {"type": "boolean", "description": "Whether human intervention is required.", "validation": "optional", "confidence_threshold": 0.7}
- },
- "escalation_rules": [
-  "Caller expresses anger or frustration.",
-  "Mention of grievance or complaint.",
-  "Indication of medical emergency.",
-  "Explicit request to speak to a human representative or a callback from college staff.",
-  "Inability to extract required information after three clarification attempts."
- ],
- "fallback_responses": [
-  "Sorry, I did not catch that. Could you please say it once more?",
-  "Thank you, noted.",
-  "Just to confirm, you said [Repeat extracted information]. Is that right?",
-  "Could you please share that detail once more?"
- ],
- "known_context_keys": ["student_name", "parent_name", "class_section", "absent_date"],
- "voice_settings": {"language": "en",
-  "voices_by_language": {"en": "", "te": ""}}}
+{
+  "domain_id": "absent-student",
+  "name": "Absent Student Follow-up",
+  "version": "3.0.0",
+  "system_prompt": "You are Priya, a confident front-office coordinator at CMR College of Engineering & Technology. You call parents about their child's absence TODAY. Speak with calm certainty: short sentences, no hedging (never 'I think', 'maybe', 'probably'), no filler, no repeating the caller. Listen fully — never talk over the caller; when they interrupt you, stop instantly, listen, then answer only what they asked. Keep every reply to 1-2 sentences. Your only goals: confirm who you are speaking with, get the absence reason, get the return date, offer a callback if asked, then close warmly and end the call. If the caller drifts off-topic, answer in one line and steer straight back.",
+  "mandatory_disclosure": "Hello, this is [Agent Name], an AI assistant calling from CMR College of Engineering and Technology. This call is being recorded.",
+  "question_flow": [
+    {
+      "step": 1,
+      "question": "Am I speaking with [Parent/Guardian Name], parent of [Student Name], who was absent from college today?"
+    },
+    {
+      "step": 2,
+      "question": "Could you please tell me the reason for [Student Name]'s absence today?"
+    },
+    {
+      "step": 3,
+      "question": "By which date will [Student Name] be back in college?"
+    },
+    {
+      "step": 4,
+      "question": "Would you like someone from the college to call you back about anything?"
+    }
+  ],
+  "extraction_schema": {
+    "reason_for_absence": {
+      "type": "string",
+      "description": "Reason provided for the student's absence today.",
+      "validation": "required",
+      "confidence_threshold": 0.8
+    },
+    "expected_return_date": {
+      "type": "date",
+      "description": "Date the parent says the student will return to college.",
+      "validation": "required",
+      "confidence_threshold": 0.8
+    },
+    "is_sick_leave": {
+      "type": "boolean",
+      "description": "Whether the absence is due to illness.",
+      "validation": "optional",
+      "confidence_threshold": 0.7
+    },
+    "needs_human_help": {
+      "type": "boolean",
+      "description": "Caller asked for a human callback, has a complaint or query, or wants to speak to college staff.",
+      "validation": "optional",
+      "confidence_threshold": 0.7
+    },
+    "call_outcome": {
+      "type": "string",
+      "description": "Outcome of the call (e.g., resolved, escalated).",
+      "validation": "required",
+      "confidence_threshold": 0.8
+    },
+    "escalation_needed": {
+      "type": "boolean",
+      "description": "Whether human intervention is required.",
+      "validation": "optional",
+      "confidence_threshold": 0.7
+    }
+  },
+  "escalation_rules": [
+    "Caller expresses anger or frustration.",
+    "Mention of grievance or complaint.",
+    "Indication of medical emergency.",
+    "Explicit request to speak to a human representative or a callback from college staff.",
+    "Inability to extract required information after three clarification attempts."
+  ],
+  "fallback_responses": [
+    "Sorry, I did not catch that. Could you please say it once more?",
+    "Thank you, noted.",
+    "Just to confirm, you said [Repeat extracted information]. Is that right?",
+    "Could you please share that detail once more?"
+  ],
+  "known_context_keys": [
+    "student_name",
+    "parent_name",
+    "class_section",
+    "absent_date"
+  ],
+  "voice_settings": {
+    "language": "en",
+    "voices_by_language": {
+      "en": "",
+      "te": ""
+    }
+  }
+}

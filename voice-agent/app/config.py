@@ -69,6 +69,29 @@ def _parse_key_list(*values: Optional[str]) -> tuple[str, ...]:
     return tuple(keys)
 
 
+def _parse_chain_entries(raw: str) -> list[list[str]]:
+    """Split ``name|base_url|api_key|model`` entries (legacy colon form too).
+
+    Returns the raw 4-field lists; validation belongs to the caller so each
+    chain can apply its own rules (Groq duplicates, shorthands, placeholders).
+    """
+    parsed: list[list[str]] = []
+    for entry in str(raw or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        fields = [f.strip() for f in entry.split("|")]
+        if len(fields) != 4:
+            # Legacy colon form: base_url contains "://" so the fields are
+            # peeled from both ends.
+            name, _, rest = entry.partition(":")
+            head, _, model = rest.rpartition(":")
+            base_url, _, api_key = head.rpartition(":")
+            fields = [name, base_url, api_key, model]
+        parsed.append([f.strip() for f in fields])
+    return parsed
+
+
 def _get(key: str, default: Optional[str] = None) -> Optional[str]:
     value: Optional[str] = os.getenv(key, default)
     if value is not None and value.strip() == "":
@@ -113,6 +136,50 @@ class Settings:
     # .env: qwen is the primary for accuracy, gpt-oss-120b is the quality
     # fallback before leaving Groq entirely.
     groq_secondary_model: str = ""
+    # Members tried BEFORE the Groq pool, in the owner's listed order. The
+    # benchmarked fast path for voice: Sarvam 105B answers in ~0.5-0.65s on
+    # the full 2.7k-token prompt while Groq's 8000 TPM org bucket caps it at
+    # ~2-3 turns/min. Empty keeps the historical Groq-first order.
+    llm_primary_chain_raw: str = ""
+    # Same Sarvam account/key as TTS (one key drives STT, TTS and LLM), so the
+    # bare ``sarvam`` primary entry needs no second paste of the secret.
+    sarvam_api_key: Optional[str] = None
+    sarvam_llm_model: str = "sarvam-105b-conversations"
+    sarvam_base_url: str = "https://api.sarvam.ai/v1"
+
+    @property
+    def llm_primary_chain(self) -> tuple[tuple[str, str, str, str], ...]:
+        """``(name, base_url, api_key, model)`` members served before Groq.
+
+        Same syntax as ``llm_fallback_chain``; the bare word ``sarvam``
+        expands from the Sarvam key/model so the secret is pasted once.
+        """
+        members: list[tuple[str, str, str, str]] = []
+        for entry in (self.llm_primary_chain_raw or "").split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if entry.lower() == "sarvam":
+                key = self.sarvam_api_key or ""
+                if key and not _looks_like_placeholder(key):
+                    members.append(
+                        (
+                            "sarvam",
+                            self.sarvam_base_url,
+                            key,
+                            self.sarvam_llm_model,
+                        )
+                    )
+                continue
+            for name, base_url, api_key, model in _parse_chain_entries(entry):
+                if not all((name, base_url, api_key, model)):
+                    continue
+                if not base_url.startswith("http"):
+                    continue
+                if _looks_like_placeholder(api_key):
+                    continue
+                members.append((name, base_url, api_key, model))
+        return tuple(members)
 
     @property
     def llm_fallback_chain(self) -> tuple[tuple[str, str, str, str], ...]:
@@ -125,19 +192,9 @@ class Settings:
         A slow provider such as Gemini can therefore never delay turn one.
         """
         members: list[tuple[str, str, str, str]] = []
-        for entry in (self.llm_fallback_chain_raw or "").split(","):
-            entry = entry.strip()
-            if not entry:
-                continue
-            fields = [f.strip() for f in entry.split("|")]
-            if len(fields) != 4:
-                # Legacy colon form: base_url contains "://" so the fields are
-                # peeled from both ends.
-                name, _, rest = entry.partition(":")
-                head, _, model = rest.rpartition(":")
-                base_url, _, api_key = head.rpartition(":")
-                fields = [name, base_url, api_key, model]
-            name, base_url, api_key, model = (f.strip() for f in fields)
+        for name, base_url, api_key, model in _parse_chain_entries(
+            self.llm_fallback_chain_raw or ""
+        ):
             if not all((name, base_url, api_key, model)):
                 continue
             if not base_url.startswith("http"):
@@ -148,6 +205,8 @@ class Settings:
                 continue
             if name == "groq" and api_key in self.groq_api_keys:
                 continue  # already armed from GROQ_API_KEY(S)
+            if (name, base_url, api_key, model) in self.llm_primary_chain:
+                continue  # already served before the Groq pool
             members.append((name, base_url, api_key, model))
         # DeepSeek second: right after the owner's explicit entries, before the
         # remaining shorthands, so the order reads gemini -> deepseek -> rest.
@@ -221,6 +280,10 @@ class Settings:
             groq_base_url=os.getenv("GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL),
             openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
             llm_fallback_chain_raw=_get("LLM_FALLBACK_CHAIN") or "",
+            llm_primary_chain_raw=_get("LLM_PRIMARY_CHAIN") or "",
+            sarvam_api_key=_get("SARVAM_API_KEY") or _get("SARVAM_TTS_API"),
+            sarvam_llm_model=_get("SARVAM_LLM_MODEL") or "sarvam-105b-conversations",
+            sarvam_base_url=_get("SARVAM_LLM_BASE_URL") or "https://api.sarvam.ai/v1",
             cerebras_api_key=_get("CEREBRAS_API_KEY"),
             openrouter_api_key=_get("OPENROUTER_API_KEY"),
             deepseek_api_key=_get("DEEPSEEK_API_KEY"),
@@ -247,7 +310,12 @@ class Settings:
             problems.append("DEEPGRAM_API_KEY missing - STT disabled")
         if not self.cartesia_api_key:
             problems.append("CARTESIA_API_KEY missing - TTS disabled")
-        if not self.groq_api_keys and not self.openai_api_key:
+        if (
+            not self.groq_api_keys
+            and not self.openai_api_key
+            and not self.llm_primary_chain
+            and not self.llm_fallback_chain
+        ):
             problems.append(
                 "GROQ_API_KEY/GROQ_API_KEYS and OPENAI_API_KEY all missing - LLM disabled"
             )

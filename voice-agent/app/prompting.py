@@ -331,6 +331,7 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "hello": "Hello",
         "ai_assistant": "an AI assistant",
         "self_intro": "This is {who} calling",
+        "name_only": "I'm {who}.",
         "from_suffix": " from {institution}",
         "from_standalone": "Calling from {institution}.",
         "about": " I'm calling about {subject}.",
@@ -340,6 +341,7 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "hello": "నమస్కారం",
         "ai_assistant": "ఒక AI అసిస్టెంట్",
         "self_intro": "నేను {who} మాట్లాడుతున్నాను",
+        "name_only": "నేను {who}.",
         "from_suffix": " {institution} నుండి",
         "from_standalone": "{institution} నుండి కాల్ చేస్తున్నాను.",
         "about": " {subject} గురించి కాల్ చేస్తున్నాను.",
@@ -353,6 +355,7 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "hello": "नमस्ते",
         "ai_assistant": "एक AI असिस्टेंट",
         "self_intro": "मैं {who} बोल रहा हूँ",
+        "name_only": "मैं {who} हूँ।",
         "from_suffix": " {institution} से",
         "from_standalone": "{institution} से कॉल कर रहा हूँ।",
         "about": " {subject} के बारे में कॉल कर रहा हूँ।",
@@ -373,6 +376,27 @@ def _opening_language(config: Mapping[str, Any]) -> str:
 def _opening_phrases(config: Mapping[str, Any]) -> dict[str, str]:
     """Localized connective phrases for the generated part of the opening."""
     return _OPENING_PHRASES.get(_opening_language(config), _OPENING_PHRASES["en"])
+
+
+#: Sentence starters that can follow an English vocative comma without the
+#: capital: "Suresh Kumar, could you ...?". Anything else (a proper noun at
+#: the start, e.g. "Aarav was absent ...") keeps its own sentence.
+_VOCATIVE_QUESTION_STARTERS = frozenset({
+    "could", "would", "can", "may", "might", "will", "shall", "should",
+    "do", "does", "did", "is", "are", "was", "were", "have", "has", "had",
+    "why", "what", "when", "where", "who", "how", "please", "tell", "kindly",
+})
+
+
+def _vocative_continuation(question: str) -> Optional[str]:
+    """Lowercased question for a vocative comma, or None to keep it a sentence."""
+    text = str(question or "").strip()
+    if not text or not text[0].isascii():
+        return None
+    first = text.split(maxsplit=1)[0].lower().strip(".,:;!?")
+    if first not in _VOCATIVE_QUESTION_STARTERS:
+        return None
+    return text[0].lower() + text[1:]
 
 
 def build_opening_line(
@@ -419,11 +443,29 @@ def build_opening_line(
     # information (callers experience it as the agent "taking forever").
     # The greeting carries only genuinely new information.
     stated_assistant = bool(_AI_MENTION_RE.search(disclosure))
-    if who not in disclosure and not stated_assistant:
-        intro = phrases["self_intro"].format(who=who)
-        if institution:
-            intro += phrases["from_suffix"].format(institution=institution)
-        intro += "."
+    if not who:
+        intro = phrases["from_standalone"].format(institution=institution) if institution else ""
+    elif who == phrases["ai_assistant"]:
+        # The token default is the generic identity. A bare disclosure has not
+        # introduced anyone, so state it; only an authored "AI assistant" makes
+        # the line redundant.
+        if stated_assistant:
+            intro = ""
+        else:
+            intro = phrases["self_intro"].format(who=who)
+            if institution:
+                intro += phrases["from_suffix"].format(institution=institution)
+            intro += "."
+    elif who not in disclosure:
+        if stated_assistant:
+            # The disclosure already said "AI assistant"; the caller still
+            # needs a name to attach the voice to, so introduce it on its own.
+            intro = phrases["name_only"].format(who=who)
+        else:
+            intro = phrases["self_intro"].format(who=who)
+            if institution:
+                intro += phrases["from_suffix"].format(institution=institution)
+            intro += "."
     elif institution:
         intro = phrases["from_standalone"].format(institution=institution)
     else:
@@ -453,12 +495,15 @@ def build_opening_line(
         and subject.casefold() in first_question.casefold()
     )
     about = "" if named_in_question else phrases["about"].format(subject=subject)
+    bare_address = ""
     if parent and subject and parent != subject:
         address = phrases.get("address", "{parent}").format(parent=parent)
         greet = f"{hello} {address}.".strip()
         if intro:
             greet += f" {intro}"
         greet += about
+        if not hello and not intro and not about:
+            bare_address = address
     elif subject:
         greet = f"{hello} {subject}.".strip()
         if intro:
@@ -501,9 +546,18 @@ def build_opening_line(
                     sorted(set(leftovers)),
                 )
             return scrub_speech_text(opening)
+    spoken_question = first_question
+    if bare_address and first_question:
+        # The disclosure already greeted; "Suresh Kumar." on its own sounds
+        # like a roll-call reading. Make it a vocative that flows into the
+        # question: "Suresh Kumar, could you please share ...?"
+        continued = _vocative_continuation(first_question)
+        if continued is not None:
+            greet = f"{bare_address},"
+            spoken_question = continued
     opening = f"{disclosure} {greet}"
-    if first_question:
-        opening += f" {first_question}"
+    if spoken_question:
+        opening += f" {spoken_question}"
     # Loud failure over silent failure: an unsubstituted [Token] means the
     # contact card lacked the data — speaking "appointment with on at" is
     # worse than a hallucination because the caller cannot catch it. Log
@@ -791,11 +845,22 @@ def render_system_prompt(
     system_prompt = apply_token_substitution(
         str(config.get("system_prompt") or "").strip(), tokens
     )
-    role_lines: list[str] = [
-        "You are a human-sounding phone agent on one outbound SPOKEN call "
-        "(your words are read aloud). Hold a natural short conversation and "
-        "complete the goals below.",
-    ]
+    agent_name = str(config.get("agent_name") or "").strip()
+    agent_role = str(config.get("agent_description") or "").strip()
+    role_lines: list[str] = []
+    if agent_name and agent_name.lower() not in ("ai", "ai assistant", "an ai assistant"):
+        identity = f"Your name is {agent_name}"
+        if agent_role:
+            identity += f", {agent_role}"
+        role_lines.append(
+            identity + ". Answer to that name naturally when the caller uses it. "
+            "You are still an AI assistant and must say so if asked."
+        )
+    role_lines.append(
+        "You are a phone agent on one outbound SPOKEN call (your words are "
+        "read aloud). Hold a natural short conversation and complete the goals "
+        "below."
+    )
     sections.append("\n".join([PERSONA_HEADER] + [f"- {line}" for line in role_lines]))
 
     # 2b. Creator's role definition - the PRIMARY identity instruction.

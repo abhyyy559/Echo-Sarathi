@@ -405,6 +405,131 @@ def test_groq_leads_then_secondary_then_sarvam_overflow(monkeypatch) -> None:
     ]
 
 
+def test_llm_primary_chain_expands_the_sarvam_shorthand(monkeypatch) -> None:
+    """LLM_PRIMARY_CHAIN=sarvam must arm the member without a second key paste."""
+    monkeypatch.setenv("LLM_PRIMARY_CHAIN", "sarvam")
+    monkeypatch.setenv("SARVAM_API_KEY", "")
+    monkeypatch.setenv("SARVAM_TTS_API", "sk-sarvam-test")
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "")
+    settings = Settings.from_env()
+    assert settings.llm_primary_chain == (
+        ("sarvam", "https://api.sarvam.ai/v1", "sk-sarvam-test", "sarvam-105b-conversations"),
+    )
+
+
+def test_llm_primary_chain_drops_placeholder_keys(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PRIMARY_CHAIN", "sarvam")
+    monkeypatch.setenv("SARVAM_API_KEY", "your_sarvam_key_here")
+    monkeypatch.setenv("SARVAM_TTS_API", "")
+    settings = Settings.from_env()
+    assert settings.llm_primary_chain == ()
+
+
+def test_build_providers_serves_primary_before_groq(monkeypatch) -> None:
+    """The measured fast path: Sarvam answers turn one, Groq is the fallback."""
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.model = kwargs.get("model", "?")
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="c",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+        llm_primary_chain_raw="sarvam",
+        sarvam_api_key="sk-sarvam-test",
+        llm_fallback_chain_raw=(
+            "velona|https://velona.in/v1|vk|deepseek/deepseek-v4.1-flash"
+        ),
+    )
+    bundle = build_providers(settings)
+    assert isinstance(bundle.llm, FallbackLLM)
+    assert bundle.llm._providers == ["sarvam", "groq", "velona"]
+    assert [getattr(m, "model", "?") for m in bundle.llm._chain] == [
+        "sarvam-105b-conversations",
+        "qwen/qwen3.8-27b",
+        "deepseek/deepseek-v4.1-flash",
+    ]
+    # English calls start on the primary member with no language preference.
+    assert bundle.llm._pick_member() == 0
+
+
+def test_pinned_agent_model_disables_the_platform_primary(monkeypatch) -> None:
+    """An agent that pins llm_model keeps that model first; the platform's
+    Sarvam primary must not silently override the operator's choice."""
+    made: list[dict[str, Any]] = []
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.model = kwargs.get("model", "?")
+            made.append(kwargs)
+
+    monkeypatch.setattr(pipeline_module.deepgram, "STT", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.cartesia, "TTS", lambda **kw: object())
+    monkeypatch.setattr(pipeline_module.openai, "LLM", _FakeLLM)
+
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key="dg",
+        cartesia_api_key="c",
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        backend_internal_url="http://b",
+        groq_model="qwen/qwen3.8-27b",
+        openai_model="gpt-4o-mini",
+        log_level="info",
+        internal_api_token="t",
+        llm_primary_chain_raw="sarvam",
+        sarvam_api_key="sk-sarvam-test",
+    )
+    bundle = build_providers(settings, {"llm_model": "qwen/qwen3.8-27b"})
+    assert not isinstance(bundle.llm, FallbackLLM), "single pinned member"
+    assert getattr(bundle.llm, "model", "") == "qwen/qwen3.8-27b"
+    assert [m["model"] for m in made] == ["qwen/qwen3.8-27b"]
+
+
+def test_primary_member_is_not_repeated_in_the_fallback_chain() -> None:
+    fallback = "sarvam|https://api.sarvam.ai/v1|sk-sarvam-test|sarvam-105b-conversations"
+    settings = Settings(
+        livekit_url="ws://x",
+        livekit_api_key="k",
+        livekit_api_secret="s",
+        deepgram_api_key=None,
+        cartesia_api_key=None,
+        groq_api_key="k1",
+        openai_api_key=None,
+        openai_base_url=None,
+        internal_api_token="t",
+        backend_internal_url="http://b",
+        groq_model="m",
+        openai_model="o",
+        log_level="info",
+        llm_primary_chain_raw="sarvam",
+        sarvam_api_key="sk-sarvam-test",
+        llm_fallback_chain_raw=fallback,
+    )
+    assert settings.llm_fallback_chain == ()
+
+
 def test_output_cap_is_model_aware() -> None:
     """Regression for the silence: a reasoning model truncated at the small cap
     returns an empty reply. qwen3 is NOT a reasoning model."""

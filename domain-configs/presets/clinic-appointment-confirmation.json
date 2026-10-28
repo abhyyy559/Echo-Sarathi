@@ -3,7 +3,7 @@
   "name": "Clinic Appointment Confirmation",
   "description": "Confirms or reschedules a patient's appointment, records the reason for the visit, and notes any transport or accessibility help needed.",
   "version_payload": {
-    "system_prompt": "# ROLE\nYou are [Agent Name], the front-desk coordinator at [Clinic Name]. You call patients before their appointment.\n\n# OBJECTIVE\nConfirm the appointment, reschedule it if the patient cannot come, note the reason for the visit, and end the call.\n\n# PERSONA & TONE\nWarm, clear, and brief. 1-2 sentences per reply. Never give medical advice; if the patient describes symptoms or an emergency, tell them to contact the clinic or emergency services and end the call.\n\n# OPENING\n\"Hello, this is [Agent Name] from [Clinic Name]. I am calling to confirm your appointment with [Doctor Name] on [Appointment Date] at [Appointment Time]. Is that still convenient?\"\n\n# THINGS TO FIND OUT\n1. Whether they will attend the booked appointment.\n2. If not, the date and time they prefer instead.\n3. The reason for the visit (in their own words).\n4. Whether they need help with transport or accessibility.\n\n# OBJECTIONS & FAQ\n- \"Who is this?\" -> \"This is the front desk at [Clinic Name], confirming your appointment.\"\n- \"Can I come another day?\" -> Offer the next available slot, confirm the one they pick.\n- \"I am not well right now.\" -> Ask whether it is urgent; if it sounds urgent, advise emergency care and end the call.\n\n# DO NOT\n- Never diagnose, advise on medication, or interpret test results.\n- Never share another patient's information.\n- Never confirm an appointment that has not been agreed in this call.",
+    "system_prompt": "# ROLE\nYou are [Agent Name], the front-desk coordinator at [Clinic Name], and an AI assistant. You call patients before their appointment.\n\n# OBJECTIVE\nConfirm the appointment, reschedule it if the patient cannot come, note the reason for the visit, and end the call.\n\n# PERSONA & TONE\nWarm, clear, and brief. 1-2 sentences per reply. Never give medical advice; if the patient describes symptoms or an emergency, tell them to contact the clinic or emergency services and end the call.\n\n# OPENING\n\"Hello, this is [Agent Name] from [Clinic Name]. I am calling to confirm your appointment with [Doctor Name] on [Appointment Date] at [Appointment Time]. Is that still convenient?\"\n\n# THINGS TO FIND OUT\n1. Whether they will attend the booked appointment.\n2. If not, the date and time they prefer instead.\n3. The reason for the visit (in their own words).\n4. Whether they need help with transport or accessibility.\n\n# OBJECTIONS & FAQ\n- \"Who is this?\" -> \"This is the front desk at [Clinic Name], confirming your appointment.\"\n- \"Can I come another day?\" -> Offer the next available slot, confirm the one they pick.\n- \"I am not well right now.\" -> Ask whether it is urgent; if it sounds urgent, advise emergency care and end the call.\n\n# DO NOT\n- Never diagnose, advise on medication, or interpret test results.\n- Never share another patient's information.\n- Never confirm an appointment that has not been agreed in this call.",
     "company_context": {
       "clinic_name": "[Clinic Name]",
       "doctor_name": "[Doctor Name]",
@@ -11,29 +11,105 @@
       "appointment_time": "[Appointment Time]"
     },
     "question_flow": [
-      {"step": 1, "question": "Am I speaking with [Patient Name]? I am calling from [Clinic Name] to confirm your appointment with [Doctor Name]."},
-      {"step": 2, "question": "Will you be able to attend the appointment on [Appointment Date] at [Appointment Time]?"},
-      {"step": 3, "question": "If not, which date and time would suit you better?"},
-      {"step": 4, "question": "May I note the reason for your visit?"},
-      {"step": 5, "question": "Do you need any help with transport or accessibility when you come?"}
+      {
+        "step": 1,
+        "question": "Am I speaking with [Patient Name]? I am calling from [Clinic Name] to confirm your appointment with [Doctor Name]."
+      },
+      {
+        "step": 2,
+        "question": "Will you be able to attend the appointment on [Appointment Date] at [Appointment Time]?"
+      },
+      {
+        "step": 3,
+        "question": "If not, which date and time would suit you better?"
+      },
+      {
+        "step": 4,
+        "question": "May I note the reason for your visit?"
+      },
+      {
+        "step": 5,
+        "question": "Do you need any help with transport or accessibility when you come?"
+      }
     ],
     "extraction_schema": {
-      "will_attend": {"type": "boolean", "description": "Whether the patient will attend the booked appointment.", "validation": "required", "confidence_threshold": 0.8},
-      "reschedule_date": {"type": "date", "description": "New date the patient prefers, if rescheduling.", "validation": "optional", "confidence_threshold": 0.8},
-      "reschedule_time": {"type": "string", "description": "New time slot the patient prefers, if rescheduling.", "validation": "optional", "confidence_threshold": 0.75},
-      "reason_for_visit": {"type": "string", "description": "Reason the patient gives for the visit, in their own words.", "validation": "optional", "confidence_threshold": 0.75},
-      "needs_transport_help": {"type": "boolean", "description": "Whether the patient needs transport or accessibility support.", "validation": "optional", "confidence_threshold": 0.7},
-      "call_outcome": {"type": "string", "description": "Outcome of the call (e.g. confirmed, rescheduled, cancelled).", "validation": "required", "confidence_threshold": 0.8},
-      "escalation_needed": {"type": "boolean", "description": "Whether clinic staff must call the patient back.", "validation": "optional", "confidence_threshold": 0.7}
+      "will_attend": {
+        "type": "boolean",
+        "description": "Whether the patient will attend the booked appointment.",
+        "validation": "required",
+        "confidence_threshold": 0.8
+      },
+      "reschedule_date": {
+        "type": "date",
+        "description": "New date the patient prefers, if rescheduling.",
+        "validation": "optional",
+        "confidence_threshold": 0.8
+      },
+      "reschedule_time": {
+        "type": "string",
+        "description": "New time slot the patient prefers, if rescheduling.",
+        "validation": "optional",
+        "confidence_threshold": 0.75
+      },
+      "reason_for_visit": {
+        "type": "string",
+        "description": "Reason the patient gives for the visit, in their own words.",
+        "validation": "optional",
+        "confidence_threshold": 0.75
+      },
+      "needs_transport_help": {
+        "type": "boolean",
+        "description": "Whether the patient needs transport or accessibility support.",
+        "validation": "optional",
+        "confidence_threshold": 0.7
+      },
+      "call_outcome": {
+        "type": "string",
+        "description": "Outcome of the call (e.g. confirmed, rescheduled, cancelled).",
+        "validation": "required",
+        "confidence_threshold": 0.8
+      },
+      "escalation_needed": {
+        "type": "boolean",
+        "description": "Whether clinic staff must call the patient back.",
+        "validation": "optional",
+        "confidence_threshold": 0.7
+      }
     },
-    "disclosure_script": "Hello, this is an AI assistant calling from [Clinic Name]. This call is being recorded.",
+    "disclosure_script": "Hello, this is [Agent Name], an AI assistant calling from [Clinic Name]. This call is being recorded.",
     "escalation_rules": [
-      {"trigger": "Patient describes a medical emergency or severe symptoms.", "action": "end_call"},
-      {"trigger": "Patient asks to speak to a doctor or clinic staff.", "action": "transfer"},
-      {"trigger": "Patient disputes the appointment details or billing.", "action": "flag"},
-      {"trigger": "Patient is angry or distressed.", "action": "flag"},
-      {"trigger": "Required information could not be captured after three attempts.", "action": "end_call"}
+      {
+        "trigger": "Patient describes a medical emergency or severe symptoms.",
+        "action": "end_call"
+      },
+      {
+        "trigger": "Patient asks to speak to a doctor or clinic staff.",
+        "action": "transfer"
+      },
+      {
+        "trigger": "Patient disputes the appointment details or billing.",
+        "action": "flag"
+      },
+      {
+        "trigger": "Patient is angry or distressed.",
+        "action": "flag"
+      },
+      {
+        "trigger": "Required information could not be captured after three attempts.",
+        "action": "end_call"
+      }
     ],
-    "voice_settings": {"language": "en", "stt_language": "en", "speaking_rate": 1.0, "llm_model": "", "tts_voice_id": "", "voices_by_language": {"en": ""}}
-  }
+    "voice_settings": {
+      "language": "en",
+      "stt_language": "en",
+      "speaking_rate": 1.0,
+      "llm_model": "",
+      "tts_voice_id": "",
+      "voices_by_language": {
+        "en": ""
+      }
+    }
+  },
+  "suggested_agent_name": "Meera",
+  "suggested_role": "Clinic front desk"
 }

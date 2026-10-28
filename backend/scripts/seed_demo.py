@@ -8,8 +8,8 @@ Creates (idempotently):
 - organization "CMR College of Engineering & Technology" (slug cmr-cet)
 - owner user from DEMO_EMAIL / DEMO_PASSWORD (falls back to
   demo@example.com / demo1234 for local development only)
-- starter agent "Absent Student Follow-up" with v1 built from
-  domain-configs/absent-student.json
+- starter agents "Priya" (English) and "Sahithi" (Telugu), v1 built from
+  domain-configs/absent-student.json and the Telugu preset
 
 Beta policy: NO campaigns, NO sample contacts, NO calls are created — testers
 start from clean empty states and bring their own data. The starter agent is
@@ -162,15 +162,16 @@ def _ensure_starter_agents(
     """
     config = _load_absent_student_config()
     preset = _load_telugu_preset()
+    _rename_legacy_starters(db, org_id)
     specs = {
         "english": (
-            config["display_name"] if "display_name" in config else config["name"],
-            "Starter agent — absent student follow-up calls.",
+            "Priya",
+            "Attendance follow-up specialist · calls guardians of absent students.",
             _version_payload_from_config(config),
         ),
         "telugu": (
-            preset["name"],
-            preset["description"],
+            "Sahithi",
+            "Attendance follow-up specialist (Telugu) · calls guardians of absent students.",
             {
                 **preset["version_payload"],
                 # Override the preset's "[Institution Name]" token: the demo
@@ -194,6 +195,32 @@ def _ensure_starter_agents(
     return created
 
 
+#: Starter agents used to be named after their job ("Absent Student Follow-up").
+#: Callers now hear a person's name, so an existing demo tenant is renamed in
+#: place instead of gaining a duplicate second pair of starters.
+_LEGACY_STARTER_NAMES = {
+    "Absent Student Follow-up": "Priya",
+    "Absent Student Follow-up (Telugu)": "Sahithi",
+}
+
+
+def _rename_legacy_starters(db: Any, org_id: int) -> None:
+    for legacy, persona in _LEGACY_STARTER_NAMES.items():
+        agent = db.scalar(
+            select(Agent).where(Agent.org_id == org_id, Agent.name == legacy)
+        )
+        if agent is None:
+            continue
+        clash = db.scalar(
+            select(Agent).where(Agent.org_id == org_id, Agent.name == persona)
+        )
+        if clash is None:
+            agent.name = persona
+    # Sessions run with autoflush=False, so the rename must be flushed before
+    # the starter lookup below or it recreates the persona as a duplicate.
+    db.flush()
+
+
 def seed_demo(database_url: str | None = None) -> dict[str, Any]:
     """Create the demo tenant; returns a summary dict. Safe to run repeatedly."""
     settings = get_settings()
@@ -213,8 +240,9 @@ def seed_demo(database_url: str | None = None) -> dict[str, Any]:
             added = _ensure_starter_agents(
                 db, org_id=existing.org_id, owner_id=existing.id
             )
-            if added:
-                db.commit()
+            # Always commit: renaming a legacy starter also lands here with
+            # nothing "added".
+            db.commit()
             return {
                 "status": "already_seeded",
                 "email": DEMO_EMAIL,

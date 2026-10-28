@@ -381,7 +381,10 @@ def _render_compact_system_prompt(
 
 
 def _build_short_opening(
-    version: AgentVersion, contact: dict[str, Any], institution: str
+    version: AgentVersion,
+    contact: dict[str, Any],
+    institution: str,
+    agent_name: str = "",
 ) -> str:
     """Deterministic 2-sentence opening, built without an LLM round trip.
 
@@ -400,7 +403,10 @@ def _build_short_opening(
     a stranger's parent.
     """
     tokens = build_token_map(
-        contact, institution, company_context=getattr(version, "company_context", None)
+        contact,
+        institution,
+        agent_name=agent_name,
+        company_context=getattr(version, "company_context", None),
     )
     disclosure = apply_token_substitution(
         str(getattr(version, "disclosure_script", "") or ""), tokens
@@ -838,6 +844,8 @@ def _render_text_system_prompt(
     config: Any,
     contact: Optional[dict[str, str]] = None,
     institution: str = "",
+    agent_name: str = "",
+    agent_role: str = "",
 ) -> str:
     """Slim server-side twin of voice-agent/app/prompting.render_system_prompt.
 
@@ -860,7 +868,10 @@ def _render_text_system_prompt(
 
     card = _display_card(contact or {})
     tokens = build_token_map(
-        card, institution=institution, company_context=getattr(config, "company_context", None)
+        card,
+        institution=institution,
+        agent_name=agent_name,
+        company_context=getattr(config, "company_context", None),
     )
 
     # 1. Mandatory disclosure FIRST and verbatim.
@@ -874,9 +885,19 @@ def _render_text_system_prompt(
     # below already carries the character, and repeating generic framing in
     # three places only spent TPM.
     persona = apply_token_substitution(str(config.system_prompt or "").strip(), tokens)
+    identity = ""
+    if agent_name and agent_name.lower() not in ("ai", "ai assistant", "an ai assistant"):
+        identity = f"- Your name is {agent_name}"
+        if agent_role:
+            identity += f", {agent_role}"
+        identity += (
+            ". Answer to it naturally when the caller uses it; you are still an "
+            "AI assistant and must say so if asked.\n"
+        )
     sections.append(
         "WHO YOU ARE:\n"
-        "- You are a friendly human-sounding outbound phone agent. Every reply "
+        + identity
+        + "- You are a friendly outbound phone agent. Every reply "
         "you type is read aloud by a speech engine exactly as written."
     )
     # 2b. Creator's role definition - authoritative, verbatim (not a bullet).
@@ -2076,6 +2097,9 @@ async def _run_agent_turn(
     """
     contact = (call.context or {}).get("contact") or {}
     org = db.get(Organization, call.org_id) if call.org_id else None
+    agent = db.get(Agent, version.agent_id)
+    agent_name = (agent.name or "") if agent else ""
+    agent_role = (agent.description or "") if agent else ""
     institution = resolve_org_name(
         version.company_context, org.name if org and org.name else ""
     )
@@ -2112,14 +2136,18 @@ async def _run_agent_turn(
         )
     else:
         system_prompt = _render_text_system_prompt(
-            version, contact=contact, institution=institution
+            version,
+            contact=contact,
+            institution=institution,
+            agent_name=agent_name,
+            agent_role=agent_role,
         )
 
     if start_event:
         # Deterministic opening: no provider round trip, no duplicated
         # identity, and the caller hears something within a few ms instead of
         # after a full LLM call.
-        opening = _build_short_opening(version, contact, institution)
+        opening = _build_short_opening(version, contact, institution, agent_name)
         if opening:
             db.add(
                 Transcript(
@@ -2161,7 +2189,10 @@ async def _run_agent_turn(
         )
         contact = (call.context or {}).get("contact") or {}
         tokens = build_token_map(
-            contact, institution, company_context=getattr(version, "company_context", None)
+            contact,
+            institution,
+            agent_name=agent_name,
+            company_context=getattr(version, "company_context", None),
         )
         student = tokens["[Student Name]"]
         parent = tokens["[Parent/Guardian Name]"]

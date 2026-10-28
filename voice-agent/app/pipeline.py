@@ -1131,6 +1131,42 @@ def build_providers(
     # import, so this no longer blocks the event loop for ~2.9s.
     llm_clients: list[Any] = []
 
+    # Members that answer BEFORE the Groq pool (LLM_PRIMARY_CHAIN). The
+    # benchmarked voice fast path: Sarvam 105B holds ~0.5-0.65s on the full
+    # 2.7k-token prompt while Groq's org-wide 8000 TPM bucket caps it at ~2-3
+    # turns a minute. Empty primary keeps the historical Groq-first order.
+    primary_llms: list[Any] = []
+    primary_names: list[str] = []
+    # An agent that pins its own llm_model has made the routing decision, so
+    # the platform primary would silently override the operator's choice.
+    for name, base_url, api_key, model in (
+        () if model_override else settings.llm_primary_chain
+    ):
+        if not base_url:
+            continue
+        try:
+            primary_llms.append(
+                openai.LLM(
+                    model=model,
+                    **_llm_connection_kwargs(
+                        api_key, base_url, llm_clients,
+                        provider=name, model=model,
+                    ),
+                    max_completion_tokens=_max_completion_tokens_for(model),
+                )
+            )
+            primary_names.append(name)
+        except Exception as exc:  # noqa: BLE001 — never block the chain
+            logger.warning("LLM primary member %s rejected: %s", name, exc)
+    if primary_llms:
+        logger.info(
+            "LLM primary members: %s",
+            ", ".join(
+                f"{name}:{getattr(m, 'model', '?')}"
+                for name, m in zip(primary_names, primary_llms)
+            ),
+        )
+
     groq_model = model_override or settings.groq_model
     # Multi-key rotation: one client per API key (GROQ_API_KEY first,
     # then GROQ_API_KEYS). A 429/quota failure on one key cools THAT key
@@ -1183,12 +1219,12 @@ def build_providers(
                     "Secondary Groq model %s rejected: %s", secondary_model, exc
                 )
     if groq_llms:
-        # Groq-first. The primary pool (qwen on every key) is the fast path,
-        # then the secondary Groq model (gpt-oss-120b), then overflow providers
-        # (Sarvam) appended last. This is the fix for the old Gemini-first
-        # chain, which put a 503/402 in front of EVERY call's first turn.
-        chain: list[Any] = list(groq_llms)
-        chain_providers: list[str] = ["groq"] * len(groq_llms)
+        # Primary tier first (Sarvam 105B), then the Groq pool (qwen on every
+        # key), then the secondary Groq model (gpt-oss-120b), then overflow
+        # providers (Velona). This is the fix for the Groq-first chain, which
+        # put a shared 8000 TPM bucket in front of every turn's first token.
+        chain: list[Any] = list(primary_llms) + list(groq_llms)
+        chain_providers: list[str] = list(primary_names) + ["groq"] * len(groq_llms)
         if groq_secondary_llm is not None:
             chain.append(groq_secondary_llm)
             chain_providers.append("groq-secondary")
@@ -1232,13 +1268,13 @@ def build_providers(
             )
         else:
             bundle.llm = chain[0]
-    elif settings.llm_fallback_chain:
-        # No Groq at all, but extra providers are configured: arm ALL of them
-        # as a fallback chain (not just the first) with the same output caps,
-        # so reasoning models can't truncate to empty replies and a dead
+    elif settings.llm_fallback_chain or primary_llms:
+        # No Groq at all, but primary/extra providers are configured: arm ALL
+        # of them as a fallback chain (not just the first) with the same output
+        # caps, so reasoning models can't truncate to empty replies and a dead
         # member cools down instead of silencing the call.
-        extra_llms: list[Any] = []
-        extra_names: list[str] = []
+        extra_llms: list[Any] = list(primary_llms)
+        extra_names: list[str] = list(primary_names)
         for name, base_url, api_key, model in settings.llm_fallback_chain:
             if not base_url:
                 continue
@@ -1258,7 +1294,7 @@ def build_providers(
                 logger.warning("LLM chain member %s rejected: %s", name, exc)
         if len(extra_llms) > 1:
             logger.info(
-                "GROQ_API_KEY missing - using fallback chain: %s",
+                "GROQ_API_KEY missing - using provider chain: %s",
                 ", ".join(
                     f"{name}:{getattr(m, 'model', '?')}"
                     for name, m in zip(extra_names, extra_llms)
@@ -3063,6 +3099,7 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         tokens = build_token_map(
             contact=parsed.contact,
             context=call_context,
+            agent_name=str(config.get("agent_name") or ""),
             company_context=config.get("company_context"),
         )
         instructions = render_system_prompt(config, contact=parsed.contact, tokens=tokens)

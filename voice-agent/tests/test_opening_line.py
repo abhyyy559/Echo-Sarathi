@@ -20,7 +20,7 @@ def test_opening_line_school_card() -> None:
     assert out.startswith("Hi, this is an AI assistant calling from Demo School.")
     assert "Suresh Kumar" in out
     assert "Aarav Kumar" in out
-    assert "Why was Aarav Kumar absent?" in out
+    assert "why was Aarav Kumar absent?" in out
     assert "[" not in out and "]" not in out
 
 
@@ -44,9 +44,9 @@ def test_opening_line_empty_without_disclosure() -> None:
 def test_opening_line_uses_short_sentences_for_tts_clarity() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(CONFIG, _tokens(contact), contact)
-    # CONFIG's disclosure already says "Hi", so the greeting contributes only
-    # the name: short standalone sentences, clean prosody for the TTS engine.
-    assert "Suresh Kumar." in out
+    # CONFIG's disclosure already says "Hi", so the name becomes a vocative
+    # that flows into the question — clean prosody without a dangling name.
+    assert "Suresh Kumar," in out
     assert "Hello Suresh Kumar." not in out
     # Disclosure already says who/where — the greeting must not repeat it.
     assert "This is an AI assistant calling from Demo School." not in out
@@ -54,7 +54,7 @@ def test_opening_line_uses_short_sentences_for_tts_clarity() -> None:
     # Aarav Kumar." would be a second mention of the same name right before the
     # question. The question is the mention that survives.
     assert "I'm calling about Aarav Kumar." not in out
-    assert "Why was Aarav Kumar absent?" in out
+    assert "why was Aarav Kumar absent?" in out
 
 
 def test_opening_line_keeps_the_about_clause_when_the_question_is_generic() -> None:
@@ -110,7 +110,9 @@ def test_opening_line_drops_latin_greeting_duplicate() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(config, _tokens(contact), contact)
     assert "Hello" not in out
-    assert "Suresh Kumar." in out
+    assert "Suresh Kumar," in out
+    # The name flows into the question instead of dangling as its own sentence.
+    assert "Suresh Kumar, why was Aarav Kumar absent?" in out
 
     bare = {
         "disclosure_script": "This is an AI assistant calling.",
@@ -347,4 +349,4 @@ def test_opening_line_school_question_keeps_the_greeting() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     tokens = build_token_map(contact=contact, context={"institution_name": "Demo School"})
     out = build_opening_line(CONFIG, tokens, contact)
-    assert "Suresh Kumar. Why was Aarav Kumar absent?" in out
+    assert "Suresh Kumar, why was Aarav Kumar absent?" in out

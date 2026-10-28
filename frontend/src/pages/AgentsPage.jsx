@@ -111,15 +111,24 @@ export default function AgentsPage() {
         <div className="agent-grid">
           {agents.map((a) => {
             const info = versionInfo[a.id];
+            const initials = (a.name || '?')
+              .split(/\s+/)
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((part) => part[0].toUpperCase())
+              .join('');
             return (
               <div key={a.id} className="card acard">
                 <div className="top">
-                  <span className={`sdot ${a.status || 'draft'}`}></span>
-                  <h3>{a.name || 'Untitled agent'}</h3>
+                  <span className={`avatar ${a.status || 'draft'}`}>{initials || '?'}</span>
+                  <div className="who">
+                    <h3>{a.name || 'Untitled agent'}</h3>
+                    <span className="role">{a.description || 'No role set yet.'}</span>
+                  </div>
                   {info && <span className="vchip">v{info.version}</span>}
                 </div>
-                <p>{a.description || 'No description yet.'}</p>
                 <div className="meta">
+                  <span className={`sdot ${a.status || 'draft'}`}></span>
                   Updated {info && info.created_at ? fmtDate(info.created_at) : fmtDate(a.updated_at)} · {a.status || 'draft'}
                 </div>
                 <div className="acts">

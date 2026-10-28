@@ -26,11 +26,12 @@ def test_seed_demo_creates_clean_beta_tenant(tmp_path):
 
         agents = db.scalars(select(Agent)).all()
         assert {a.name for a in agents} == {
-            "Absent Student Follow-up",
-            "Absent Student Follow-up (Telugu)",
+            "Priya",
+            "Sahithi",
         }, "beta policy seeds exactly the English + Telugu starters"
 
-        agent = next(a for a in agents if a.name == "Absent Student Follow-up")
+        agent = next(a for a in agents if a.name == "Priya")
+        assert "Attendance" in (agent.description or "")
         version = db.get(AgentVersion, agent.current_version_id)
         assert version is not None
         assert version.version == 1
@@ -38,7 +39,7 @@ def test_seed_demo_creates_clean_beta_tenant(tmp_path):
             "hello"
         ), "disclosure script should come from absent-student.json"
 
-        telugu = next(a for a in agents if a.name.endswith("(Telugu)"))
+        telugu = next(a for a in agents if a.name == "Sahithi")
         telugu_version = db.get(AgentVersion, telugu.current_version_id)
         assert telugu_version is not None
         assert telugu_version.voice_settings.get("language") == "te"
@@ -74,9 +75,7 @@ def test_seed_backfills_a_new_starter_agent_into_existing_tenant(tmp_path):
     # Simulate the pre-Telugu deployment: only the English starter exists.
     engine = create_engine(db_url)
     with sessionmaker(bind=engine)() as db:
-        telugu = db.scalar(
-            select(Agent).where(Agent.name == "Absent Student Follow-up (Telugu)")
-        )
+        telugu = db.scalar(select(Agent).where(Agent.name == "Sahithi"))
         assert telugu is not None
         # Core deletes, not ORM deletes: Agent <-> AgentVersion reference each
         # other, so the ORM would try to null a NOT NULL agent_id.
@@ -86,14 +85,35 @@ def test_seed_backfills_a_new_starter_agent_into_existing_tenant(tmp_path):
 
     result = seed_demo(db_url)
     assert result["status"] == "already_seeded"
-    assert result["agents_added"] == ["Absent Student Follow-up (Telugu)"]
+    assert result["agents_added"] == ["Sahithi"]
 
     with sessionmaker(bind=engine)() as db:
         names = {a.name for a in db.scalars(select(Agent)).all()}
-        assert names == {
-            "Absent Student Follow-up",
-            "Absent Student Follow-up (Telugu)",
-        }
+        assert names == {"Priya", "Sahithi"}
+    engine.dispose()
+
+
+def test_seed_renames_legacy_job_titled_starters_in_place(tmp_path):
+    """A tenant from before the persona rename gets the person's name, not a
+    duplicate pair of starters."""
+    db_url = f"sqlite:///{tmp_path / 'demo.db'}"
+    seed_demo(db_url)
+
+    engine = create_engine(db_url)
+    with sessionmaker(bind=engine)() as db:
+        db.scalar(select(Agent).where(Agent.name == "Priya")).name = "Absent Student Follow-up"
+        db.scalar(select(Agent).where(Agent.name == "Sahithi")).name = (
+            "Absent Student Follow-up (Telugu)"
+        )
+        db.commit()
+
+    result = seed_demo(db_url)
+    assert result["status"] == "already_seeded"
+    assert result["agents_added"] == []
+
+    with sessionmaker(bind=engine)() as db:
+        names = {a.name for a in db.scalars(select(Agent)).all()}
+        assert names == {"Priya", "Sahithi"}, "renamed, not duplicated"
     engine.dispose()
 
 

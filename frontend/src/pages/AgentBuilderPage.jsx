@@ -548,34 +548,38 @@ export default function AgentBuilderPage() {
             <div className="card pad">
               <div className="field">
                 <label htmlFor="ab-name">
-                  Agent name <span className="req-star">*</span>
+                  Agent's name <span className="req-star">*</span>
                 </label>
                 <input
                   id="ab-name"
                   type="text"
                   value={meta.name}
-                  placeholder="e.g. Absent student follow-up caller"
+                  placeholder="e.g. Ananya"
                   onChange={(e) => {
                     setMeta({ ...meta, name: e.target.value });
                     setMetaDirty(true);
                     setSavedVersion(null);
                   }}
                 />
+                <p className="hint">
+                  A person's name. Callers hear it in the opening (“This is Ananya…”), and the agent answers to it.
+                </p>
                 {err('meta.name') && <p className="hint hint-error">{err('meta.name')}</p>}
               </div>
               <div className="field">
-                <label htmlFor="ab-desc">Description</label>
+                <label htmlFor="ab-desc">Role subtitle</label>
                 <textarea
                   id="ab-desc"
-                  rows="3"
+                  rows="2"
                   value={meta.description}
-                  placeholder="What this agent is for, who owns it, anything teammates should know."
+                  placeholder="e.g. Admissions follow-up specialist — calls guardians of absent students."
                   onChange={(e) => {
                     setMeta({ ...meta, description: e.target.value });
                     setMetaDirty(true);
                     setSavedVersion(null);
                   }}
                 />
+                <p className="hint">Shown under the agent's name and given to the model as its role.</p>
               </div>
               {metaError && <div className="banner banner-error">{metaError}</div>}
               {metaSavedAt && !metaDirty && (
