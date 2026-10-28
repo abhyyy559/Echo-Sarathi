@@ -62,6 +62,7 @@ async def run(
     wav_path: str,
     hold_s: int,
     wav2_path: str | None = None,
+    wait_before_s: float = 0.0,
 ) -> int:
     from livekit import rtc
 
@@ -107,6 +108,10 @@ async def run(
     await room.local_participant.publish_track(track, opts)
     print("[PUBLISHED] mic track with SOURCE_MICROPHONE")
 
+    if wait_before_s > 0:
+        # Speaking over the agent's greeting makes VAD see one garbled turn and
+        # the greeting gets cut mid-sentence; a real caller waits for silence.
+        await asyncio.sleep(wait_before_s)
     await play_wav(src, wav_path)
     print("[PUBLISHED] caller utterance done; waiting for agent...")
 
@@ -152,6 +157,7 @@ def main() -> int:
     parser.add_argument("--wav", required=True)
     parser.add_argument("--wav2", default=None)
     parser.add_argument("--hold", type=int, default=35)
+    parser.add_argument("--wait-before-speaking", type=float, default=0.0)
     args = parser.parse_args()
 
     token = http_json(
@@ -169,7 +175,14 @@ def main() -> int:
     print(f"[SESSION] call_id={call_id} room={room_name}")
 
     exit_code = asyncio.run(
-        run(sess["livekit_url"], sess["livekit_token"], args.wav, args.hold, args.wav2)
+        run(
+            sess["livekit_url"],
+            sess["livekit_token"],
+            args.wav,
+            args.hold,
+            args.wav2,
+            args.wait_before_speaking,
+        )
     )
 
     # Worker flushes turns on a short debounce after the reply — poll patiently.
