@@ -104,3 +104,50 @@ def test_build_token_map_lead_gen_aliases() -> None:
 
 def test_build_token_map_agent_name_defaults_to_assistant() -> None:
     assert build_token_map()["[Agent Name]"] == "an AI assistant"
+
+
+def test_build_token_map_fills_vertical_tokens_from_company_context() -> None:
+    """Real-estate and clinic presets put their names and details here; a
+    bracket left unfilled must lose to the tenant's resolved institution."""
+    m = build_token_map(
+        contact={"lead_name": "Riya"},
+        context={"institution_name": "Skyline Estates"},
+        company_context={
+            "company_name": "Skyline Estates",
+            "property_name": "Green Meadows",
+            "locality": "Kondapur",
+            "clinic_name": "[Clinic Name]",
+        },
+    )
+    assert m["[Company Name]"] == "Skyline Estates"
+    assert m["[Property Name]"] == "Green Meadows"
+    assert m["[Locality]"] == "Kondapur"
+    assert m["[Clinic Name]"] == "Skyline Estates"
+
+
+def test_preset_opening_has_no_holes_after_substitution() -> None:
+    m = build_token_map(
+        context={"institution_name": "Sunrise Dental"},
+        company_context={"clinic_name": "Sunrise Dental", "doctor_name": "Dr Rao"},
+    )
+    out = apply_token_substitution(
+        "Hello, this is Priya from [Clinic Name]. Is this a good time to "
+        "confirm your appointment with [Doctor Name]?",
+        m,
+    )
+    assert out == (
+        "Hello, this is Priya from Sunrise Dental. Is this a good time to "
+        "confirm your appointment with Dr Rao?"
+    )
+
+
+def test_build_token_map_resolves_contact_and_customer_aliases() -> None:
+    """Real-estate asks for [Contact Name], service feedback for [Customer Name];
+    both were unknown tokens, so the opening said "Am I speaking with ?"."""
+    for token in ("[Contact Name]", "[Customer Name]"):
+        m = build_token_map(
+            contact={"lead_name": "Riya"},
+            context={"institution_name": "Acme"},
+            company_context={"customer_name": "[Customer Name]"},
+        )
+        assert m[token] == "Riya"

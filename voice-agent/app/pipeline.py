@@ -3060,7 +3060,11 @@ async def run_session(ctx: JobContext, settings: Settings) -> None:
         # Fetch per-call context (institution_name + contact) once at session
         # start; {} on failure is fine — tokens resolve to empty and are dropped.
         call_context = await backend.fetch_call_context(call_id)
-        tokens = build_token_map(contact=parsed.contact, context=call_context)
+        tokens = build_token_map(
+            contact=parsed.contact,
+            context=call_context,
+            company_context=config.get("company_context"),
+        )
         instructions = render_system_prompt(config, contact=parsed.contact, tokens=tokens)
         schema = config.get("extraction_schema") or {}
         coordinator = ExtractionCoordinator(

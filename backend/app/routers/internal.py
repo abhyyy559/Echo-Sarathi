@@ -48,7 +48,7 @@ from app.services.calls_service import (
     log_call_event,
     maybe_complete_campaign,
 )
-from app.services.token_substitution import is_bracket_placeholder
+from app.services.token_substitution import resolve_org_name
 from app.timeutil import parse_iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -183,19 +183,11 @@ def call_context(call_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     if call.agent_version_id is not None:
         version = db.get(AgentVersion, call.agent_version_id)
         company_context = version.company_context if version is not None else {}
-        if isinstance(company_context, dict):
-            for key in ("institution", "institution_name"):
-                value = company_context.get(key)
-                # A preset's unfilled "[Institution Name]" is not a name: holding
-                # it here made the agent say "I am from ." on every call, so fall
-                # through to the org (the tenant's real name).
-                if (
-                    isinstance(value, str)
-                    and value.strip()
-                    and not is_bracket_placeholder(value)
-                ):
-                    institution_name = value.strip()
-                    break
+        # A preset's unfilled "[Institution Name]" is not a name: holding it
+        # here made the agent say "I am from ." on every call. resolve_org_name
+        # skips placeholders and reads each vertical's key (company_name,
+        # clinic_name, ...), falling back to the tenant's real name below.
+        institution_name = resolve_org_name(company_context)
     if not institution_name and org_id is not None:
         org = db.get(Organization, org_id)
         if org is not None and isinstance(org.name, str):

@@ -240,6 +240,50 @@ def test_context_unfilled_placeholder_institution_falls_back_to_organization(
     assert resp.json()["institution_name"] == "CMR College of Engineering & Technology"
 
 
+def test_context_reads_vertical_company_name(client, session_factory):
+    """Real-estate and service presets name the tenant under company_name."""
+    token, user = register(client, org_name="CMR College of Engineering & Technology")
+    with session_factory() as db:
+        version = _make_agent_version(
+            db,
+            user["org_id"],
+            {"company_name": "Skyline Estates", "property_name": "Green Meadows"},
+        )
+        call_id = _seed_call(db, org_id=user["org_id"], agent_version_id=version.id)
+
+    resp = client.get(f"/internal/calls/{call_id}/context", headers=INTERNAL)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["institution_name"] == "Skyline Estates"
+
+
+def test_context_reads_vertical_clinic_name(client, session_factory):
+    token, user = register(client, org_name="CMR College of Engineering & Technology")
+    with session_factory() as db:
+        version = _make_agent_version(
+            db, user["org_id"], {"clinic_name": "Sunrise Dental"}
+        )
+        call_id = _seed_call(db, org_id=user["org_id"], agent_version_id=version.id)
+
+    resp = client.get(f"/internal/calls/{call_id}/context", headers=INTERNAL)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["institution_name"] == "Sunrise Dental"
+
+
+def test_context_unfilled_vertical_name_falls_back_to_organization(
+    client, session_factory
+):
+    token, user = register(client, org_name="Acme Realty")
+    with session_factory() as db:
+        version = _make_agent_version(
+            db, user["org_id"], {"company_name": "[Company Name]"}
+        )
+        call_id = _seed_call(db, org_id=user["org_id"], agent_version_id=version.id)
+
+    resp = client.get(f"/internal/calls/{call_id}/context", headers=INTERNAL)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["institution_name"] == "Acme Realty"
+
+
 def _activity_payload(
     sequence: int = 1,
     state: str = "agent_connecting",

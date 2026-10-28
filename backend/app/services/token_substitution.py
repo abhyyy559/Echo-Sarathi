@@ -12,10 +12,18 @@ from typing import Any, Mapping, Optional
 KNOWN_TOKENS: tuple[str, ...] = (
     "[Institution Name]",
     "[Company Name]",
+    "[Clinic Name]",
+    "[Property Name]",
+    "[Locality]",
+    "[Service Type]",
+    "[Service Date]",
     "[Student Name]",
     "[Lead Name]",
+    "[Contact Name]",
+    "[Customer Name]",
     "[Parent/Guardian Name]",
     "[Agent Name]",
+    "[Source]",
     "[Expected Return Date]",
 )
 
@@ -46,10 +54,39 @@ def _first(contact: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+# Every vertical names the tenant differently in company_context. Presets ship
+# these as unfilled bracket tokens, so a placeholder must lose to the real org
+# name instead of reaching the caller as "I am calling from .".
+_ORG_NAME_KEYS: tuple[str, ...] = (
+    "institution",
+    "institution_name",
+    "company_name",
+    "clinic_name",
+    "business_name",
+    "organization_name",
+)
+
+
+def _context_value(company_context: Any, *keys: str) -> str:
+    if not isinstance(company_context, Mapping):
+        return ""
+    for key in keys:
+        value = company_context.get(key)
+        if isinstance(value, str) and value.strip() and not is_bracket_placeholder(value):
+            return value.strip()
+    return ""
+
+
+def resolve_org_name(company_context: Any, fallback: str = "") -> str:
+    """Name this tenant wants spoken, from its vertical's company_context."""
+    return _context_value(company_context, *_ORG_NAME_KEYS) or str(fallback or "").strip()
+
+
 def build_token_map(
     contact: Optional[Mapping[str, Any]] = None,
     institution: str = "",
     agent_name: str = "",
+    company_context: Any = None,
 ) -> dict[str, str]:
     """Resolve known placeholder tokens to real values for this call."""
     card = contact if isinstance(contact, Mapping) else {}
@@ -59,11 +96,19 @@ def build_token_map(
     who = str(agent_name or "").strip() or "an AI assistant"
     return {
         "[Institution Name]": org,
-        "[Company Name]": org,
+        "[Company Name]": _context_value(company_context, "company_name") or org,
+        "[Clinic Name]": _context_value(company_context, "clinic_name") or org,
+        "[Property Name]": _context_value(company_context, "property_name"),
+        "[Locality]": _context_value(company_context, "locality"),
+        "[Service Type]": _context_value(company_context, "service_type"),
+        "[Service Date]": _context_value(company_context, "service_date"),
         "[Student Name]": name,
         "[Lead Name]": name,
+        "[Contact Name]": name,
+        "[Customer Name]": name,
         "[Parent/Guardian Name]": parent,
         "[Agent Name]": who,
+        "[Source]": _context_value(company_context, "source", "lead_source"),
         "[Expected Return Date]": "",
     }
 

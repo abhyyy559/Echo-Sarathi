@@ -185,15 +185,34 @@ def today_line(timezone_name: str = "Asia/Kolkata", now: Optional[datetime] = No
     return current.strftime("%A, %d %B %Y")
 
 
+def _unfilled(value: Any) -> bool:
+    """True for a preset token like "[Clinic Name]" that no one filled in."""
+    text = str(value or "").strip()
+    return text.startswith("[") and text.endswith("]") and len(text) > 2
+
+
+def _context_value(company_context: Any, *keys: str) -> str:
+    if not isinstance(company_context, Mapping):
+        return ""
+    for key in keys:
+        value = company_context.get(key)
+        if isinstance(value, str) and value.strip() and not _unfilled(value):
+            return value.strip()
+    return ""
+
+
 def build_token_map(
     contact: Optional[Mapping[str, Any]] = None,
     context: Optional[Mapping[str, Any]] = None,
     agent_name: str = "",
+    company_context: Any = None,
 ) -> dict[str, str]:
     """Resolve known placeholder tokens to real values for this call.
 
     ``contact`` is the contact card packed in room/token metadata; ``context``
     is the backend's call-context JSON (institution_name + optional contact).
+    ``company_context`` is the agent version's per-vertical context, which is
+    where a clinic or realtor fills in clinic_name / property_name / locality.
     ``[Expected Return Date]`` has no data source, so it maps to "" (dropped).
 
     ``agent_name`` fills ``[Agent Name]``; empty falls back to
@@ -211,14 +230,22 @@ def build_token_map(
     who = str(agent_name or "").strip() or AI_ASSISTANT_FALLBACK
     return {
         "[Institution Name]": institution,
-        "[Company Name]": institution,
+        "[Company Name]": _context_value(company_context, "company_name") or institution,
+        "[Clinic Name]": _context_value(company_context, "clinic_name") or institution,
+        "[Property Name]": _context_value(company_context, "property_name"),
+        "[Locality]": _context_value(company_context, "locality"),
+        "[Service Type]": _context_value(company_context, "service_type"),
+        "[Service Date]": _context_value(company_context, "service_date"),
         "[Student Name]": name,
         "[Lead Name]": name,
+        "[Contact Name]": name,
+        "[Customer Name]": name,
         "[Patient Name]": name,
         "[Parent/Guardian Name]": parent,
         "[Agent Name]": who,
-        "[Doctor Name]": _known_field(contact, ctx_contact,
-                                      keys=("doctor_name", "doctor")),
+        "[Source]": _context_value(company_context, "source", "lead_source"),
+        "[Doctor Name]": _context_value(company_context, "doctor_name")
+        or _known_field(contact, ctx_contact, keys=("doctor_name", "doctor")),
         "[Appointment Date]": _known_field(contact, ctx_contact,
                                            keys=("appointment_date", "date")),
         "[Appointment Time]": _known_field(contact, ctx_contact,
@@ -281,6 +308,14 @@ _GREETING_RE = re.compile(
         rf"\b{re.escape(word)}\b" if word.isascii() else re.escape(word)
         for word in _GREETING_WORDS
     ),
+    re.IGNORECASE,
+)
+
+#: First flow questions that verify the callee's identity. When one of these
+#: already names the person, it is the whole greeting: a separate "Hello, Riya."
+#: would only repeat the name the caller is being asked about.
+_VERIFY_OPENER_RE = re.compile(
+    r"^\s*(?:hi|hello|hey\b[,\s]*)?(?:am i (?:speaking|talking)|is (?:this|that)|are you)\b",
     re.IGNORECASE,
 )
 
@@ -447,6 +482,17 @@ def build_opening_line(
     if first_question:
         asked = first_question.lower()
         if parent and parent.lower() in asked:
+            opening = f"{disclosure} {first_question}"
+            leftovers = _BRACKET_ARTIFACT_RE.findall(opening)
+            if leftovers:
+                logger.warning(
+                    "opening line has unsubstituted tokens (missing contact data): %s",
+                    sorted(set(leftovers)),
+                )
+            return scrub_speech_text(opening)
+        # Lead-style presets open by verifying the callee ("Am I speaking with
+        # Riya?"). Prepending the subject greeting then says the name twice.
+        if subject and subject.lower() in asked and _VERIFY_OPENER_RE.search(first_question):
             opening = f"{disclosure} {first_question}"
             leftovers = _BRACKET_ARTIFACT_RE.findall(opening)
             if leftovers:

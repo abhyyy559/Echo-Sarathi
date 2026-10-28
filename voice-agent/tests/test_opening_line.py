@@ -301,3 +301,50 @@ def test_degrade_apology_remains_protected(monkeypatch, fake_backend) -> None:
 
     assert len(sessions) == 1
     assert sessions[0].said == [(pipeline_module.APOLOGY_TEXT, False)]
+
+
+REAL_ESTATE_CONFIG = {
+    "disclosure_script": (
+        "Hello, this is [Agent Name] calling from [Company Name]. "
+        "This call is being recorded."
+    ),
+    "question_flow": [
+        {
+            "question": (
+                "Am I speaking with [Contact Name]? This is about your enquiry "
+                "for a property in [Locality]."
+            )
+        }
+    ],
+    "company_context": {
+        "company_name": "Skyline Estates",
+        "property_name": "Green Meadows",
+        "locality": "Kondapur",
+    },
+}
+
+
+def test_opening_line_lead_verify_question_is_not_repeated() -> None:
+    """The preset asks "Am I speaking with [Contact Name]?"; saying
+    "Hello, Riya." first repeats the name the caller is being asked about."""
+    contact = {"lead_name": "Riya"}
+    tokens = build_token_map(
+        contact=contact,
+        context={"institution_name": "Skyline Estates"},
+        company_context=REAL_ESTATE_CONFIG["company_context"],
+    )
+    out = build_opening_line(REAL_ESTATE_CONFIG, tokens, contact)
+    assert out.count("Riya") == 1, out
+    assert "Am I speaking with Riya?" in out
+    assert "Skyline Estates" in out and "Kondapur" in out
+    assert "[" not in out and "]" not in out
+    assert "speaking with ?" not in out
+
+
+def test_opening_line_school_question_keeps_the_greeting() -> None:
+    """A subject-only question ("Why was Aarav absent?") is not an identity
+    check, so the greeting still introduces the caller first."""
+    contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
+    tokens = build_token_map(contact=contact, context={"institution_name": "Demo School"})
+    out = build_opening_line(CONFIG, tokens, contact)
+    assert "Suresh Kumar. Why was Aarav Kumar absent?" in out

@@ -35,7 +35,11 @@ from app.models import Agent, AgentVersion, Call, Campaign, Contact, ExtractedFi
 from app.schemas import DryRunCreate
 from app.timeutil import utcnow
 from app.services.telemetry import recorder as telemetry
-from app.services.token_substitution import apply_token_substitution, build_token_map
+from app.services.token_substitution import (
+    apply_token_substitution,
+    build_token_map,
+    resolve_org_name,
+)
 from app.services.usage import record_response as record_provider_response
 
 logger = logging.getLogger(__name__)
@@ -395,7 +399,9 @@ def _build_short_opening(
     skipped verification entirely, which is the wrong order for a cold call to
     a stranger's parent.
     """
-    tokens = build_token_map(contact, institution)
+    tokens = build_token_map(
+        contact, institution, company_context=getattr(version, "company_context", None)
+    )
     disclosure = apply_token_substitution(
         str(getattr(version, "disclosure_script", "") or ""), tokens
     ).strip()
@@ -853,7 +859,9 @@ def _render_text_system_prompt(
     )
 
     card = _display_card(contact or {})
-    tokens = build_token_map(card, institution=institution)
+    tokens = build_token_map(
+        card, institution=institution, company_context=getattr(config, "company_context", None)
+    )
 
     # 1. Mandatory disclosure FIRST and verbatim.
     disclosure = apply_token_substitution(str(config.disclosure_script or "").strip(), tokens)
@@ -2068,7 +2076,9 @@ async def _run_agent_turn(
     """
     contact = (call.context or {}).get("contact") or {}
     org = db.get(Organization, call.org_id) if call.org_id else None
-    institution = org.name if org and org.name else ""
+    institution = resolve_org_name(
+        version.company_context, org.name if org and org.name else ""
+    )
     history_rows = list(
         db.scalars(
             select(Transcript)
@@ -2150,7 +2160,9 @@ async def _run_agent_turn(
             "followed by a warm one-line greeting and your first question."
         )
         contact = (call.context or {}).get("contact") or {}
-        tokens = build_token_map(contact, institution)
+        tokens = build_token_map(
+            contact, institution, company_context=getattr(version, "company_context", None)
+        )
         student = tokens["[Student Name]"]
         parent = tokens["[Parent/Guardian Name]"]
         if student:
