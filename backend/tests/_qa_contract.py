@@ -85,10 +85,24 @@ def qa_settings() -> Any:
 
 def _prefer_backend_app_package() -> None:
     """Ensure ``import app.*`` resolves to /backend even when another lane put
-    its own ``app`` package first on sys.path (both lanes ship one)."""
+    its own ``app`` package first on sys.path (both lanes ship one).
+
+    Purging is only needed when the imported package is a foreign copy. Nuking
+    a correct install would re-import every module, splitting class identities
+    (``GoogleTokenError``, module-level references held by other test modules)
+    from the objects the shared fixtures already imported.
+    """
     if str(BACKEND_DIR) in sys.path:
         sys.path.remove(str(BACKEND_DIR))
     sys.path.insert(0, str(BACKEND_DIR))
+    imported = sys.modules.get("app")
+    imported_file = getattr(imported, "__file__", None)
+    if imported_file is not None:
+        try:
+            if Path(imported_file).resolve().is_relative_to(BACKEND_DIR):
+                return
+        except OSError:
+            pass
     for name in [n for n in list(sys.modules) if n == "app" or n.startswith("app.")]:
         del sys.modules[name]
 
