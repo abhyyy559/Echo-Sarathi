@@ -230,6 +230,39 @@ def test_relaunch_with_nobody_pending_is_422_and_keeps_status(app, client, sessi
         assert db.get(Campaign, campaign["id"]).status == "completed"
 
 
+def test_reincluded_contact_starts_a_fresh_attempt_budget(app, client, session_factory):
+    """Yesterday's student can be picked again for a later run, retries included."""
+    from app.models import Campaign, Contact
+    from conftest import make_settings
+
+    token, campaign = _seed_campaign_with_contact(client, session_factory)
+    app.state.clock = lambda: datetime(2026, 8, 24, 5, 0)
+    with session_factory() as db:
+        db.get(Campaign, campaign["id"]).status = "canceled"
+        contact = db.query(Contact).filter_by(campaign_id=campaign["id"]).one()
+        contact.status = "completed"
+        contact.attempt_count = make_settings().retry_max_attempts
+        db.commit()
+        contact_id = contact.id
+
+    again = client.patch(
+        f"/api/contacts/{contact_id}",
+        json={"status": "pending_review"},
+        headers=auth_headers(token),
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["attempt_count"] == 0
+
+    launch = client.post(
+        f"/api/campaigns/{campaign['id']}/launch", headers=auth_headers(token)
+    )
+    assert launch.status_code == 200, launch.text
+    with session_factory() as db:
+        contact = db.get(Contact, contact_id)
+        assert contact.status == "queued"
+        assert contact.attempt_count == 0
+
+
 def test_delete_campaign_removes_contacts(app, client, session_factory):
     token, campaign = _seed_campaign_with_contact(client, session_factory)
 

@@ -401,9 +401,10 @@ export default function CampaignDetailPage() {
   }
 
   // ---- include / skip (faculty picks who gets called this run) ----
-  // pending_review = will be called on launch; skipped = stays on the roster
-  // but is never dialed. Only pre-call states are toggleable here.
-  const TOGGLEABLE = ['pending_review', 'skipped', 'invalid', 'opted_out'];
+  // pending_review = ticked for the next run; skipped = stays on the roster
+  // but is never dialed. Someone called in an earlier run can be ticked again
+  // for a later run — the server resets their attempt budget on re-include.
+  const TOGGLEABLE = ['pending_review', 'skipped', 'invalid', 'opted_out', 'completed', 'failed', 'busy'];
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState(null);
 
@@ -414,7 +415,7 @@ export default function CampaignDetailPage() {
   async function toggleSkip(contact) {
     setBulkError(null);
     try {
-      await setContactStatus(contact, contact.status === 'skipped' ? 'pending_review' : 'skipped');
+      await setContactStatus(contact, contact.status === 'pending_review' ? 'skipped' : 'pending_review');
       refreshContacts();
     } catch (e) {
       setBulkError(e.message || 'Could not update contact.');
@@ -423,7 +424,12 @@ export default function CampaignDetailPage() {
 
   async function bulkSetStatus(status) {
     const rows = (contactsData && contactsData.items) || [];
-    const targets = rows.filter((c) => TOGGLEABLE.includes(c.status) && c.status !== status);
+    // Unticking only releases contacts that are ticked now, so earlier runs'
+    // outcomes (completed/failed) stay on record.
+    const targets =
+      status === 'skipped'
+        ? rows.filter((c) => c.status === 'pending_review')
+        : rows.filter((c) => TOGGLEABLE.includes(c.status) && c.status !== 'pending_review');
     if (targets.length === 0) return;
     setBulkBusy(true);
     setBulkError(null);
@@ -496,13 +502,13 @@ export default function CampaignDetailPage() {
       key: 'select',
       label: (() => {
         const visible = ((contactsData && contactsData.items) || []).filter((c) => TOGGLEABLE.includes(c.status));
-        const allChecked = visible.length > 0 && visible.every((c) => c.status !== 'skipped');
-        const noneChecked = visible.length > 0 && visible.every((c) => c.status === 'skipped');
+        const allChecked = visible.length > 0 && visible.every((c) => c.status === 'pending_review');
+        const noneChecked = visible.length > 0 && visible.every((c) => c.status !== 'pending_review');
         return visible.length > 0 ? (
           <input
             type="checkbox"
             aria-label="Select all visible contacts"
-            title="Select/deselect everyone on this page"
+            title="Tick/deselect everyone on this page"
             checked={allChecked}
             ref={(el) => { if (el) el.indeterminate = !allChecked && !noneChecked; }}
             onChange={() => bulkSetStatus(allChecked ? 'skipped' : 'pending_review')}
@@ -514,10 +520,10 @@ export default function CampaignDetailPage() {
           <input
             type="checkbox"
             aria-label={`Select ${c.name || c.phone} to call`}
-            checked={c.status !== 'skipped'}
+            checked={c.status === 'pending_review'}
             onChange={() => toggleSkip(c)}
             onClick={(e) => e.stopPropagation()}
-            title={c.status === 'skipped' ? 'Select for calling' : 'Selected for calling'}
+            title={c.status === 'pending_review' ? 'Ticked for the next run — untick to leave out' : 'Tick to include in the next run'}
           />
         ) : null,
       className: 'nowrap select-cell',
@@ -530,10 +536,14 @@ export default function CampaignDetailPage() {
           {TOGGLEABLE.includes(c.status) && (
             <button
               className="btn btn-secondary btn-sm"
-              title={c.status === 'skipped' ? 'Include this contact in the calling run' : 'Skip this contact for this run (kept on the roster)'}
+              title={
+                c.status === 'pending_review'
+                  ? 'Untick this contact so it is not called in the next run (kept on the roster)'
+                  : 'Tick this contact for the next run'
+              }
               onClick={() => toggleSkip(c)}
             >
-              {c.status === 'skipped' ? 'Include' : 'Skip'}
+              {c.status === 'pending_review' ? 'Skip' : 'Include'}
             </button>
           )}
           <button className="btn btn-secondary btn-sm" onClick={() => openEdit(c)}>
@@ -716,7 +726,7 @@ export default function CampaignDetailPage() {
               <div>
                 <h3 className="card-title">Contacts</h3>
                 <p className="hint" style={{ margin: '4px 0 0' }}>
-                  Each run dials only the contacts still pending review — skip anyone who should not be called today.
+                  Each run dials only the ticked contacts — untick anyone who should not be called today.
                 </p>
               </div>
               <div className="toolbar-right">
@@ -731,7 +741,7 @@ export default function CampaignDetailPage() {
                 <button
                   className="btn btn-secondary btn-sm"
                   disabled={bulkBusy || contactsLoading}
-                  title="Skip every toggleable contact on this page"
+                  title="Untick every contact on this page"
                   onClick={() => bulkSetStatus('skipped')}
                 >
                   Skip listed
@@ -739,7 +749,7 @@ export default function CampaignDetailPage() {
                 <button
                   className="btn btn-secondary btn-sm"
                   disabled={bulkBusy || contactsLoading}
-                  title="Include every skipped contact on this page back into the run"
+                  title="Tick every contact on this page, including those called in earlier runs"
                   onClick={() => bulkSetStatus('pending_review')}
                 >
                   Include listed

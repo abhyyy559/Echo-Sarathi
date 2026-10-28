@@ -160,6 +160,11 @@ def patch_contact(
                 detail="contact has a live call in progress and cannot be moved",
             )
         contact.status = payload.status
+        if payload.status == "pending_review":
+            # Re-including someone for a later run starts a fresh attempt
+            # budget; retry counters belong to the run, not the person.
+            contact.attempt_count = 0
+            contact.next_attempt_at = None
     if payload.phone is not None:
         phone, ok = normalize_phone(payload.phone)
         if not ok:
