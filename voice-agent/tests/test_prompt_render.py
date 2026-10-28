@@ -127,6 +127,22 @@ def test_never_fabricate_rule_present(render: Callable[..., str]) -> None:
     )
 
 
+def test_conversation_craft_is_present(render: Callable[..., str]) -> None:
+    prompt = normalize(render(load_agent_config()))
+    assert "conversation craft" in prompt, "craft section missing"
+    assert "no pitching" in prompt, "no-pitching guardrail missing"
+    assert "two concrete options" in prompt, "choice-architecture hint missing"
+
+
+def test_compact_instructions_keep_the_craft_hints() -> None:
+    from app.prompting import render_compact_instructions
+
+    compact = normalize(render_compact_instructions(["reason"], ["return date"], language="en"))
+    assert "two concrete options" in compact
+    assert "what happens next" in compact
+    assert "sales call" not in compact
+
+
 def test_render_is_deterministic(render: Callable[..., str]) -> None:
     config = load_agent_config()
     assert render(config) == render(config), "renderer output differs between identical calls"
