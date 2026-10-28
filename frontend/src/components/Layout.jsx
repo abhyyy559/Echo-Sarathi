@@ -43,15 +43,6 @@ function IconCalls() {
   );
 }
 
-function IconPlayground() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10a7 7 0 0 0 14 0M12 17v4" />
-    </svg>
-  );
-}
-
 function IconDev() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -86,7 +77,6 @@ const NAV_ITEMS = [
   { to: '/agents', icon: <IconAgents />, label: 'Agents' },
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
-  { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
   { to: '/credits', icon: <IconCredits />, label: 'Billing' },
 ];
 

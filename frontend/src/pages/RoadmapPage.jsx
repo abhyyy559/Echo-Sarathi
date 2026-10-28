@@ -1,9 +1,9 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import '../od-roadmap-v2.css';
 import ThemeToggle from '../components/ThemeToggle.jsx';
 
-/* Roadmap â€” redesigned Oct 2026.
+/* Roadmap — redesigned Oct 2026.
  * Three status lanes (Live / Building / Planned), a vertical journey
  * timeline, and the per-turn loop. All content visible without interaction;
  * reveal-on-scroll is progressive enhancement only.
@@ -11,14 +11,14 @@ import ThemeToggle from '../components/ThemeToggle.jsx';
  */
 const LIVE = [
   { t: 'English voice calls', d: 'Full-quality conversations with sub-second replies, barge-in, and structured field extraction on every call.' },
-  { t: 'Playground testing', d: 'Try any agent in the browser first â€” live console, per-turn latency, and provider attribution before spending a rupee.' },
-  { t: 'Campaign calling', d: 'Upload contacts, launch inside the 9 AM â€“ 9 PM IST window, pause anytime. Busy numbers retry politely later.' },
+  { t: 'Playground testing', d: 'Try any agent in the browser first — live console, per-turn latency, and provider attribution before spending a rupee.' },
+  { t: 'Campaign calling', d: 'Upload contacts, launch inside the 9 AM – 9 PM IST window, pause anytime. Busy numbers retry politely later.' },
   { t: 'Transcripts & Excel export', d: 'Every word with speakers and timestamps, fields with confidence scores, one row per person out to Excel.' },
 ];
 
 const BUILDING = [
-  { t: 'Telugu', d: 'In training â€” ships only after it passes our accent benchmarks, not before.', meta: 'Accent benchmarks in progress' },
-  { t: 'Telugu + English code-switching', d: 'Mixed sentences handled naturally (â€œfee pay cheyyandi pleaseâ€).', meta: 'Follows Telugu' },
+  { t: 'Telugu', d: 'In training — ships only after it passes our accent benchmarks, not before.', meta: 'Accent benchmarks in progress' },
+  { t: 'Telugu + English code-switching', d: 'Mixed sentences handled naturally (“fee pay cheyyandi please”).', meta: 'Follows Telugu' },
 ];
 
 const PLANNED = [
@@ -26,14 +26,14 @@ const PLANNED = [
 ];
 
 const STEPS = [
-  { t: 'Create a campaign', you: 'Name your campaign â€” â€œAugust follow-upâ€ is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
-  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every numberâ€™s format, flags bad rows red before import.', tip: 'Extra columns like contact_name become words the agent can say naturally.' },
-  { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarathi: 'Turns that list into a natural conversation plan â€” not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
-  { t: 'Launch', you: 'Press launch inside the calling window (9 AM â€“ 9 PM IST).', sarathi: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window â€” nobody gets a midnight call.' },
-  { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarathi: 'Listens, takes turns, handles interruptions â€” like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
-  { t: 'Transcribe', you: 'Nothing â€” this happens automatically.', sarathi: 'Writes down every word with speakers and timestamps, second by second.', tip: 'Transcripts power the extraction step and stay attached to each contact.' },
-  { t: 'Extract structured results', you: 'Define what counts as an answer: reason, callback, yes/no.', sarathi: 'Fills those fields with confidence scores â€” low-confidence items get flagged.', tip: 'Flagged calls surface for human review; you only check what needs checking.' },
-  { t: 'Review & export', you: 'Open results, filter what matters, export to Excel.', sarathi: 'Produces one row per person: transcript link, fields, outcome, duration.', tip: 'Exports include everything â€” ready for your existing systems.' },
+  { t: 'Create a campaign', you: 'Name your campaign — “August follow-up” is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
+  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every number’s format, flags bad rows red before import.', tip: 'Extra columns like contact_name become words the agent can say naturally.' },
+  { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarathi: 'Turns that list into a natural conversation plan — not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
+  { t: 'Launch', you: 'Press launch inside the calling window (9 AM – 9 PM IST).', sarathi: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window — nobody gets a midnight call.' },
+  { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarathi: 'Listens, takes turns, handles interruptions — like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
+  { t: 'Transcribe', you: 'Nothing — this happens automatically.', sarathi: 'Writes down every word with speakers and timestamps, second by second.', tip: 'Transcripts power the extraction step and stay attached to each contact.' },
+  { t: 'Extract structured results', you: 'Define what counts as an answer: reason, callback, yes/no.', sarathi: 'Fills those fields with confidence scores — low-confidence items get flagged.', tip: 'Flagged calls surface for human review; you only check what needs checking.' },
+  { t: 'Review & export', you: 'Open results, filter what matters, export to Excel.', sarathi: 'Produces one row per person: transcript link, fields, outcome, duration.', tip: 'Exports include everything — ready for your existing systems.' },
 ];
 
 const LOOP = [
@@ -114,7 +114,6 @@ export default function RoadmapPage() {
             <Link to="/#demo" className="nav-link">Demo</Link>
           </div>
           <div className="nav-right">
-            <Link to="/playground" className="nav-link">Playground</Link>
             <Link to="/roadmap" className="nav-link" aria-current="page">Roadmap</Link>
             <ThemeToggle />            <Link to="/login" className="nav-cta">Start free</Link>
             <div className={`hamburger${mobileOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-label="Menu"
@@ -129,17 +128,16 @@ export default function RoadmapPage() {
         <Link to="/#product">Product</Link>
         <Link to="/#usecases">Use Cases</Link>
         <Link to="/#demo">Demo</Link>
-        <Link to="/playground">Playground</Link>
         <Link to="/roadmap">Roadmap</Link>
         <Link to="/login" className="drawer-cta">Start free</Link>
       </div>
 
       <main className="rm2-page">
         <header className="rm2-hero reveal">
-          <span className="rm2-kick">Roadmap Â· updated October 2026</span>
+          <span className="rm2-kick">Roadmap · updated October 2026</span>
           <h1>Built in the open.</h1>
           <p className="rm2-sub">
-            What works today, what&apos;s in training, and what&apos;s next â€” no vapor.
+            What works today, what&apos;s in training, and what&apos;s next — no vapor.
             We ship each language only when it passes our quality bar, not before.
           </p>
           <div className="rm2-counts" role="list" aria-label="Roadmap status summary">
@@ -148,7 +146,7 @@ export default function RoadmapPage() {
             <span role="listitem"><b>1</b> planned</span>
           </div>
           <div className="rm2-hero-cta">
-            <Link to="/playground" className="rm2-btn-primary">Try the playground</Link>
+            <Link to="/login" className="rm2-btn-primary">Start free</Link>
             <Link to="/pricing" className="rm2-btn-ghost">See pricing</Link>
           </div>
         </header>
@@ -179,7 +177,7 @@ export default function RoadmapPage() {
         />
 
         <section className="rm2-journey reveal" aria-labelledby="journey-h">
-          <h2 id="journey-h">From a spreadsheet to structured answers â€” in eight steps.</h2>
+          <h2 id="journey-h">From a spreadsheet to structured answers — in eight steps.</h2>
           <p className="rm2-lane-sub">What you do, what Sarathi does, and one practical tip per step.</p>
           <ol className="rm2-timeline">
             {STEPS.map((st, i) => (
@@ -210,7 +208,7 @@ export default function RoadmapPage() {
         <section className="rm2-loop reveal" aria-labelledby="loop-h">
           <h2 id="loop-h">Every turn, in under a second.</h2>
           <p className="rm2-lane-sub">
-            This loop runs many times per call. Speed here is why Sarathi doesn&apos;t sound like a robot â€”
+            This loop runs many times per call. Speed here is why Sarathi doesn&apos;t sound like a robot —
             and callers can interrupt mid-sentence and be heard.
           </p>
           <div className="rm2-pipe">
@@ -226,8 +224,8 @@ export default function RoadmapPage() {
             ))}
           </div>
           <div className="rm2-targets">
-            <span><b>â‰¤ 900 ms</b> median reply</span>
-            <span><b>â‰¤ 1.5 s</b> slowest 5%</span>
+            <span><b>900 ms</b> median reply</span>
+            <span><b>1.5 s</b> slowest five percent</span>
             <span><b>₹3.00</b> per minute</span>
           </div>
         </section>
@@ -248,7 +246,6 @@ export default function RoadmapPage() {
           <div className="f-links">
             <Link to="/">Home</Link>
             <Link to="/pricing">Pricing</Link>
-            <Link to="/playground">Playground</Link>
             <Link to="/login">Sign in</Link>
           </div>
         </div>

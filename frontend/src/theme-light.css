@@ -100,7 +100,68 @@ html[data-theme="light"] .od-landing .hero h1 .accent {
 }
 html[data-theme="light"] .od-landing .nav-link:hover { background: rgba(28, 25, 23, 0.06); }
 html[data-theme="light"] .od-landing .problem-item::after { background: rgba(255, 255, 255, 0.6); }
+html[data-theme="light"] .od-landing .usecase-chips span {
+  border-color: rgba(28, 25, 23, 0.14);
+  background: rgba(28, 25, 23, 0.03);
+  color: #5c5346;
+}
 html[data-theme="light"] .od-landing .voice-line { color: #3a352d; }
+
+/* Glass cards that hard-code a near-black fill stay dark by accident — lift
+ * them to paper so the token ink above stays readable. */
+html[data-theme="light"] .od-landing .stat-card::after,
+html[data-theme="light"] .od-landing .step {
+  background: rgba(255, 255, 255, 0.78);
+}
+html[data-theme="light"] .od-landing .stat-card::before {
+  background: linear-gradient(135deg, rgba(28, 25, 23, 0.16), rgba(28, 25, 23, 0.05));
+}
+html[data-theme="light"] .od-landing .step-icon {
+  background: rgba(87, 80, 63, 0.08);
+  border-color: rgba(87, 80, 63, 0.2);
+}
+html[data-theme="light"] .od-landing .step-icon svg { stroke: #57503f; }
+html[data-theme="light"] .od-landing .step-ghost { -webkit-text-stroke-color: rgba(28, 25, 23, 0.12); }
+
+/* The dark hero widget is kept on purpose; only re-ink its overlay labels. */
+html[data-theme="light"] .od-landing .hero-visual-pill .pill-text { color: rgba(233, 228, 218, 0.72); }
+html[data-theme="light"] .od-landing .hero-visual-pill .pill-text strong { color: #f5f2ec; }
+html[data-theme="light"] .od-landing .wave-tag { color: rgba(233, 228, 218, 0.5); }
+html[data-theme="light"] .od-landing .wave-tag.right { color: rgba(245, 242, 236, 0.85); }
+
+/* Transformation cards: the "after" column is inked for night. */
+html[data-theme="light"] .od-landing .tc-after {
+  background: rgba(87, 80, 63, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+html[data-theme="light"] .od-landing .tc-after .tc-label { text-shadow: none; }
+html[data-theme="light"] .od-landing .tc-after .tc-metric {
+  background: rgba(62, 125, 91, 0.1);
+  border-color: rgba(62, 125, 91, 0.3);
+  color: #2f6446;
+}
+
+/* Confidence chips, dashed rules and glass controls that assumed a dark page. */
+html[data-theme="light"] .od-landing .s-frow .conf.hi { background: rgba(87, 80, 63, 0.12); color: #3f3a2e; }
+html[data-theme="light"] .od-landing .s-frow .conf.md { background: rgba(165, 118, 42, 0.14); color: #7a5518; }
+html[data-theme="light"] .od-landing .s-frow .conf.wait,
+html[data-theme="light"] .od-landing .d-frow .conf.wait { background: rgba(28, 25, 23, 0.06); color: #6f6558; }
+html[data-theme="light"] .od-landing .s-frow,
+html[data-theme="light"] .od-landing .d-frow { border-bottom-color: rgba(28, 25, 23, 0.12); }
+html[data-theme="light"] .od-landing .s-pill { border-color: rgba(28, 25, 23, 0.15); }
+html[data-theme="light"] .od-landing .d-bub.agent { border-color: rgba(87, 80, 63, 0.22); }
+html[data-theme="light"] .od-landing .d-bub.caller {
+  background: rgba(28, 25, 23, 0.04);
+  border-color: rgba(28, 25, 23, 0.1);
+}
+html[data-theme="light"] .od-landing .choice-btn {
+  border-color: rgba(28, 25, 23, 0.3);
+  color: #57503f;
+}
+html[data-theme="light"] .od-landing .choice-btn:hover { background: rgba(28, 25, 23, 0.06); }
+html[data-theme="light"] .od-landing .btn-end { border-color: rgba(28, 25, 23, 0.25); color: #5c5346; }
+html[data-theme="light"] .od-landing .btn-end:hover { border-color: rgba(28, 25, 23, 0.45); color: #1c1917; }
+html[data-theme="light"] .od-landing .demo-summary { border-color: rgba(28, 25, 23, 0.18); }
 /* Dark glass widgets (hero visual, demo box) stay dark by design — they read
  * as embedded terminals on the light page. */
 
@@ -123,6 +184,57 @@ html[data-theme="light"] .od-pricing .nav-cta { background: #1c1917; color: #faf
 html[data-theme="light"] .od-pricing .mobile-drawer .drawer-cta { background: #1c1917; color: #faf7f1; }
 html[data-theme="light"] .od-pricing .nav-link:hover { background: rgba(28, 25, 23, 0.06); }
 html[data-theme="light"] .od-pricing .logo-text { color: #1c1917; }
+
+/* Plan cards hard-code a night gradient and near-white feature text, so on
+ * paper they collapse into dark blocks with invisible copy. Rebuild as paper. */
+html[data-theme="light"] .od-pricing .pcard {
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 16px 40px rgba(28, 25, 23, 0.07);
+}
+html[data-theme="light"] .od-pricing .pcard.featured {
+  background: linear-gradient(180deg, #ffffff, #f6f1e7);
+  border-color: rgba(87, 80, 63, 0.4);
+  box-shadow: 0 22px 56px rgba(28, 25, 23, 0.13);
+}
+html[data-theme="light"] .od-pricing .pcard.featured::before {
+  background: linear-gradient(90deg, transparent, #57503f, transparent);
+  opacity: 0.35;
+}
+html[data-theme="light"] .od-pricing .feats { border-top-color: rgba(28, 25, 23, 0.14); }
+html[data-theme="light"] .od-pricing .feats li { color: #4a4438; }
+html[data-theme="light"] .od-pricing .cta { border-color: rgba(28, 25, 23, 0.25); color: #1c1917; }
+html[data-theme="light"] .od-pricing .cta:hover {
+  border-color: rgba(28, 25, 23, 0.45);
+  background: rgba(28, 25, 23, 0.05);
+}
+html[data-theme="light"] .od-pricing .cta-solid {
+  background: #57503f;
+  color: #faf7f1;
+  box-shadow: 0 8px 24px rgba(28, 25, 23, 0.16);
+}
+html[data-theme="light"] .od-pricing .cta-solid:hover { box-shadow: 0 14px 34px rgba(28, 25, 23, 0.22); }
+html[data-theme="light"] .od-pricing .rec {
+  background: #faf7f1;
+  color: #57503f;
+  border-color: rgba(87, 80, 63, 0.4);
+}
+html[data-theme="light"] .od-pricing .rec i {
+  background: #57503f;
+  box-shadow: 0 0 8px rgba(87, 80, 63, 0.5);
+}
+html[data-theme="light"] .od-pricing .trial-strip { border-color: rgba(28, 25, 23, 0.22); }
+html[data-theme="light"] .od-pricing .ent-strip {
+  border-color: rgba(28, 25, 23, 0.14);
+  background: rgba(28, 25, 23, 0.03);
+}
+html[data-theme="light"] .od-pricing .est {
+  border-color: rgba(28, 25, 23, 0.14);
+  background: rgba(255, 255, 255, 0.7);
+}
+html[data-theme="light"] .od-pricing .btn-p { background: #57503f; color: #faf7f1; }
+html[data-theme="light"] .od-pricing .btn-g { border-color: rgba(28, 25, 23, 0.22); }
+html[data-theme="light"] .od-pricing .btn-g:hover { border-color: rgba(28, 25, 23, 0.45); }
+html[data-theme="light"] .od-pricing .hamburger span { background: #1c1917; }
 
 /* ============ roadmap v2 scope ============ */
 html[data-theme="light"] .rm2 {

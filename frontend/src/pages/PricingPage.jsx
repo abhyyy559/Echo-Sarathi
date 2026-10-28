@@ -152,7 +152,6 @@ export default function PricingPage() {
             <Link to="/#demo" className="nav-link">Demo</Link>
           </div>
           <div className="nav-right">
-            <Link to="/playground" className="nav-link">Playground</Link>
             <Link to="/roadmap" className="nav-link">Roadmap</Link>
             <ThemeToggle />
             <Link to="/login" className="nav-cta">Start free</Link>
@@ -168,7 +167,6 @@ export default function PricingPage() {
         <Link to="/#product">Product</Link>
         <Link to="/#usecases">Use Cases</Link>
         <Link to="/#demo">Demo</Link>
-        <Link to="/playground">Playground</Link>
         <Link to="/roadmap">Roadmap</Link>
         <Link to="/login" className="drawer-cta">Start free</Link>
       </div>
@@ -289,7 +287,6 @@ export default function PricingPage() {
           <div className="f-links">
             <Link to="/">Home</Link>
             <Link to="/roadmap">Roadmap</Link>
-            <Link to="/playground">Playground</Link>
             <Link to="/login">Sign in</Link>
             <a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a>
           </div>
