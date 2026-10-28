@@ -70,16 +70,6 @@ function IconCredits() {
   );
 }
 
-function IconTeam() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="9" cy="8" r="3.2" />
-      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
-      <path d="M16 5.5a3 3 0 0 1 0 5.8M17.5 14.2a5.5 5.5 0 0 1 4 5.3" />
-    </svg>
-  );
-}
-
 function IconAdmin() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -97,7 +87,6 @@ const NAV_ITEMS = [
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
   { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
-  { to: '/team', icon: <IconTeam />, label: 'Team' },
   { to: '/credits', icon: <IconCredits />, label: 'Billing' },
 ];
 
@@ -124,7 +113,6 @@ function titleFor(pathname) {
   if (pathname.startsWith('/dev')) return ['Developer tools', 'Service health, provider keys, API catalog'];
   if (pathname.startsWith('/credits')) return ['Billing & credits', 'Plan, invoices and the prepaid overage wallet'];
   if (pathname.match(/^\/invoices\/\d+\/?$/)) return ['Invoice', 'GST tax invoice for a plan or top-up payment'];
-  if (pathname.startsWith('/team')) return ['Team', 'Members, roles and seats'];
   if (pathname.startsWith('/admin')) return ['Platform admin', 'Every organization, contracts and credit adjustments'];
   return ['Echo Sarathi', 'AI voice calling console'];
 }

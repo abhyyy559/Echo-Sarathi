@@ -12,7 +12,6 @@ import CampaignDetailPage from './pages/CampaignDetailPage.jsx';
 import CallDetailPage from './pages/CallDetailPage.jsx';
 import CallsIndexPage from './pages/CallsIndexPage.jsx';
 import CreditsPage from './pages/CreditsPage.jsx';
-import TeamPage from './pages/TeamPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
 import InvoicePage from './pages/InvoicePage.jsx';
 import {
@@ -89,7 +88,6 @@ export default function App() {
             <Route path="calls/:id" element={<CallDetailPage />} />
             <Route path="credits" element={<CreditsPage />} />
             <Route path="invoices/:id" element={<InvoicePage />} />
-            <Route path="team" element={<TeamPage />} />
             <Route path="admin" element={<AdminPage />} />
             {/* Phone tests are a Playground mode now; keep old links working. */}
             <Route path="test-call" element={<Navigate to="/playground?mode=phone" replace />} />

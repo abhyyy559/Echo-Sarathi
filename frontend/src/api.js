@@ -295,23 +295,6 @@ export const billingApi = {
     }),
 };
 
-export const teamApi = {
-  list: () => apiFetch('/api/team'),
-  invite: ({ email, role }) =>
-    apiFetch('/api/team/invites', {
-      method: 'POST',
-      body: JSON.stringify({ email, role }),
-    }),
-  revokeInvite: (id) => apiFetch(`/api/team/invites/${id}`, { method: 'DELETE' }),
-  setRole: (memberId, role) =>
-    apiFetch(`/api/team/members/${memberId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ role }),
-    }),
-  removeMember: (memberId) =>
-    apiFetch(`/api/team/members/${memberId}`, { method: 'DELETE' }),
-};
-
 export const platformApi = {
   summary: () => apiFetch('/api/platform/summary'),
   orgs: (query) =>
