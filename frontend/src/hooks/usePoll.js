@@ -13,16 +13,18 @@ export default function usePoll(url, ms = 3000, active = true) {
 
   const activeRef = useRef(active);
   activeRef.current = active;
-  const inFlight = useRef(false);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
     let cancelled = false;
+    // Per-effect, so a remount (StrictMode) or reload() is never blocked by
+    // an earlier cancelled request still in flight.
+    let busy = false;
 
     const tick = async () => {
-      if (inFlight.current) return;
-      inFlight.current = true;
+      if (busy) return;
+      busy = true;
       try {
         const json = await apiFetch(url);
         if (!cancelled) {
@@ -32,7 +34,7 @@ export default function usePoll(url, ms = 3000, active = true) {
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
-        inFlight.current = false;
+        busy = false;
         if (!cancelled) setLoading(false);
       }
     };

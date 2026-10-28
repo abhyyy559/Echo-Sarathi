@@ -179,7 +179,7 @@ export default function Login() {
       <div className="form-side">
         <div className="logo-row">
           <svg className="logo-mark" width="42" height="42" viewBox="0 0 42 42" fill="none" aria-hidden="true">
-            <rect x="1" y="1" width="40" height="40" rx="11" className="lm-src" stroke="rgba(143,134,122,.35)" strokeWidth="1"/>
+            <rect x="1" y="1" width="40" height="40" rx="11" className="logo-tile" strokeWidth="1"/>
             <path d="M14 26V16" className="lm-a l1" strokeWidth="2.2" strokeLinecap="round"/>
             <path d="M18 26V14" className="lm-a l2" strokeWidth="2.2" strokeLinecap="round"/>
             <path d="M22 26V18" className="lm-b l1" strokeWidth="2.2" strokeLinecap="round"/>
@@ -187,11 +187,6 @@ export default function Login() {
             <path d="M30 26V16" className="lm-a r1" strokeWidth="2.2" strokeLinecap="round"/>
             <path d="M34 26V19" className="lm-b r2" strokeWidth="2.2" strokeLinecap="round"/>
           </svg>
-          <div className="mark">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M2 12h2l3-8 4 16 4-12 3 6h4" />
-            </svg>
-          </div>
           <b>Echo Sarathi</b>
         </div>
 
@@ -310,7 +305,7 @@ export default function Login() {
       </div>
 
       {/* ---- Right side: brand panel ---- */}
-      <div className="brand-side">
+      <div className="login-brand-side">
         <div className="bwave">
           {waveBars.map((bar, i) => (
             <i

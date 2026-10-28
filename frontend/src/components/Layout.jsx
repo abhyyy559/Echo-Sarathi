@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
 import { billingApi, clearSession, getStoredUser, getToken } from '../api.js';
+import ThemeToggle from './ThemeToggle.jsx';
 
 /* --- inline SVG icon set (16px, currentColor) ------------------------------ */
 
@@ -248,6 +249,7 @@ export default function Layout() {
             <div className="topbar-sub">{subtitle}</div>
           </div>
           <div className="topbar-right">
+            <ThemeToggle />
             {wallet && (
               <Link
                 to="/credits"
