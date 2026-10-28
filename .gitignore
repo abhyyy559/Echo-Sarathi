@@ -10,6 +10,12 @@
 .deploy/
 .tools/
 
+# Local agent scratch and tunnel logs
+.hive/
+.superpowers/
+tools/cloudflared/*.log
+tools/cloudflared/*.err
+
 # Python
 __pycache__/
 *.py[cod]
