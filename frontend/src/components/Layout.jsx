@@ -1,6 +1,6 @@
-import React from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { clearSession, getStoredUser } from '../api.js';
+import React, { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
+import { billingApi, clearSession, getStoredUser, getToken } from '../api.js';
 
 /* --- inline SVG icon set (16px, currentColor) ------------------------------ */
 
@@ -87,10 +87,21 @@ function IconDev() {
   );
 }
 
+function IconCredits() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="6" width="19" height="13" rx="3" />
+      <path d="M2.5 10h19M16 15h2" />
+      <path d="M17 6V5a2 2 0 0 0-2.4-2L5 5.4" />
+    </svg>
+  );
+}
+
 /* --- nav model -------------------------------------------------------------- */
 
 const NAV_ITEMS = [
   { to: '/', end: true, icon: <IconOverview />, label: 'Overview' },
+  { to: '/credits', icon: <IconCredits />, label: 'Credits' },
   { to: '/agents', icon: <IconAgents />, label: 'Agents' },
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
@@ -120,6 +131,7 @@ function titleFor(pathname) {
   if (pathname.startsWith('/playground')) return ['Playground', 'Talk or type with any saved agent version — zero minutes used'];
   if (pathname.startsWith('/test-call')) return ['Test call', 'Place a single sandbox call to your own number'];
   if (pathname.startsWith('/dev')) return ['Developer tools', 'Service health, provider keys, API catalog'];
+  if (pathname.startsWith('/credits')) return ['Credits', 'Prepaid wallet, top-up packs and call spend'];
   if (pathname.startsWith('/phone-numbers')) return ['Phone numbers', 'Provision and manage DIDs'];
   if (pathname.startsWith('/guide')) return ['Guide', 'From empty account to first campaign'];
   return ['Echo Sarathi', 'AI voice calling console'];
@@ -132,6 +144,24 @@ export default function Layout() {
   const location = useLocation();
   const user = getStoredUser();
   const [title, subtitle] = titleFor(location.pathname);
+  const [wallet, setWallet] = useState(null);
+
+  // Balance chip in the topbar. Refetched on navigation so a campaign that
+  // just burned minutes shows the new balance the moment the operator lands
+  // on another page.
+  useEffect(() => {
+    if (!getToken()) return undefined;
+    let alive = true;
+    billingApi
+      .summary()
+      .then((data) => {
+        if (alive) setWallet(data);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [location.pathname]);
 
   function logout() {
     clearSession();
@@ -186,7 +216,22 @@ export default function Layout() {
             <h1>{title}</h1>
             <div className="topbar-sub">{subtitle}</div>
           </div>
-          <span className="topbar-tag">Admin</span>
+          <div className="topbar-right">
+            {wallet && (
+              <Link
+                to="/credits"
+                className={`topbar-wallet${wallet.low_balance ? ' low' : ''}`}
+                title={`${wallet.minutes_remaining} minutes left — click to top up`}
+              >
+                <span className="wallet-dot" />
+                ₹{Number(wallet.balance_rupees).toLocaleString('en-IN', {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2,
+                })}
+              </Link>
+            )}
+            <span className="topbar-tag">Admin</span>
+          </div>
         </header>
         <main className="content">
           <Outlet />

@@ -75,6 +75,11 @@ class Organization(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True, nullable=False)
+    # Prepaid wallet. Stored in paise so every debit/credit is exact integer
+    # arithmetic; the retail rate lives in app/services/billing.py.
+    credit_balance_paise: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     users: Mapped[list["User"]] = relationship(back_populates="organization")
@@ -360,9 +365,36 @@ class ExtractedField(Base):
     call: Mapped[Call] = relationship(back_populates="extracted_fields")
 
 
+class CreditLedger(Base):
+    """Append-only wallet history for one organization.
+
+    ``amount_paise`` is the signed wallet delta (+ top-up, - call usage);
+    ``paid_paise`` records what the customer actually paid, which differs from
+    the credited value on discounted packs. ``balance_after_paise`` snapshots
+    the running balance so the ledger is readable without re-summing it.
+    Usage rows carry ``call_id`` and are unique per call at the service layer,
+    making the debit idempotent across duplicate webhooks.
+    """
+
+    __tablename__ = "credit_ledger"
+    __table_args__ = (Index("ix_credit_ledger_org_created", "org_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    paid_paise: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    balance_after_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    call_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class UsageSnapshot(Base):
     """One provider quota/credit observation.
-
     Rows are append-only observations, not counters: the latest row for a
     ``(provider, key_id, model, metric)`` tuple is the current value. Keeping
     history makes a sudden drop (or a 429) visible without a second table.

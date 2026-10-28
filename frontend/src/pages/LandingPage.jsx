@@ -94,7 +94,7 @@ export default function LandingPage() {
 <section className="hero">
   <div className="hero-kicker">AI Voice Infrastructure</div>
   <h1>Calls that <span className="accent">listen</span>, understand, and remember.</h1>
-  <p className="hero-sub">Outbound voice AI that holds real conversations â€” takes turns, yields when interrupted, and returns every answer as structured data you can act on.</p>
+  <p className="hero-sub">The bridge between how people actually talk and what your software records — outbound voice agents that take turns, yield when interrupted, and return every answer as structured data you can act on.</p>
   <div className="hero-btns">
     <Link to="/login" className="btn-primary">Start making calls</Link>
     <a className="btn-ghost" href="#demo">Try the demo</a>
@@ -113,15 +113,25 @@ export default function LandingPage() {
 </section>
 
 
-{/* --- LIVE PILOT: CMR College of Engineering & Technology --- */}
-<section className="flow-band" aria-label="Live pilot at CMR College of Engineering & Technology">
+{/* --- POSITIONING: one platform, any structured outbound conversation --- */}
+<section className="flow-band" aria-label="Built for any outbound conversation">
   <div className="wrap">
-    <span className="kick" style={{justifyContent: "center"}}>Live pilot</span>
-    <h2 className="display">Running now at CMR College of Engineering & Technology.</h2>
-    <p className="sec-sub">Absent Student Follow-up &middot; English &middot; India â€” the agent calls parents every morning, records the reason for absence, and exports the sheet. Try it yourself below, or open the live console.</p>
+    <span className="kick" style={{justifyContent: "center"}}>One platform, any conversation</span>
+    <h2 className="display">Built to bridge the gap between people and your software.</h2>
+    <p className="sec-sub">Sarathi is voice infrastructure, not a single-purpose bot. Any workflow that runs on a structured phone call — reminders, confirmations, qualification, feedback, collections, follow-ups — becomes an agent your team launches from the console.</p>
+    <div className="usecase-chips">
+      <span>Appointment reminders</span>
+      <span>Lead qualification</span>
+      <span>Attendance follow-up</span>
+      <span>Feedback &amp; NPS</span>
+      <span>Payment reminders</span>
+      <span>Event RSVPs</span>
+      <span>Delivery rescheduling</span>
+      <span>Surveys</span>
+    </div>
     <div className="sim-actions" style={{justifyContent: "center"}}>
-      <Link to="/playground" className="btn-primary sm">Try the live demo</Link>
-      <Link to="/campaigns" className="btn-ghost sm">Open the console</Link>
+      <Link to="/playground" className="btn-primary sm">Hear a live agent</Link>
+      <Link to="/login" className="btn-ghost sm">Start free with 10 minutes</Link>
     </div>
   </div>
 </section>
@@ -131,7 +141,7 @@ export default function LandingPage() {
   <div className="wrap">
     <span className="kick">The problem</span>
     <h2 className="section-title display">Phone calls shouldn't need a human on the line.</h2>
-    <p className="section-sub">Teams spend hours on repetitive outbound calls â€” attendance checks, confirmations, follow-ups. The work is structured, but the conversations need to feel human.</p>
+    <p className="section-sub">Teams spend hours on repetitive outbound calls â€” reminders, confirmations, qualification, follow-ups. The work is structured, but the conversations need to feel human.</p>
     <div className="problem-grid">
       <div className="problem-list">
         <div className="problem-item reveal-left"><div className="problem-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><div><h4>Hours wasted on repetitive calls</h4><p>Same questions, same scripts, every day. Your team's time goes to conversations that could be automated.</p></div></div>
@@ -141,7 +151,7 @@ export default function LandingPage() {
       <div className="problem-stat">
         <div className="stat-card reveal-right"><div className="num">73%</div><div className="label">of outbound calls are routine, repeatable conversations</div><div className="stat-bar"></div></div>
         <div className="stat-card reveal-right" style={{transitionDelay: ".1s"}}><div className="num" style={{color: "var(--gold)"}}>0.9s</div><div className="label">median end-to-end response time with Sarathi</div><div className="stat-bar" style={{background: "linear-gradient(90deg,var(--gold),var(--violet))"}}></div></div>
-        <div className="stat-card reveal-right" style={{transitionDelay: ".2s"}}><div className="num" style={{color: "var(--fg)"}}>5/5</div><div className="label">fields extracted per attendance call on average</div><div className="stat-bar" style={{background: "linear-gradient(90deg,var(--cyan),var(--violet))"}}></div></div>
+        <div className="stat-card reveal-right" style={{transitionDelay: ".2s"}}><div className="num" style={{color: "var(--fg)"}}>5/5</div><div className="label">fields extracted per call on average, with confidence scores</div><div className="stat-bar" style={{background: "linear-gradient(90deg,var(--cyan),var(--violet))"}}></div></div>
       </div>
     </div>
   </div>
@@ -155,7 +165,7 @@ export default function LandingPage() {
     <p className="section-sub">Upload contacts, pick an agent, launch. The AI handles the conversation â€” and every answer lands in a structured table you can export.</p>
     <div className="showcase-visual">
       <div className="showcase-header">
-        <h4>Campaign: Attendance Check â€” CMR College of Engineering & Technology</h4>
+        <h4>Campaign: Site Visit Follow-up â€” Prestige Realty</h4>
         <div className="showcase-dots"><span></span><span></span><span></span></div>
       </div>
       <div className="showcase-body">
@@ -166,21 +176,21 @@ export default function LandingPage() {
           </div>
           <div className="s-waveform" id="showWave"></div>
           <div className="s-bubbles">
-            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Good morning! Am I speaking with Mrs. Devi, parent of Rohan?</div>
-            <div className="s-bubble caller"><span className="who">Caller</span>Yes, this is she.</div>
-            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Thank you. I'm calling from CMR College of Engineering & Technology to confirm â€” will Rohan be attending classes today?</div>
-            <div className="s-bubble caller"><span className="who">Caller</span>He has a fever today, won't be coming.</div>
-            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>I'm sorry to hear that. I've noted the absence. Is there anything else you'd like us to know?</div>
+            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Good morning! Am I speaking with Mr. Rao?</div>
+            <div className="s-bubble caller"><span className="who">Caller</span>Yes, speaking.</div>
+            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>I'm calling from Prestige Realty about your site visit yesterday. Did you get a chance to see the 3BHK at Whitefield?</div>
+            <div className="s-bubble caller"><span className="who">Caller</span>Yes, I saw it. I liked it, but the price feels high.</div>
+            <div className="s-bubble agent"><span className="who">Sarathi Agent</span>Understood. I've noted that. Would you like our sales team to call you with pricing options?</div>
           </div>
         </div>
         <div className="showcase-side">
           <span className="pane-h">Extracted data</span>
           <div className="s-fields">
-            <div className="s-frow"><span className="k">student_name</span><span className="v">Rohan <span className="conf hi">96%</span></span></div>
-            <div className="s-frow"><span className="k">parent_name</span><span className="v">Mrs. Devi <span className="conf hi">94%</span></span></div>
-            <div className="s-frow"><span className="k">present_today</span><span className="v">No <span className="conf hi">91%</span></span></div>
-            <div className="s-frow"><span className="k">reason</span><span className="v">Sick leave <span className="conf md">88%</span></span></div>
-            <div className="s-frow"><span className="k">callback</span><span className="v">â€” <span className="conf wait">pending</span></span></div>
+            <div className="s-frow"><span className="k">contact_name</span><span className="v">Mr. Rao <span className="conf hi">96%</span></span></div>
+            <div className="s-frow"><span className="k">visited</span><span className="v">Yes <span className="conf hi">92%</span></span></div>
+            <div className="s-frow"><span className="k">interest</span><span className="v">Liked the 3BHK <span className="conf hi">89%</span></span></div>
+            <div className="s-frow"><span className="k">concern</span><span className="v">Price <span className="conf md">86%</span></span></div>
+            <div className="s-frow"><span className="k">callback</span><span className="v">Pricing call <span className="conf wait">pending</span></span></div>
           </div>
         </div>
       </div>
@@ -240,16 +250,16 @@ export default function LandingPage() {
       <div className="transform-card reveal-left">
         <div className="tc-before">
           <span className="tc-label">Before</span>
-          <h3 className="tc-title">A staff member dials 200 numbers to take attendance</h3>
-          <p className="tc-desc">Half don't pick up. The ones who do give one-word answers written on sticky notes. Nobody knows who was reached by end of day.</p>
-          <span className="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>3 hours manual work</span>
+          <h3 className="tc-title">A sales team dials 300 inbound leads by hand</h3>
+          <p className="tc-desc">Most go to voicemail. The ones who answer get a different pitch from every rep, and nobody knows which leads are actually ready to buy.</p>
+          <span className="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>2 days of calling</span>
         </div>
         <div className="tc-divider"><div className="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
         <div className="tc-after">
           <span className="tc-label">After</span>
-          <h3 className="tc-title">Sarathi calls every number simultaneously, in parallel</h3>
-          <p className="tc-desc">Each call is a real conversation â€” it asks who's present, captures the reason for absence, and flags students who need follow-up. Results appear in your dashboard before the first period ends.</p>
-          <span className="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Done in 8 minutes</span>
+          <h3 className="tc-title">Sarathi qualifies every lead on your list, start to finish</h3>
+          <p className="tc-desc">Each call asks budget, timeline and intent, answers questions from your context, and flags the hot leads with a transcript. Your reps only call the ones who are ready.</p>
+          <span className="tc-metric"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>300 leads, zero staff hours</span>
         </div>
       </div>
 
@@ -289,7 +299,7 @@ export default function LandingPage() {
         <div className="tc-before">
           <span className="tc-label">Before</span>
           <h3 className="tc-title">An events company sends 500 reminder calls before a conference</h3>
-          <p className="tc-desc">Receptionists read from a script. Some forget to confirm attendance. The catering team gets the wrong count. Day-of chaos.</p>
+          <p className="tc-desc">Receptionists read from a script. Some forget to confirm who's coming. The catering team gets the wrong count. Day-of chaos.</p>
           <span className="tc-metric"><svg viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>12 staff, 2 days</span>
         </div>
         <div className="tc-divider"><div className="tc-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div></div>
@@ -319,7 +329,7 @@ export default function LandingPage() {
   <div className="wrap">
     <span className="kick">Try it yourself</span>
     <h2 className="section-title display">Don't read about it â€” hear it.</h2>
-    <p className="section-sub">This is an attendance call exactly as Sarathi runs it. Interrupt the agent mid-sentence; it stops instantly, absorbs what you say, and picks up where it left off.</p>
+    <p className="section-sub">This is a real-estate follow-up call exactly as Sarathi runs it. Interrupt the agent mid-sentence; it stops instantly, absorbs what you say, and picks up where it left off.</p>
     <div className="demo-box reveal-scale">
       <canvas id="demoGl"></canvas>
       <div className="demo-inner">
@@ -341,7 +351,12 @@ export default function LandingPage() {
         </div>
         <div className="demo-right">
           <span className="pane-h">Extracted fields</span>
-          <div className="demo-fields" id="dFields"></div>
+          <div className="demo-fields" id="dFields">
+            <div className="d-frow" data-k="contact_name"><span className="k">contact_name</span><span className="v">— <span className="conf wait">waiting</span></span></div>
+            <div className="d-frow" data-k="purpose"><span className="k">purpose</span><span className="v">— <span className="conf wait">waiting</span></span></div>
+            <div className="d-frow" data-k="outcome"><span className="k">outcome</span><span className="v">— <span className="conf wait">waiting</span></span></div>
+            <div className="d-frow" data-k="callback_requested"><span className="k">callback_requested</span><span className="v">— <span className="conf wait">waiting</span></span></div>
+          </div>
           <div className="demo-latency" id="dLatency"></div>
           <div className="demo-summary" id="dSummary">
             <h5>Call complete</h5>
@@ -363,7 +378,7 @@ export default function LandingPage() {
     </div>
     <div className="sim-shell reveal-scale">
       <div className="sim-side">
-        <div className="sim-side-h"><span>contacts Â· attendance.csv</span><span id="simClock">00:00</span></div>
+        <div className="sim-side-h"><span>contacts · campaign.csv</span><span id="simClock">00:00</span></div>
         <div id="simList"></div>
       </div>
       <div className="sim-main">
@@ -462,7 +477,7 @@ export default function LandingPage() {
       <p className="sec-sub">Watch your campaign unfold as Sarathi makes calls â€” status, duration, and extracted data update as each conversation completes.</p>
     </div>
     <div className="monitor-shell reveal-scale" id="monShell">
-      <div className="mon-head"><h4>Campaign: Student Attendance â€” Week 12</h4><span className="mon-live"><span className="dot"></span>Live</span></div>
+      <div className="mon-head"><h4>Campaign: Appointment Confirmations — Week 12</h4><span className="mon-live"><span className="dot"></span>Live</span></div>
       <div className="mon-counters">
         <div className="mc-tile accent"><b id="monTotal">48</b><span>Total</span></div>
         <div className="mc-tile"><b id="monDone">0</b><span>Completed</span></div>
@@ -495,12 +510,12 @@ export default function LandingPage() {
       <div className="replay-side">
         <h5>Extracted fields</h5>
         <div className="replay-fields" id="replayFields">
-          <div className="rf-row"><span className="k">Student</span><span className="v pending" data-val="Aarav Kumar">â€”</span></div>
-          <div className="rf-row"><span className="k">Status</span><span className="v pending" data-val="Absent">â€”</span></div>
-          <div className="rf-row"><span className="k">Reason</span><span className="v pending" data-val="Medical appointment">â€”</span></div>
-          <div className="rf-row"><span className="k">Parent</span><span className="v pending" data-val="Mrs. Kumar">â€”</span></div>
-          <div className="rf-row"><span className="k">Follow-up</span><span className="v pending" data-val="Medical certificate requested">â€”</span></div>
-          <div className="rf-row"><span className="k">Duration</span><span className="v pending" data-val="1:24">â€”</span></div>
+          <div className="rf-row"><span className="k">Contact</span><span className="v pending" data-val="Rahul Verma">—</span></div>
+          <div className="rf-row"><span className="k">Original slot</span><span className="v pending" data-val="Friday, 4 PM">—</span></div>
+          <div className="rf-row"><span className="k">New slot</span><span className="v pending" data-val="Monday, 11 AM">—</span></div>
+          <div className="rf-row"><span className="k">Status</span><span className="v pending" data-val="Rescheduled">—</span></div>
+          <div className="rf-row"><span className="k">Follow-up</span><span className="v pending" data-val="Send clinic address">—</span></div>
+          <div className="rf-row"><span className="k">Duration</span><span className="v pending" data-val="1:24">—</span></div>
         </div>
         <div className="replay-wave"><canvas id="replayWave"></canvas></div>
       </div>

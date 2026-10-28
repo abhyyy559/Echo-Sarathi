@@ -69,6 +69,9 @@ Add-EnvVar "JWT_SECRET" $cfg["JWT_SECRET"]
 Add-EnvVar "INTERNAL_API_TOKEN" $cfg["INTERNAL_API_TOKEN"]
 Add-EnvVar "JWT_EXPIRE_MINUTES" "10080"
 Add-EnvVar "ALLOW_PUBLIC_REGISTRATION" "false"
+# Deliberately off in production: top-ups are manual until a payment gateway is
+# wired, so the API cannot mint credits. Local .env flips this for testing.
+Add-EnvVar "ALLOW_MANUAL_PAYMENTS" "false"
 Add-EnvVar "DEMO_EMAIL" $cfg["DEMO_EMAIL"]
 Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 

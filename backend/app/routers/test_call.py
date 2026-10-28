@@ -137,6 +137,13 @@ def place_test_call(
     elif campaign.domain_config_id != domain_config_id:
         campaign.domain_config_id = domain_config_id
 
+    from app.services.billing import MINIMUM_DIAL_BALANCE_PAISE, balance_paise
+
+    if balance_paise(db, user.org_id) < MINIMUM_DIAL_BALANCE_PAISE:
+        raise HTTPException(
+            status_code=402, detail="insufficient credits — top up to place calls"
+        )
+
     contact = db.scalar(
         select(Contact).where(Contact.campaign_id == campaign.id, Contact.phone == target)
     )
@@ -182,6 +189,7 @@ def place_test_call(
     call = Call(
         campaign_id=campaign.id,
         contact_id=contact.id,
+        org_id=user.org_id,
         agent_version_id=version.id,
         kind="phone",
         status="queued",

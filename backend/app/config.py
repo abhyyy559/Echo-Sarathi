@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     recording_retention_days: int = 90
     retention_job_enabled: bool = True
 
+    # --- billing -------------------------------------------------------------
+    # Self-service top-ups without a payment gateway exist for local demos and
+    # for an operator taking payment offline. Production stays false until a
+    # real checkout (Razorpay) is wired, otherwise this endpoint mints money.
+    allow_manual_payments: bool = False
+
     # --- domain configs ------------------------------------------------------
     # Default: ../domain-configs relative to repo root. In container: /domain-configs.
     domain_configs_dir: str = "../domain-configs"

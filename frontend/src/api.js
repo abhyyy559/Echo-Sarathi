@@ -237,6 +237,17 @@ export const analyticsApi = {
   usage: () => apiFetch('/api/analytics/usage'),
 };
 
+export const billingApi = {
+  /** Wallet balance, this month's spend, packs and the recent ledger. */
+  summary: () => apiFetch('/api/billing'),
+  /** Credits a pack. The backend refuses unless a payment path is enabled. */
+  topup: (packId) =>
+    apiFetch('/api/billing/topup', {
+      method: 'POST',
+      body: JSON.stringify({ pack_id: packId }),
+    }),
+};
+
 // Legacy flat surface kept for existing pages (campaigns / contacts / calls).
 export const api = {
   listCampaigns: () => apiFetch('/api/campaigns'),

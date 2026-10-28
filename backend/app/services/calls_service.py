@@ -126,6 +126,11 @@ def end_call(
     elif status == "canceled":
         if contact.status == "calling":
             contact.status = "failed"
+    # Debit the wallet on the same transition that closes the call. Every
+    # terminal path funnels here, and the debit itself is idempotent per call.
+    from app.services.billing import charge_call
+
+    charge_call(db, call)
     maybe_complete_campaign(db, call.campaign_id)
 
 

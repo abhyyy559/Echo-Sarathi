@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { analyticsApi, devApi } from '../api.js';
+import { analyticsApi, billingApi, devApi } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 const LATENCY_TARGET_MS = 900;
@@ -53,7 +53,7 @@ function fmtDateTime(value) {
 export default function OverviewPage() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
-  const [costs, setCosts] = useState(null);
+  const [billing, setBilling] = useState(null);
   const [usage, setUsage] = useState(null);
   const [usageError, setUsageError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,10 +68,10 @@ export default function OverviewPage() {
       .then(setSummary)
       .catch((e) => setError(e.message || String(e)))
       .finally(() => setLoading(false));
-    analyticsApi
-      .costs()
-      .then(setCosts)
-      .catch(() => setCosts(null));
+    billingApi
+      .summary()
+      .then(setBilling)
+      .catch(() => setBilling(null));
     analyticsApi
       .usage()
       .then((data) => {
@@ -111,8 +111,6 @@ export default function OverviewPage() {
   const calls7d = summary && Array.isArray(summary.calls_last_7d) ? summary.calls_last_7d : [];
   const recentCalls = summary && Array.isArray(summary.recent_calls) ? summary.recent_calls : [];
   const maxDayCount = Math.max(1, ...calls7d.map((d) => d.count));
-  const monthKey = new Date().toISOString().slice(0, 7);
-  const monthCosts = costs && costs.monthly ? costs.monthly[monthKey] : null;
   const usageKeys = usage && Array.isArray(usage.keys) ? usage.keys : [];
   const usageAlerts = usage && Array.isArray(usage.alerts) ? usage.alerts : [];
   const sarvam = usage && usage.sarvam ? usage.sarvam : null;
@@ -180,11 +178,13 @@ export default function OverviewPage() {
               <div className="foot">structured data points</div>
             </div>
             <div className="card stat">
-              <div className="lbl">Est. spend</div>
-              <div className="num">{monthCosts ? `$${monthCosts.est_cost_usd.toFixed(2)}` : costs ? '$0.00' : '$—'}</div>
+              <div className="lbl">Credits spent</div>
+              <div className="num">
+                {billing ? `₹${Number(billing.spent_this_month_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+              </div>
               <div className="foot">
-                {monthCosts
-                  ? `${monthCosts.minutes.toLocaleString()} min this month`
+                {billing
+                  ? `${billing.minutes_used_this_month} min · ₹${Number(billing.balance_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })} left`
                   : '— min this month'}
               </div>
             </div>

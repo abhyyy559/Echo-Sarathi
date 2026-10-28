@@ -55,6 +55,9 @@ class DialerService:
         self.telephony = telephony
         self.clock: Clock = clock or utcnow
         self._recent_call_times: deque[datetime] = deque()
+        # Campaigns already logged as credit-blocked; cleared as soon as the
+        # wallet recovers so one log line per outage, not one per second.
+        self._credit_blocked: set[int] = set()
         self._test_phones = {
             phone for phone in (normalize_phone(p)[0] for p in settings.test_phone_number_list)
         }
@@ -168,6 +171,8 @@ class DialerService:
             in_flight = in_flight_call_count(db, phone_only=True)
             campaigns = db.scalars(select(Campaign).where(Campaign.status == "running")).all()
             for campaign in campaigns:
+                if not self._credit_ok(db, campaign):
+                    continue
                 while (
                     in_flight < self.settings.default_concurrency_limit
                     and self._cps_slots_available(now)
@@ -185,6 +190,28 @@ class DialerService:
                 db.commit()
             self._sweep_stale_ringing(db, now)
         return placed
+
+    def _credit_ok(self, db: Session, campaign: Campaign) -> bool:
+        """False when the campaign's org cannot pay for even a short call.
+
+        A campaign stays ``running`` while blocked — pausing it automatically
+        would lose the operator's intent — but it places no legs until the
+        wallet is topped up.
+        """
+        from app.services.billing import MINIMUM_DIAL_BALANCE_PAISE, balance_paise
+
+        if campaign.org_id is None:
+            return True
+        balance = balance_paise(db, campaign.org_id)
+        if balance >= MINIMUM_DIAL_BALANCE_PAISE:
+            self._credit_blocked.discard(campaign.id)
+            return True
+        if campaign.id not in self._credit_blocked:
+            self._credit_blocked.add(campaign.id)
+            logger.warning(
+                "dialer: campaign %s paused on credits (balance %s paise)", campaign.id, balance
+            )
+        return False
 
     def _sweep_stale_ringing(self, db: Session, now: datetime, limit: int = 5) -> int:
         """Reconcile phone calls stuck ringing with no media leg.

@@ -14,6 +14,7 @@ import CallsIndexPage from './pages/CallsIndexPage.jsx';
 import GuidePage from './pages/GuidePage.jsx';
 import TestCallPage from './pages/TestCallPage.jsx';
 import PhoneNumbersPage from './pages/PhoneNumbersPage.jsx';
+import CreditsPage from './pages/CreditsPage.jsx';
 
 // three.js (~600 kB) ships only on the marketing pages — keep it out of the
 // initial bundle the same way livekit-client is kept out.
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="calls" element={<CallsIndexPage />} />
             <Route path="calls/:id" element={<CallDetailPage />} />
             <Route path="guide" element={<GuidePage />} />
+            <Route path="credits" element={<CreditsPage />} />
             <Route path="test-call" element={<TestCallPage />} />
             <Route path="phone-numbers" element={<PhoneNumbersPage />} />
             <Route path="dev" element={<DevToolsPage />} />

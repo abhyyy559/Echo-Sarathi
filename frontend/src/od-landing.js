@@ -142,6 +142,27 @@ export function initOdLanding() {
 })();
 
 
+/* Demo DOM refs. These used to resolve as window globals from their id
+ * attributes; the mismatched ones (dLatency/dSummary/dFields) threw, and
+ * FIELD_DEFS was missing entirely — the demo failed on first click. */
+const dTranscript=document.getElementById('dTranscript');
+const dChoices=document.getElementById('dChoices');
+const dTimer=document.getElementById('dTimer');
+const dOrb=document.getElementById('dOrb');
+const dChip=document.getElementById('dChip');
+const dChipTxt=document.getElementById('dChipTxt');
+const dIntBtn=document.getElementById('dIntBtn');
+const dEndBtn=document.getElementById('dEndBtn');
+const dLatEl=document.getElementById('dLatency');
+const dSumEl=document.getElementById('dSummary');
+const dFieldsEl=document.getElementById('dFields');
+const FIELD_DEFS=[
+  ['contact_name','Contact'],
+  ['purpose','Purpose'],
+  ['outcome','Outcome'],
+  ['callback_requested','Callback'],
+];
+
 function setField(k,v,conf){
   const row=dFieldsEl.querySelector(`[data-k="${k}"]`);
   if(row)row.querySelector('.v').innerHTML=`${v} <span class="conf ${conf>=85?'hi':'md'}">${conf}%</span>`;
@@ -155,7 +176,6 @@ let dMode='idle',dSec=0,dTimerIv=null,dWordIv=null,dCurResolve=null;
 function dSetState(m,label){
   dMode=m;dOrb.dataset.m=m;
   if(label!==false){dChip.dataset.s=m==='thinking'?'listening':m;dChipTxt.textContent=label||m.charAt(0).toUpperCase()+m.slice(1);}
-  dTarget=m==='speaking'?.9:m==='listening'?.34:m==='interrupted'?.12:.06;
   dIntBtn.classList.toggle('show',m==='speaking');
 }
 function dBubble(who,text,instant){
@@ -195,36 +215,43 @@ async function runDemo(){
   dOrb.classList.add('live');
   dSetState('connecting','Connecting');await dWait(800);
   dSetState('listening');await dWait(500);
-  setField('parent_name','Mr. Rao',96);
-  await dBubble('agent','Hello, am I speaking with Mr. Rao, Anika\'s father?');
+  setField('contact_name','Mr. Rao',96);
+  await dBubble('agent','Hello, am I speaking with Mr. Rao?');
   addLat(180,320,195,695);dSetState('listening');
   const ans=await dChoice(["Yes, speaking.","Sorry, who is this?"]);
-  if(ans.startsWith("Sorry")){await dBubble('agent','This is Sarathi, calling from CMR College of Engineering & Technology about Anika\'s attendance.');addLat(180,340,190,710);dSetState('listening');}
-  setField('student_name','Anika',94);dSetState('speaking');
-  await dBubble('agent','Thank you. Could you tell me whether Anika will attend classes today?');
+  if(ans.startsWith("Sorry")){await dBubble('agent','This is Sarathi, calling from Prestige Realty about your site visit yesterday.');addLat(180,340,190,710);dSetState('listening');}
+  setField('purpose','Site visit follow-up',93);dSetState('speaking');
+  await dBubble('agent','I\'m calling from Prestige Realty about your site visit yesterday. Did you get a chance to see the 3BHK at Whitefield?');
   addLat(180,310,188,678);dSetState('listening');
-  const att=await dChoice(["She\'s unwell today.","Yes, she\'ll be there."]);
-  if(att.startsWith("She")){
-    setField('present_today','No',91);setField('reason','Sick leave',88);
+  const seen=await dChoice(["Yes, I saw it.","I couldn\'t make it."]);
+  if(seen.startsWith("Yes")){
     dSetState('speaking');
-    await dBubble('agent','I\'m sorry to hear that. Should I ask her class teacher to call you back this evening?');
+    await dBubble('agent','Great. Would you like our sales team to call you with pricing and availability?');
     addLat(180,300,192,672);dSetState('listening');
-    const cb=await dChoice(["Yes, please.","No, that\'s fine."]);
-    setField('callback_requested',cb.startsWith("Yes")?'Yes':'No',90);
+    const cb=await dChoice(["Yes, please.","Not right now."]);
+    const wants=cb.startsWith("Yes");
+    setField('outcome',wants?'Interested — pricing call requested':'Visited — not ready yet',90);
+    setField('callback_requested',wants?'Yes':'No',92);
     dSetState('speaking');
-    await dBubble('agent','Noted. I\'ve recorded everything for the school. Wishing Anika a quick recovery — thank you, Mr. Rao.');
+    await dBubble('agent',wants?'Perfect. I\'ve asked the sales team to call you this evening. Thank you, Mr. Rao.':'Understood. I\'ve noted your feedback. Thank you, Mr. Rao.');
     addLat(180,290,185,655);
   }else{
-    setField('present_today','Yes',93);setField('reason','Attending',87);setField('callback_requested','No',84);
     dSetState('speaking');
-    await dBubble('agent','Wonderful. That\'s recorded for the school register — thank you, Mr. Rao. Have a good day.');
-    addLat(180,310,190,680);
+    await dBubble('agent','No problem at all. Would you like to reschedule the visit for this weekend?');
+    addLat(180,300,190,668);dSetState('listening');
+    const re=await dChoice(["Yes, Saturday works.","No, I\'ll get back to you."]);
+    const resched=re.startsWith("Yes");
+    setField('outcome',resched?'Visit rescheduled — Saturday':'Not visited — will call back',90);
+    setField('callback_requested',resched?'Yes':'No',88);
+    dSetState('speaking');
+    await dBubble('agent',resched?'Done — you\'re booked for Saturday. I\'ll send the location on WhatsApp. Thank you, Mr. Rao.':'Noted. I\'ll leave it with you — thank you, Mr. Rao.');
+    addLat(180,290,186,661);
   }
   finishDemo();
 }
 function finishDemo(){
   clearInterval(dTimerIv);dSetState('completed','Completed');dOrb.classList.remove('live');
-  document.getElementById('dSumTxt').textContent=`Duration ${dTimer.textContent} · 5 of 5 fields captured · outcome logged to campaign sheet.`;
+  document.getElementById('dSumTxt').textContent=`Duration ${dTimer.textContent} · ${FIELD_DEFS.length} of ${FIELD_DEFS.length} fields captured · outcome logged to campaign sheet.`;
   dSumEl.classList.add('show');
 }
 dIntBtn.onclick=()=>{dStopSpeech();dSetState('interrupted','Interrupted');__to(async()=>{dSetState('speaking');await dBubble('agent','Of course — go ahead.');addLat(180,295,188,663);dSetState('listening');},400);};
@@ -251,7 +278,7 @@ const AGENT_REPLIES=[
   "Campaigns run during 9 AM – 9 PM IST. The system handles busy signals, no-answers, and callbacks automatically.",
   "Every call returns a transcript, extracted fields with confidence scores, call duration, and outcome — all exportable as CSV or Excel.",
   "The interrupt handling is real: if a caller speaks while the agent is talking, the agent stops immediately and listens.",
-  "You can build agents for attendance calls, surveys, fee reminders, confirmations, follow-ups, qualification — anything that needs a structured phone conversation."
+  "You can build agents for appointment reminders, lead qualification, surveys, attendance checks, payment reminders, follow-ups — anything that needs a structured phone conversation."
 ];
 let agentMsgIdx=0;
 function agentReply(text){const d=document.createElement('div');d.className='msg bot';d.textContent=text;apBody.appendChild(d);apBody.scrollTop=apBody.scrollHeight;}
@@ -381,17 +408,17 @@ apInput.onkeydown=e=>{if(e.key==='Enter')handleAgentSend()};
    ═══════════════════════════════════════════════════ */
 (function(){
   const turns=[
-    {who:'agent',text:'Good morning! This is Sarathi calling from CMR College of Engineering & Technology. May I speak with Mrs. Kumar?',time:'0:00'},
-    {who:'caller',text:'Yes, this is she. Who is this?',time:'0:04'},
-    {who:'agent',text:'Mrs. Kumar, I\'m calling because Aarav was absent from school today. I wanted to check if everything is alright and if there\'s anything we should know.',time:'0:07'},
-    {who:'caller',text:'Oh yes, Aarav has a dental appointment this morning. He should be back by lunch.',time:'0:18'},
-    {who:'agent',text:'Thank you for letting us know. Could I get the reason documented — you mentioned a dental appointment?',time:'0:24'},
-    {who:'caller',text:'Yes, it\'s a routine dental checkup at Dr. Mehta\'s clinic.',time:'0:31'},
-    {who:'agent',text:'Perfect. And will Aarav return for the afternoon session?',time:'0:36'},
-    {who:'caller',text:'Yes, he\'ll be there by 1 PM.',time:'0:40'},
-    {who:'agent',text:'Wonderful. I\'ve noted the absence as a medical appointment. Is there anything else you\'d like us to know?',time:'0:43'},
-    {who:'caller',text:'No, that\'s all. Thank you for calling.',time:'0:52'},
-    {who:'agent',text:'You\'re welcome, Mrs. Kumar. Have a great day. Goodbye!',time:'0:55'},
+    {who:'agent',text:'Good morning! This is Sarathi calling from Greenwood Dental Clinic. May I speak with Rahul Verma?',time:'0:00'},
+    {who:'caller',text:'Yes, this is Rahul. Who is this?',time:'0:04'},
+    {who:'agent',text:'Hi Rahul, I\'m calling to confirm your appointment on Friday at 4 PM with Dr. Menon.',time:'0:07'},
+    {who:'caller',text:'Actually, I need to reschedule — I\'ll be travelling on Friday.',time:'0:15'},
+    {who:'agent',text:'No problem at all. Would the following Monday at 11 AM work for you?',time:'0:22'},
+    {who:'caller',text:'Monday at 11 works.',time:'0:28'},
+    {who:'agent',text:'Done — I\'ve moved you to Monday at 11 AM with Dr. Menon.',time:'0:32'},
+    {who:'caller',text:'Could you also send me the clinic address?',time:'0:37'},
+    {who:'agent',text:'Of course. I\'ll send the address on WhatsApp right after this call. Anything else?',time:'0:42'},
+    {who:'caller',text:'No, that\'s all. Thank you.',time:'0:48'},
+    {who:'agent',text:'Thank you, Rahul. See you Monday. Goodbye!',time:'0:52'},
   ];
 
   const fieldReveal=[
@@ -479,9 +506,9 @@ const CONTACTS=[
   {n:'Ravi T.',ini:'R',ph:'+91 99××× ×8842',ok:1,f:'Will attend, asked for bus route',d:'0:47',c:92},
   {n:'Meera S.',ini:'M',ph:'+91 97××× ×3327',ok:0,st:'Busy',d:'0:06'},
   {n:'Deepak R.',ini:'D',ph:'+91 96××× ×5518',ok:0,st:'No answer',d:'—'},
-  {n:'Fathima Z.',ini:'F',ph:'+91 95××× ×9046',ok:1,f:'Absent — fever, back Monday',d:'1:04',c:95},
+  {n:'Fathima Z.',ini:'F',ph:'+91 95××× ×9046',ok:1,f:'Rescheduling — asked for next week',d:'1:04',c:95},
   {n:'Karthik V.',ini:'K',ph:'+91 94××× ×7765',ok:1,f:'Confirmed, joining late',d:'0:41',c:91},
-  {n:'Lakshmi P.',ini:'L',ph:'+91 93××× ×2294',ok:1,f:'Confirmed — parent callback requested',d:'0:58',c:89},
+  {n:'Lakshmi P.',ini:'L',ph:'+91 93××× ×2294',ok:1,f:'Confirmed — customer callback requested',d:'0:58',c:89},
   {n:'Sana H.',ini:'S',ph:'+91 92××× ×6631',ok:1,f:'Confirmed',d:'0:38',c:97}
 ];
 const simList=document.getElementById('simList');
@@ -603,7 +630,7 @@ new IntersectionObserver((es,ob)=>es.forEach(e=>{
 
 /* ── Voice gallery ── */
 const VOICES=[
-  {name:'Asha',traits:'Warm · Measured',line:'Hello! This is Asha calling from CMR College of Engineering & Technology about Aarav\u2019s attendance today.'},
+  {name:'Asha',traits:'Warm · Measured',line:'Hello! This is Asha calling from Greenwood Dental Clinic about your appointment tomorrow.'},
   {name:'Rohan',traits:'Calm · Reassuring',line:'Hi, this is Rohan. Just a gentle reminder about tomorrow\u2019s appointment at ten.'},
   {name:'Meera',traits:'Bright · Energetic',line:'Hey! Meera here — a quick call to confirm your slot for Saturday\u2019s session.'},
   {name:'Arjun',traits:'Deep · Authoritative',line:'Good evening. Arjun calling regarding the pending fee reminder for this month.'},

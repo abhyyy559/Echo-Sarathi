@@ -91,6 +91,9 @@ def register(
     )
     db.add(org)
     db.flush()
+    from app.services.billing import grant_trial
+
+    grant_trial(db, org.id)
     user = User(
         org_id=org.id,
         email=email,

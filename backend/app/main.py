@@ -118,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agents,
         analytics,
         auth,
+        billing,
         calls,
         campaigns,
         contacts,
@@ -136,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fast_app.include_router(agents.router)
     fast_app.include_router(agents.agent_versions_router)
     fast_app.include_router(analytics.router)
+    fast_app.include_router(billing.router)
     fast_app.include_router(playground.router)
     # Dev-only endpoints (removed in production builds).
     fast_app.include_router(devtools.router)

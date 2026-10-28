@@ -26,8 +26,8 @@ const PLANNED = [
 ];
 
 const STEPS = [
-  { t: 'Create a campaign', you: 'Name your campaign â€” â€œAug absence sweepâ€ is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
-  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every numberâ€™s format, flags bad rows red before import.', tip: 'Extra columns like student_name become words the agent can say naturally.' },
+  { t: 'Create a campaign', you: 'Name your campaign â€” â€œAugust follow-upâ€ is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
+  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every numberâ€™s format, flags bad rows red before import.', tip: 'Extra columns like contact_name become words the agent can say naturally.' },
   { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarathi: 'Turns that list into a natural conversation plan â€” not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
   { t: 'Launch', you: 'Press launch inside the calling window (9 AM â€“ 9 PM IST).', sarathi: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window â€” nobody gets a midnight call.' },
   { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarathi: 'Listens, takes turns, handles interruptions â€” like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
@@ -228,13 +228,13 @@ export default function RoadmapPage() {
           <div className="rm2-targets">
             <span><b>â‰¤ 900 ms</b> median reply</span>
             <span><b>â‰¤ 1.5 s</b> slowest 5%</span>
-            <span><b>â‚¹8.50</b> per minute</span>
+            <span><b>₹3.00</b> per minute</span>
           </div>
         </section>
 
         <section className="rm2-cta reveal" aria-labelledby="cta-h">
           <h2 id="cta-h">Start free. Scale when it works.</h2>
-          <p>Create an agent, run your first calls on us, and only pay when you take it live.</p>
+          <p>Create an agent, run your first calls on the 10 welcome minutes, and top up with credits only when you take it live.</p>
           <div className="rm2-hero-cta">
             <Link to="/login" className="rm2-btn-primary">Start free</Link>
             <Link to="/#demo" className="rm2-btn-ghost">See the demo</Link>
