@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import { statusLabel, statusClass } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
+import { agentOptionLabel } from '../utils/agentPurpose.js';
 
 function fmtDateTime(value) {
   if (!value) return '—';
@@ -49,6 +50,8 @@ export default function CampaignsPage() {
   }, []);
 
   const hasAgentVersions = agents.length > 0;
+  const pickedAgent =
+    agents.find((a) => String(a.current_version_id) === String(form.agent_version_id)) || null;
 
   async function act(id, fn) {
     try {
@@ -250,10 +253,11 @@ export default function CampaignsPage() {
                 <option value="">Select an agent…</option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.current_version_id}>
-                    {a.name} — current version
+                    {agentOptionLabel(a)}
                   </option>
                 ))}
               </select>
+              {pickedAgent?.description && <p className="hint">{pickedAgent.description}</p>}
               {agentsError && <p className="hint hint-error">{agentsError}</p>}
               <p className="hint">
                 The campaign calls with the agent's current saved version. Editing the agent later never changes a

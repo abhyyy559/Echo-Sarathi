@@ -6,6 +6,7 @@ import StatusBadge, { statusLabel } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
 import DataTable from '../components/DataTable.jsx';
 import ContactImport from '../components/ContactImport.jsx';
+import { agentOptionLabel } from '../utils/agentPurpose.js';
 
 const PAGE_SIZE = 50;
 const CONTACT_STATUS_FILTERS = [
@@ -561,6 +562,12 @@ export default function CampaignDetailPage() {
     );
   }
 
+  const pickedAgent =
+    agents.find((a) => String(a.current_version_id) === String(agentPick)) || null;
+  const pickedAgentRole =
+    pickedAgent?.description ||
+    (String(agentPick) === String(campaign?.agent_version_id ?? '') ? campaign?.agent_role : '');
+
   return (
     <div>
       <Link to="/" className="back-link">
@@ -974,18 +981,20 @@ export default function CampaignDetailPage() {
                   (a) => String(a.current_version_id) === String(campaign.agent_version_id)
                 ) && (
                   <option value={campaign.agent_version_id}>
-                    {campaign.agent_name || 'Current agent'}
-                    {campaign.agent_version != null ? ` · v${campaign.agent_version}` : ''} — currently
-                    pinned
+                    {agentOptionLabel({
+                      name: campaign.agent_name,
+                      description: campaign.agent_role,
+                    })}{' '}
+                    (currently pinned)
                   </option>
                 )}
               {agents.map((a) => (
                 <option key={a.id} value={a.current_version_id}>
-                  {a.name}
-                  {a.description ? ` — ${a.description}` : ''}
+                  {agentOptionLabel(a)} (latest)
                 </option>
               ))}
             </select>
+            {pickedAgentRole && <p className="hint">{pickedAgentRole}</p>}
           </div>
         </Modal>
       )}

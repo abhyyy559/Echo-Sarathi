@@ -9,6 +9,7 @@ import TestCallPanel from '../components/TestCallPanel.jsx';
 import LeadCardForm, { ABSENT_STUDENT_DEFAULTS } from '../components/LeadCardForm.jsx';
 import TextPlayground, { confidenceClass } from '../components/TextPlayground.jsx';
 import { cleanTranscriptText } from '../utils/transcript.js';
+import { agentOptionLabel } from '../utils/agentPurpose.js';
 
 
 const PHASES = {
@@ -75,6 +76,10 @@ export default function PlaygroundPage() {
   const [agents, setAgents] = useState(null);
   const [agentsError, setAgentsError] = useState(null);
   const [selectedAgentId, setSelectedAgentId] = useState('');
+  // What each agent is for, shown under the picker: the roster names alone
+  // never said whether it is an attendance, clinic or property agent.
+  const pickedAgent =
+    (agents || []).find((a) => String(a.id) === String(selectedAgentId)) || null;
   const [versions, setVersions] = useState([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState(routeVersionId || '');
@@ -973,11 +978,16 @@ export default function PlaygroundPage() {
                       >
                         {agents.map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.name}
+                            {agentOptionLabel(a)}
                           </option>
                         ))}
                       </select>
                     </div>
+                    {pickedAgent?.description && (
+                      <p className="hint" style={{ marginTop: 6 }}>
+                        {pickedAgent.description}
+                      </p>
+                    )}
                     <div className="fieldrow" style={{ marginTop: 8 }}>
                       <label>Version</label>
                       <select
