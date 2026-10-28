@@ -194,9 +194,8 @@ def record_response(
     provider: str,
     api_key: str,
     model: str,
-    settings: Any = None,
 ) -> None:
-    """Persist response headers and update the NIM Redis counters.
+    """Persist usage headers reported by a provider response.
 
     Safe to call on every response: with no headers there is no DB write.
     """
@@ -205,46 +204,6 @@ def record_response(
     )
     if rows:
         record_snapshots(rows)
-    if str(provider or "").lower() in {"nvidia", "nim"}:
-        record_nim_request(
-            settings,
-            key_id=mask_key(api_key),
-            model=model,
-            status=int(getattr(response, "status_code", 0) or 0),
-            retry_after=_number((getattr(response, "headers", {}) or {}).get("retry-after")),
-        )
-
-
-def record_nim_request(
-    settings: Any,
-    *,
-    key_id: str,
-    model: str,
-    status: int,
-    retry_after: Optional[float] = None,
-) -> None:
-    """Track NVIDIA NIM requests per key/model in Redis (no usage API)."""
-    redis_url = str(getattr(settings, "redis_url", "") or "").strip()
-    if not redis_url:
-        return
-    try:
-        import redis as redis_lib
-
-        client = redis_lib.Redis.from_url(
-            redis_url, socket_connect_timeout=0.5, socket_timeout=0.5
-        )
-        try:
-            stamp = utcnow().strftime("%Y%m%d%H")
-            base = f"usage:nim:{key_id}:{model}:{stamp}"
-            client.incr(base)
-            client.expire(base, 60 * 60 * 3)
-            if status == 429:
-                retry_key = f"usage:nim:{key_id}:{model}:retry_after"
-                client.set(retry_key, str(retry_after or 0), ex=300)
-        finally:
-            client.close()
-    except Exception:  # noqa: BLE001 - Redis is optional on local/demo
-        logger.debug("NIM usage counter skipped (redis unavailable)", exc_info=True)
 
 
 def latest_snapshots(

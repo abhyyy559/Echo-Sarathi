@@ -2,7 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiTargetLabel, authApi, setSession } from '../api.js';
 
-const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+const RAW_GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+
+// Google only serves a consent card for a Web client id shaped like
+// "<project-number>-<hash>.apps.googleusercontent.com". A placeholder such as
+// "test-client-id..." loads a blank popup, so treat it as unconfigured.
+const GOOGLE_CLIENT_ID = /^\d+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(
+  RAW_GOOGLE_CLIENT_ID
+)
+  ? RAW_GOOGLE_CLIENT_ID
+  : '';
+const GOOGLE_CLIENT_ID_INVALID = Boolean(RAW_GOOGLE_CLIENT_ID) && !GOOGLE_CLIENT_ID;
 
 export default function Login() {
   const navigate = useNavigate();
@@ -211,6 +221,13 @@ export default function Login() {
         </div>
 
         {GOOGLE_CLIENT_ID && <div className="google-auth" ref={googleBtnRef} />}
+        {GOOGLE_CLIENT_ID_INVALID && import.meta.env.DEV && (
+          <div className="demo-hint">
+            Google sign-in is disabled: <b>VITE_GOOGLE_CLIENT_ID</b> holds a placeholder. Put a
+            real client id from Google Cloud Console in <b>frontend/.env.local</b> and restart the
+            dev server. Email sign-in still works.
+          </div>
+        )}
         {googleReady && (
           <div className="auth-divider">
             <span>or use your email</span>

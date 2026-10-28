@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.auth import verify_password
 from app.models import Agent, AgentVersion, Campaign, Contact, User
-from scripts.seed_demo import purge_sample_data, seed_demo
+from scripts.seed_demo import DEMO_INSTITUTION, purge_sample_data, seed_demo
 
 
 def test_seed_demo_creates_clean_beta_tenant(tmp_path):
@@ -28,7 +28,9 @@ def test_seed_demo_creates_clean_beta_tenant(tmp_path):
         assert {a.name for a in agents} == {
             "Priya",
             "Sahithi",
-        }, "beta policy seeds exactly the English + Telugu starters"
+            "Bunty",
+            "Anu",
+        }, "beta policy seeds the attendance pair plus the prankster and check-in agents"
 
         agent = next(a for a in agents if a.name == "Priya")
         assert "Attendance" in (agent.description or "")
@@ -43,7 +45,19 @@ def test_seed_demo_creates_clean_beta_tenant(tmp_path):
         telugu_version = db.get(AgentVersion, telugu.current_version_id)
         assert telugu_version is not None
         assert telugu_version.voice_settings.get("language") == "te"
-        assert "నమస్కారం" in telugu_version.disclosure_script
+        assert "హాయ్" in telugu_version.disclosure_script
+
+        # The two persona agents declare their own brand, so the demo tenant's
+        # college name must never leak into what a caller hears. The stored
+        # script keeps its [Company Name] token; the brand is resolved at call
+        # time from company_context (see test_persona_openings...).
+        for name, brand in (("Bunty", "The Prank Line"), ("Anu", "Little Lantern")):
+            persona = next(a for a in agents if a.name == name)
+            persona_version = db.get(AgentVersion, persona.current_version_id)
+            assert persona_version is not None
+            assert persona_version.company_context.get("company_name") == brand
+            assert DEMO_INSTITUTION not in persona_version.system_prompt
+            assert DEMO_INSTITUTION not in str(persona_version.company_context)
 
         # Beta policy: no campaigns, no contacts — testers bring their own data.
         assert "campaign_id" not in result
@@ -63,7 +77,7 @@ def test_seed_demo_is_idempotent(tmp_path):
     engine = create_engine(db_url)
     with sessionmaker(bind=engine)() as db:
         assert len(db.scalars(select(User)).all()) == 1, "must not duplicate users"
-        assert len(db.scalars(select(Agent)).all()) == 2, "must not duplicate agents"
+        assert len(db.scalars(select(Agent)).all()) == 4, "must not duplicate agents"
         assert len(db.scalars(select(Contact)).all()) == 0, "seed must not add contacts"
 
 
@@ -89,7 +103,7 @@ def test_seed_backfills_a_new_starter_agent_into_existing_tenant(tmp_path):
 
     with sessionmaker(bind=engine)() as db:
         names = {a.name for a in db.scalars(select(Agent)).all()}
-        assert names == {"Priya", "Sahithi"}
+        assert names == {"Priya", "Sahithi", "Bunty", "Anu"}
     engine.dispose()
 
 
@@ -113,7 +127,7 @@ def test_seed_renames_legacy_job_titled_starters_in_place(tmp_path):
 
     with sessionmaker(bind=engine)() as db:
         names = {a.name for a in db.scalars(select(Agent)).all()}
-        assert names == {"Priya", "Sahithi"}, "renamed, not duplicated"
+        assert names == {"Priya", "Sahithi", "Bunty", "Anu"}, "renamed, not duplicated"
     engine.dispose()
 
 
@@ -174,7 +188,7 @@ def test_purge_sample_data_removes_campaigns_contacts_calls(tmp_path):
         assert remaining[0].org_id != seed_result["org_id"], "foreign-org call must survive"
         assert db.scalar(select(func.count()).select_from(Transcript)) == 0
         # Agents and users are preserved by design.
-        assert db.scalar(select(func.count()).select_from(Agent)) == 2
+        assert db.scalar(select(func.count()).select_from(Agent)) == 4
         assert db.scalar(select(func.count()).select_from(User)) == 1
     engine.dispose()
 

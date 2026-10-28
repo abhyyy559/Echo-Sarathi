@@ -1,4 +1,3 @@
-plivo>=4.0
 fastapi>=0.110
 uvicorn[standard]>=0.29
 sqlalchemy>=2.0
@@ -12,7 +11,6 @@ pydantic-settings>=2.2
 python-multipart>=0.0.9
 twilio>=9.0
 openpyxl>=3.1
-redis>=5.0
 python-dotenv>=1.0
 tzdata>=2024.1  # zoneinfo database on platforms without a system tz db (e.g. Windows)
 # --- auth (enterprise platform, Lane A) ---

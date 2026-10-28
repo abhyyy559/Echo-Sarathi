@@ -76,7 +76,7 @@ LOW_BALANCE_ALERT_COOLDOWN = timedelta(days=7)
 CREDIT_PACKS: tuple[dict[str, Any], ...] = (
     {
         "id": "starter",
-        "name": "Starter",
+        "name": "Quick top-up",
         "minutes": 60,
         "price_paise": 18_000,  # Rs 180  -> Rs 3.00/min
         "per_minute_paise": 300,
@@ -84,7 +84,7 @@ CREDIT_PACKS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "growth",
-        "name": "Growth",
+        "name": "Standard top-up",
         "minutes": 300,
         "price_paise": 87_000,  # Rs 870  -> Rs 2.90/min
         "per_minute_paise": 290,
@@ -92,7 +92,7 @@ CREDIT_PACKS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "scale",
-        "name": "Scale",
+        "name": "Volume top-up",
         "minutes": 1000,
         "price_paise": 280_000,  # Rs 2,800 -> Rs 2.80/min
         "per_minute_paise": 280,
@@ -217,7 +217,7 @@ def purchase_pack(
         kind="purchase",
         amount_paise=value,
         paid_paise=int(pack["price_paise"]),
-        description=f"{pack['name']} pack · {pack['minutes']} minutes",
+        description=f"{pack['name']} · {pack['minutes']} minutes",
         created_by=created_by,
     )
 
@@ -378,7 +378,7 @@ def settle_payment(
         invoice_service.create_invoice(
             db,
             org,
-            description=f"{pack['name']} pack · {pack['minutes']} minutes",
+            description=f"{pack['name']} · {pack['minutes']} minutes",
             total_paise=payment.amount_paise,
             payment_id=payment.id,
         )

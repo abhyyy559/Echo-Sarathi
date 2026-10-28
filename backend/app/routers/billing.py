@@ -513,7 +513,7 @@ def topup(
         invoice_service.create_invoice(
             db,
             org,
-            description=f"{pack['name']} pack · {pack['minutes']} minutes",
+            description=f"{pack['name']} · {pack['minutes']} minutes",
             total_paise=payment.amount_paise,
             payment_id=payment.id,
         )

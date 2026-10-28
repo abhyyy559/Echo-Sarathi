@@ -29,7 +29,7 @@ def test_outbound_queue_holds_a_full_reply():
     ~10ms, TTS streams a 12s opening in ~3s, and the paced pump consumes at
     realtime. A 100-deep queue held ~1s and silently dropped the rest."""
     assert OUTBOUND_QUEUE_MAXSIZE >= 1500
-    for router in ("vobiz", "twilio", "plivo"):
+    for router in ("vobiz", "twilio"):
         source = inspect.getsource(
             __import__(f"app.routers.{router}", fromlist=["x"])
         )

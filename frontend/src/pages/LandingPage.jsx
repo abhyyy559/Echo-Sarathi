@@ -66,6 +66,7 @@ export default function LandingPage() {
             <a href="#product" className="nav-link">Product</a>
             <a href="#usecases" className="nav-link">Use Cases</a>
             <Link to="/pricing" className="nav-link">Pricing</Link>
+            <Link to="/playground" className="nav-link">Playground</Link>
           </div>
           <div className="nav-right">
             <Link to="/roadmap" className="nav-link">Roadmap</Link>
@@ -84,6 +85,7 @@ export default function LandingPage() {
         <a href="#product">Product</a>
         <a href="#usecases">Use Cases</a>
         <Link to="/pricing">Pricing</Link>
+        <Link to="/playground">Playground</Link>
         <Link to="/roadmap">Roadmap</Link>
         <Link to="/login" className="drawer-cta">Start free</Link>
       </div>
@@ -367,7 +369,7 @@ export default function LandingPage() {
         <p>Voice infrastructure for real conversations — calls that listen, take turns, and return answers as data.</p>
       </div>
       <div className="f-col"><h6>Platform</h6><Link to="/">Overview</Link><Link to="/agents">Agents</Link><Link to="/campaigns">Campaigns</Link><Link to="/calls">Call history</Link></div>
-      <div className="f-col"><h6>Experience</h6><Link to="/agents/new">Agent builder</Link><Link to="/pricing">Pricing</Link><Link to="/roadmap">Roadmap</Link><Link to="/login">Sign in</Link></div>
+      <div className="f-col"><h6>Experience</h6><Link to="/playground">Playground</Link><Link to="/agents/new">Agent builder</Link><Link to="/pricing">Pricing</Link><Link to="/roadmap">Roadmap</Link><Link to="/login">Sign in</Link></div>
       <div className="f-col"><h6>Company</h6><a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a><Link to="/roadmap">Languages</Link></div>
     </div>
     <div className="f-base">

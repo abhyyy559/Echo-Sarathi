@@ -34,9 +34,6 @@ TWILIO_STATUS_MAP = {
     "failed": "failed",
 }
 
-# Plivo uses the same CallStatus vocabulary as Twilio.
-PLIVO_STATUS_MAP = {**TWILIO_STATUS_MAP}
-
 
 def log_call_event(
     db: Session, call_id: int, event_type: str, payload: Optional[dict]

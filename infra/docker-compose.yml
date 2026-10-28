@@ -11,7 +11,7 @@
 # THIS PHASE PLACES NO TELEPHONY CALLS. The Twilio adapter is dormant; only
 # browser playground rooms (`playground-*`) are handled.
 #
-# Port map (host): frontend :3000 | backend :8000 | postgres :5432 | redis :6379
+# Port map (host): frontend :3000 | backend :8000 | postgres :5432
 # LiveKit rooms live on LiveKit Cloud (wss:// URL in ../.env) — no local
 # LiveKit ports anymore (7880/7881 retired with the self-hosted service).
 
@@ -36,22 +36,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # --- Redis ------------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    container_name: voice-agent-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-    restart: unless-stopped
-
   # --- Backend (FastAPI) ------------------------------------------------------
   # Entrypoint is the app-package module path app.main:app.
   backend:
@@ -70,7 +54,7 @@ services:
       # ../.env via env_file (cloud wss:// URL). A literal here would override
       # the cloud URL with the old self-hosted address. (See the ${} trap
       # note below: keep literals only for true constants.)
-      # Everything else (DATABASE_URL, REDIS_URL, JWT_SECRET,
+      # Everything else (DATABASE_URL, JWT_SECRET,
       # INTERNAL_API_TOKEN, CORS_ORIGINS, LIVEKIT_*, provider keys) comes from
       # ../.env via env_file above. Do NOT re-add ${VAR:-default}
       # interpolation here: it resolves against the HOST environment (root
@@ -86,8 +70,6 @@ services:
       - ../domain-configs:/domain-configs:ro
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       # python:slim ships no curl/wget; use stdlib urllib against /api/health.
@@ -197,7 +179,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   default:

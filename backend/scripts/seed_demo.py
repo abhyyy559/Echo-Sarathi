@@ -9,7 +9,8 @@ Creates (idempotently):
 - owner user from DEMO_EMAIL / DEMO_PASSWORD (falls back to
   demo@example.com / demo1234 for local development only)
 - starter agents "Priya" (English) and "Sahithi" (Telugu), v1 built from
-  domain-configs/absent-student.json and the Telugu preset
+  domain-configs/absent-student.json and the Telugu preset, plus "Bunty"
+  (prankster) and "Anu" (sweet check-in) from their presets
 
 Beta policy: NO campaigns, NO sample contacts, NO calls are created — testers
 start from clean empty states and bring their own data. The starter agent is
@@ -66,14 +67,13 @@ def _load_absent_student_config() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def _load_telugu_preset() -> dict[str, Any]:
-    path = (
-        PROJECT_ROOT
-        / "domain-configs"
-        / "presets"
-        / "absent-student-followup-telugu.json"
-    )
+def _load_preset(filename: str) -> dict[str, Any]:
+    path = PROJECT_ROOT / "domain-configs" / "presets" / filename
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _load_telugu_preset() -> dict[str, Any]:
+    return _load_preset("absent-student-followup-telugu.json")
 
 
 def _version_payload_from_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -162,6 +162,8 @@ def _ensure_starter_agents(
     """
     config = _load_absent_student_config()
     preset = _load_telugu_preset()
+    prankster = _load_preset("prankster.json")
+    sweet_checkin = _load_preset("sweet-checkin.json")
     _rename_legacy_starters(db, org_id)
     specs = {
         "english": (
@@ -178,6 +180,18 @@ def _ensure_starter_agents(
                 # tenant has a real institution name (see DEMO_INSTITUTION).
                 "company_context": {"institution": DEMO_INSTITUTION},
             },
+        ),
+        # Both declare their own brand in company_context, so neither speaks
+        # the demo tenant's college name on a call.
+        "prankster": (
+            "Bunty",
+            "Prank caller · one harmless, silly bit for a friend, with a clear yes first.",
+            prankster["version_payload"],
+        ),
+        "sweet_checkin": (
+            "Anu",
+            "Warm check-in companion · a short, sweet call to see how someone's day is going.",
+            sweet_checkin["version_payload"],
         ),
     }
     created: dict[str, dict[str, Any]] = {}

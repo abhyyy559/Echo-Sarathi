@@ -48,6 +48,13 @@ CRAFT_HEADER = "CONVERSATION CRAFT - sound smart, never scripted:"
 
 LANGUAGE_NAMES = {"en": "English", "te": "Telugu", "hi": "Hindi"}
 
+#: Fields the agent derives when closing, never asks. A live call asked the
+#: parent "May I know the outcome" because `call_outcome` was rendered as a
+#: goal with [REQUIRED]. The text playground already excludes these.
+_AGENT_DERIVED_FIELDS = frozenset(
+    {"call_outcome", "escalation_needed", "needs_human_help"}
+)
+
 #: Spoken-register examples. A model told only "respond in Telugu" writes the
 #: literary (granthik) register from its training data: on a live call the
 #: agent said "కాలేయ పునాహక్రష్ వల్లే రాలేకపోయాడనే వివరం నమోదు చేస్తున్నా"
@@ -63,6 +70,12 @@ _SPOKEN_STYLE: dict[str, str] = {
         "- When the caller used an English word (fever, college, attendance, "
         "tomorrow, fee), give it back to them in English. Never hunt for a "
         "Sanskrit or classical synonym for a word they already said.\n"
+        "- Say కాలేజీకి రాలేదు / leave (not గైర్హాజరు), డాక్టర్ సర్టిఫికెట్ (not "
+        "వైద్య ధృవపత్రం), అడగడానికి కాల్ చేశా (not విచారిస్తున్నాను), థాంక్స్ (not "
+        "ధన్యవాదాలు), సరే/బై (not సెలవు at the phone). Never call a college "
+        "\"ఆఫీస్\" - that confused a live caller who asked \"ekkadaki raledhu?\".\n"
+        "- If the caller says \"అర్థం కాలేదు\", rephrase shorter and simpler once. "
+        "Repeating the same formal sentence is what made them hang up.\n"
     ),
     "hi": (
         "- Devanagari for the Hindi, English words IN ENGLISH inside the same "
@@ -79,6 +92,20 @@ _TOOL_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _TOOL_CALLS_JSON_RE = re.compile(r'"[^"]*tool_calls[^"]*"\s*:\s*\[.*?\]', re.DOTALL)
+#: Tool calls written as XML-ish tags with a JSON body. A live text call spoke
+#: "<record_extracted_field>{...}</record_extracted_field" to the caller.
+_TOOL_XML_RE = re.compile(
+    r"<record_extracted_field\b[^>]*>.*?(?:</record_extracted_field\s*>?|$)"
+    r"|</record_extracted_field\b[^>]*>"
+    r"|</?(?:end_call|escalate_to_human|transfer_call)\b[^>]*>",
+    re.DOTALL | re.IGNORECASE,
+)
+#: Reasoning wrappers streamed as content by qwen/oss models. Spoken aloud
+#: this is the model thinking out loud, not an answer.
+_THINK_BLOCK_RE = re.compile(
+    r"<think(?:ing)?>.*?</think(?:ing)?>|<think(?:ing)?>[^<]*$|</think(?:ing)?>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 #: Phone TTS (Sarvam Bulbul) rejects any segment with no letter it recognises:
@@ -120,7 +147,9 @@ def scrub_speech_text(text: str) -> str:
     model may emit as inline assistant text. Returns cleaned, stripped text.
     """
     original = str(text or "")
-    out = _TOOL_BLOCK_RE.sub(" ", original)
+    out = _THINK_BLOCK_RE.sub(" ", original)
+    out = _TOOL_BLOCK_RE.sub(" ", out)
+    out = _TOOL_XML_RE.sub(" ", out)
     out = _TOOL_CALLS_JSON_RE.sub(" ", out)
     out = _DOUBLE_SPACE_RE.sub(" ", out).strip()
     if out != original.strip():
@@ -272,10 +301,14 @@ def build_token_map(
         "[Source]": _context_value(company_context, "source", "lead_source"),
         "[Doctor Name]": _context_value(company_context, "doctor_name")
         or _known_field(contact, ctx_contact, keys=("doctor_name", "doctor")),
+        # Clinic presets store the slot in company_context; the contact card
+        # wins when present so one version can be tested with different slots.
         "[Appointment Date]": _known_field(contact, ctx_contact,
-                                           keys=("appointment_date", "date")),
+                                           keys=("appointment_date", "date"))
+        or _context_value(company_context, "appointment_date"),
         "[Appointment Time]": _known_field(contact, ctx_contact,
-                                           keys=("appointment_time", "time")),
+                                           keys=("appointment_time", "time"))
+        or _context_value(company_context, "appointment_time"),
         "[Expected Return Date]": "",
     }
 
@@ -1159,7 +1192,12 @@ def render_system_prompt(
                     spec.get("description") or spec.get("type") or ""
                 ).strip()
                 validation = str(spec.get("validation") or "").strip().lower()
-                marker = " [REQUIRED]" if validation == "required" else ""
+                if field_name in _AGENT_DERIVED_FIELDS:
+                    marker = " [YOU DECIDE at close - NEVER ask the caller]"
+                elif validation == "required":
+                    marker = " [REQUIRED]"
+                else:
+                    marker = ""
                 schema_lines.append(f"- `{field_name}`{marker}: {description}".rstrip(": "))
             else:
                 schema_lines.append(f"- `{field_name}`: {spec}")

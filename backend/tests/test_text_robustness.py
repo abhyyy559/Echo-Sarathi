@@ -48,6 +48,69 @@ def test_parse_and_scrub_pseudo_tool_call() -> None:
     assert _scrub_tool_markup(text) == "ok done"
 
 
+def test_xml_record_markup_is_parsed_and_never_spoken() -> None:
+    from app.routers.playground import _parse_pseudo_tool_calls, _scrub_tool_markup
+
+    text = (
+        '<record_extracted_field>{"field_name": "expected_return_date", '
+        '"value": "రేపు", "confidence": "high"}</record_extracted_field> '
+        '<record_extracted_field>{"field_name": "call_outcome", '
+        '"value": "return_date_confirmed", "confidence": "high"}</record_extracted_field'
+    )
+    calls = _parse_pseudo_tool_calls(text)
+    assert [c["name"] for c in calls] == ["record_extracted_field"] * 2
+    assert calls[0]["arguments"] == {
+        "field_name": "expected_return_date",
+        "value": "రేపు",
+        "confidence": "high",
+    }
+    assert calls[1]["arguments"]["field_name"] == "call_outcome"
+    assert _scrub_tool_markup(text) == ""
+
+
+def test_stage_directions_are_never_spoken() -> None:
+    from app.routers.playground import _scrub_tool_markup
+
+    text = "ఎప్పుడు తిరిగి వస్తారు? (Waiting for response)(Waiting for your reply)."
+    assert _scrub_tool_markup(text) == "ఎప్పుడు తిరిగి వస్తారు?"
+
+
+def test_xml_record_call_is_executed_and_never_spoken(groq_client, session_factory):
+    from sqlalchemy import select
+
+    from app.models import Transcript
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    markup = (
+        '<record_extracted_field>{"field_name": "reason_for_absence", '
+        '"value": "fever", "confidence": 0.95}</record_extracted_field>'
+    )
+    script(chat(markup), chat("Sorry to hear that. When will he be back?"))
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "He had a fever."},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reply_text"] == "Sorry to hear that. When will he be back?"
+    assert any(
+        field["field_name"] == "reason_for_absence"
+        for field in body["extracted_fields"]
+    )
+    with session_factory() as db:
+        texts = [
+            row.text
+            for row in db.scalars(
+                select(Transcript).where(Transcript.call_id == call_id)
+            ).all()
+        ]
+    assert texts
+    assert all("<record_extracted_field" not in text for text in texts)
+
+
 def test_pseudo_tool_call_recorded_and_scrubbed(groq_client, session_factory):
     from sqlalchemy import select
 
@@ -61,7 +124,10 @@ def test_pseudo_tool_call_recorded_and_scrubbed(groq_client, session_factory):
         "<parameter=field_name>\nis_sick_leave\n</parameter>\n<parameter=value>\nyes\n</parameter>\n"
         "</function>\n</tool_call>"
     )
-    script(chat(pseudo))
+    script(
+        chat(pseudo),
+        chat("Sorry to hear that. How long has he been unwell?"),
+    )
     resp = client.post(
         f"/api/playground/sessions/{call_id}/turns",
         json={"text": "He is sick."},
@@ -75,7 +141,8 @@ def test_pseudo_tool_call_recorded_and_scrubbed(groq_client, session_factory):
         {"field_name": "is_sick_leave", "field_value": "yes", "confidence": 0.95},
         {"field_name": "reason_for_absence", "field_value": "He is sick", "confidence": 0.7},
     ]
-    assert "<tool_call>" not in body["reply_text"]
+    # Markup-only content is not speech: the turn asks for the real line.
+    assert body["reply_text"] == "Sorry to hear that. How long has he been unwell?"
     with session_factory() as db:
         fields = db.scalars(
             select(ExtractedField).where(ExtractedField.call_id == call_id)
@@ -361,6 +428,60 @@ def test_cap_reply_keeps_short_replies_intact() -> None:
     assert _cap_reply("Hi, happy to help.") == "Hi, happy to help."
     assert _cap_reply("A? B? C? D?") == "A? B?"
     assert _cap_reply("   ") == ""
+
+
+def test_cap_reply_does_not_split_at_titles() -> None:
+    """A "." after "Dr." is not the end of a reply (live truncation)."""
+    from app.routers.playground import _cap_reply
+
+    assert (
+        _cap_reply("Please hold for Dr. Rao. He will confirm the time. Thanks.")
+        == "Please hold for Dr. Rao. He will confirm the time."
+    )
+
+
+def test_cap_reply_drops_the_same_question_asked_twice() -> None:
+    """Live probe: one breath, the same question twice."""
+    from app.routers.playground import _cap_reply
+
+    doubled = (
+        "When do you expect Ananya to return to college? "
+        "When do you think Ananya will be back at college?"
+    )
+    assert _cap_reply(doubled) == "When do you expect Ananya to return to college?"
+
+
+def test_deepseek_dsml_markup_never_reaches_the_caller() -> None:
+    """A live turn was spoken as "less than DSML calls invoke name..."."""
+    from app.routers.playground import _scrub_tool_markup
+
+    live = (
+        "Thanks for letting me know. "
+        '<｜DSML｜function_calls> <｜DSML｜invoke name="record_extracted_field"> '
+        '<｜DSML｜parameter name="field_name" string="true">reason_for_absence'
+        "</｜DSML｜parameter>"
+    )
+    assert _scrub_tool_markup(live) == "Thanks for letting me know."
+    # Truncated mid-attribute still leaves nothing speakable behind.
+    assert _scrub_tool_markup('<｜DSML｜ calls> <｜DSML｜ parameter name="confi') == ""
+    assert _scrub_tool_markup("</｜DSML｜ invoke>") == ""
+
+
+def test_dead_air_completions_are_rejected() -> None:
+    """A whole turn must never be "..." or a cut-off "You're"."""
+    from app.routers.playground import _is_unusable_reply, _trim_partial_tail
+
+    assert _is_unusable_reply("") is True
+    assert _is_unusable_reply("...") is True
+    assert _is_unusable_reply("You're") is True
+    assert _is_unusable_reply("Hi") is False
+    assert _is_unusable_reply("Thanks.") is False
+    assert _is_unusable_reply("I'm sorry to hear that.") is False
+
+    # A cut-off tail is dropped, keeping the complete sentence the caller
+    # already heard in the same reply.
+    assert _trim_partial_tail("Thank you for that. Could you") == "Thank you for that."
+    assert _trim_partial_tail("Sure, I'll note that") == "Sure, I'll note that"
 
 
 def test_tool_choice_conflict_strips_history_instead_of_resending() -> None:
@@ -729,11 +850,34 @@ def test_explicit_date_normalizes_to_iso() -> None:
     assert _normalize_explicit_date("after 2 days", today) == "2026-10-02"
     assert _normalize_explicit_date("in 3 days", today) == "2026-10-03"
     assert _normalize_explicit_date("tomorrow", today) == "2026-10-01"
+    # A negated "tomorrow" is not the requested day; the weekday is.
+    assert (
+        _normalize_explicit_date(
+            "I can't come tomorrow, can we reschedule to Friday?", today
+        )
+        == "2026-10-02"
+    )
+    # Weekdays mean the NEXT one: saying today's weekday cannot resolve into
+    # the past, and "back on Monday" is what parents actually say.
+    assert _normalize_explicit_date("back on monday", today) == "2026-10-05"
+    assert _normalize_explicit_date("wednesday", today) == "2026-10-07"
+    # The Telugu agent's callers state the same answers in Telugu.
+    assert _normalize_explicit_date("వచ్చే సోమవారం", today) == "2026-10-05"
+    assert _normalize_explicit_date("రేపు", today) == "2026-10-01"
     assert _normalize_explicit_date("soon", today) is None
     assert _normalize_explicit_date("next week", today) is None
     assert _normalize_explicit_date("in a few days", today) is None
     assert _normalize_explicit_date("31st of feb", today) is None
     assert _normalize_explicit_date("", today) is None
+
+
+def test_number_values_are_coerced_to_numbers() -> None:
+    """A numeric field must not export "three out of five"."""
+    from app.routers.playground import _coerce_number
+
+    assert _coerce_number("three out of five") == "3"
+    assert _coerce_number("I'd give it 4 stars") == "4"
+    assert _coerce_number("no rating") is None
 
 
 def test_deterministic_close_on_a_farewell_after_all_fields(groq_client, session_factory):
@@ -841,6 +985,69 @@ def test_bare_thanks_does_not_close_before_the_outcome(groq_client, session_fact
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["done"] is False, resp.json()
+
+
+def test_caller_saying_nothing_else_closes_even_if_reply_is_garbage(
+    groq_client, session_factory
+):
+    """The caller ends the call: facts are in, so the agent says goodbye and
+    hangs up even when the model's own line was mangled ("సర", "You're")."""
+    from test_playground_text import chat, script, start_session
+    from app.models import ExtractedField
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    with session_factory() as db:
+        db.add_all(
+            [
+                ExtractedField(call_id=call_id, field_name="reason_for_absence", field_value="fever", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="expected_return_date", field_value="2026-10-02", confidence=1.0, source_turn_index=0),
+            ]
+        )
+        db.commit()
+    script(chat("సర"))
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "No, that's all. Thank you."},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["done"] is True
+    assert body["reply_text"] == "Thank you for your time. Goodbye."
+
+
+def test_caller_question_is_answered_instead_of_hanging_up(groq_client, session_factory):
+    """Live failure: caller asks "can we do a site visit this Saturday?" and
+    the model answers "Thanks, Vikram. Goodbye." - the call must stay open."""
+    from test_playground_text import chat, script, start_session
+    from app.models import ExtractedField
+
+    client = groq_client
+    token, _ = register(client)
+    call_id = start_session(client, token)
+    with session_factory() as db:
+        db.add_all(
+            [
+                ExtractedField(call_id=call_id, field_name="reason_for_absence", field_value="fever", confidence=1.0, source_turn_index=0),
+                ExtractedField(call_id=call_id, field_name="expected_return_date", field_value="2026-10-02", confidence=1.0, source_turn_index=0),
+            ]
+        )
+        db.commit()
+    script(
+        chat("Thanks, Vikram. Goodbye."),
+        chat("Yes, Saturday 11 am is available for the visit."),
+    )
+    resp = client.post(
+        f"/api/playground/sessions/{call_id}/turns",
+        json={"text": "Can we do a site visit this Saturday?"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["done"] is False, body
+    assert body["reply_text"] == "Yes, Saturday 11 am is available for the visit."
 
 
 def test_session_exhausted_set_persists_across_turns() -> None:
@@ -1204,3 +1411,67 @@ def test_groq_rotates_to_second_key_after_first_exhausted(session_factory, monke
     _FlakyAsyncClient.requests = []
 
 
+
+
+def test_think_blocks_never_reach_the_caller() -> None:
+    """A live Telugu turn shipped the model's reasoning as the whole reply."""
+    from app.routers.playground import _scrub_tool_markup
+
+    leaked = (
+        "<think> The caller is saying \"ardham kaledhu andi\" which means "
+        "\"I don't understand\"."
+    )
+    assert _scrub_tool_markup(leaked) == ""
+    assert (
+        _scrub_tool_markup("<think>plan</think>రేపు వస్తాడా?")
+        == "రేపు వస్తాడా?"
+    )
+    assert _scrub_tool_markup("</think>") == ""
+
+
+def test_inline_pseudo_calls_are_scrubbed_from_speech() -> None:
+    """record_extracted_field(...) written as prose was read aloud verbatim."""
+    from app.routers.playground import _scrub_tool_markup
+
+    spoken = (
+        "సరే, మీ పిల్లవాడు రేపు తిరిగి వస్తాడు. "
+        "record_extracted_field(expected_return_date, repu, high); "
+        "end_call(Call completed successfully)."
+    )
+    assert _scrub_tool_markup(spoken) == "సరే, మీ పిల్లవాడు రేపు తిరిగి వస్తాడు."
+
+
+def test_bookish_telugu_is_replaced_with_spoken_words() -> None:
+    """The model rewrites our casual questions into literary Telugu."""
+    from app.routers.playground import _humanize_telugu
+
+    bookish = (
+        "దయచేసి మీ పిల్లవాడు ఈరోజు హాజరుకాని కారణాన్ని చెప్పగలరా? "
+        "వైద్య ధృవపత్రం ఉందా? మీ సమయానికి ధన్యవాదాలు. సెలవు."
+    )
+    spoken = _humanize_telugu(bookish)
+    for word in ("దయచేసి", "హాజరుకాని", "ధృవపత్రం", "ధన్యవాదాలు", "సెలవు"):
+        assert word not in spoken, spoken
+    assert "రాని" in spoken and "సర్టిఫికెట్" in spoken
+    assert spoken.endswith("బై.")
+
+
+def test_telugu_and_hindi_goodbyes_close_the_call() -> None:
+    """English-only farewell detection left Telugu calls open on a goodbye."""
+    from app.routers.playground import _is_closing_line, _is_explicit_farewell
+
+    assert _is_closing_line("థాంక్స్, బై")
+    assert _is_closing_line("సరే, థాంక్స్.")
+    assert _is_closing_line("धन्यवाद, अलविदा।")
+    assert _is_explicit_farewell("సరే, థాంక్స్. బై.")
+    # "బైక్" (bike) starts with the same letters and must not close a call.
+    assert not _is_closing_line("బైక్ తో వచ్చాడు")
+    assert not _is_explicit_farewell("బైక్ తో వచ్చాడు")
+
+
+def test_telugu_compact_prompt_asks_for_spoken_register() -> None:
+    from app.routers.playground import _render_compact_system_prompt
+
+    prompt = _render_compact_system_prompt([], ["reason_for_absence"], "2026-10-28", language="te")
+    assert "bookish Telugu" in prompt
+    assert "గైర్హాజరు" in prompt and "ఆఫీస్" in prompt

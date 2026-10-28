@@ -145,11 +145,13 @@ def _display_card(contact: dict[str, str]) -> dict[str, str]:
     """
     name_keys = {
         "student_name",
+        "patient_name",
         "parent_name",
         "parent",
         "guardian",
         "contact_person",
         "contact_name",
+        "customer_name",
         "full_name",
         "lead_name",
         "candidate_name",
@@ -159,6 +161,53 @@ def _display_card(contact: dict[str, str]) -> dict[str, str]:
         key: (_proper_name(value) if key in name_keys and value else value)
         for key, value in (contact or {}).items()
     }
+
+
+#: Periods that do NOT end a sentence. Without masking, "with Dr. Rao" was
+#: split after "Dr." and the caller heard a reply truncated mid-name.
+_ABBREVIATIONS = (
+    "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "St.", "No.", "Rs.", "Sr.", "Jr.",
+    "vs.", "etc.", "e.g.", "i.e.", "a.m.", "p.m.",
+)
+
+
+def _mask_abbreviations(text: str) -> tuple[str, list[str]]:
+    originals: list[str] = []
+    masked = text
+    for abbr in _ABBREVIATIONS:
+        def _replace(match: re.Match[str]) -> str:
+            originals.append(match.group(0))
+            return f"\x00{len(originals) - 1}\x00"
+
+        masked = re.sub(re.escape(abbr), _replace, masked, flags=re.IGNORECASE)
+    return masked, originals
+
+
+def _sentence_words(sentence: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", sentence.lower()) if len(w) > 2}
+
+
+def _dedupe_sentences(sentences: list[str]) -> list[str]:
+    """Drop a sentence that says the same thing as one already kept.
+
+    Live probe: "When do you expect Ananya to return to college? When do you
+    think Ananya will be back at college?" - the caller hears the same
+    question twice in one breath.
+    """
+    kept: list[str] = []
+    for sentence in sentences:
+        words = _sentence_words(sentence)
+        repeated = any(
+            words
+            and (prev_words := _sentence_words(prev))
+            and len(words & prev_words) / min(len(words), len(prev_words)) >= 0.6
+            for prev in kept
+        )
+        if repeated:
+            logger.info("reply sentence dropped as a repeat: %r", sentence[:60])
+            continue
+        kept.append(sentence)
+    return kept
 
 
 def _cap_reply(text: str, max_sentences: int = 2) -> str:
@@ -177,16 +226,78 @@ def _cap_reply(text: str, max_sentences: int = 2) -> str:
     # Split on sentence punctuation, tolerating the missing space that models
     # emit ("college?Thank you.") - a whitespace-anchored pattern silently
     # drops the run-on clause it was supposed to keep.
+    masked, originals = _mask_abbreviations(cleaned)
     sentences = [
         s.strip()
-        for s in re.findall(r"[^.?!]*[.?!]+|[^.?!]+$", cleaned)
+        for s in re.findall(r"[^.?!]*[.?!]+|[^.?!]+$", masked)
         if s.strip()
     ]
+    sentence_count = len(sentences)
+    sentences = _dedupe_sentences(sentences)
     if len(sentences) <= max_sentences:
-        return cleaned
+        if len(sentences) == sentence_count:
+            return cleaned
+        joined = " ".join(sentences)
+        return re.sub(r"\x00(\d+)\x00", lambda m: originals[int(m.group(1))], joined)
     kept = " ".join(sentences[:max_sentences]).strip()
+    kept = re.sub(r"\x00(\d+)\x00", lambda m: originals[int(m.group(1))], kept)
     logger.warning("reply capped to %d sentences (was %d)", max_sentences, len(sentences))
     return kept
+
+
+#: Words a spoken line cannot END on. A completion that stops right after one
+#: of these was cut off by the provider ("Thank you for that. Could you").
+_PARTIAL_TAIL_WORDS = frozenset(
+    {
+        "and", "but", "or", "so", "because", "the", "a", "an", "to", "for",
+        "of", "with", "that", "this", "these", "those", "your", "my", "our",
+        "their", "his", "her", "its", "i", "we", "you", "they", "he", "she",
+        "it", "is", "are", "was", "were", "will", "would", "can", "could",
+        "should", "may", "might", "must", "please", "if", "when", "while",
+    }
+)
+
+
+def _trim_partial_tail(text: str) -> str:
+    """Drop a cut-off trailing fragment, keeping the complete sentences.
+
+    Providers sometimes stop mid-clause ("Thank you for that. Could you"),
+    and speaking that aloud is worse than saying less.
+    """
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned or cleaned[-1] in ".!?":
+        return cleaned
+    if not re.search(r"[^.?!]+[.?!]", cleaned):
+        return cleaned  # no complete sentence to fall back to
+    tail = re.split(r"[.?!]", cleaned)[-1].strip(" ,;:")
+    if not tail:
+        return cleaned
+    if tail.split()[-1].lower().strip("'\"") not in _PARTIAL_TAIL_WORDS:
+        return cleaned
+    complete = re.findall(r"[^.?!]+[.?!]", cleaned)
+    return " ".join(part.strip() for part in complete).strip()
+
+
+#: A reply that stops on a bare contraction ("You're", "I'll") was cut off by
+#: the provider - no speaker ends a turn on one of these.
+_TRUNCATED_REPLY_RE = re.compile(r"\b\w+'(?:re|s|m|ll|ve|d)$", re.IGNORECASE)
+
+
+def _is_unusable_reply(text: str) -> bool:
+    """True for dead-air completions: punctuation only, or a cut-off stub.
+
+    Live probes produced a literal "..." and a bare "You're" as whole turns.
+    Both would be spoken to the caller as nothing. Terse real replies ("Hi",
+    "Sure") stay usable on purpose - they are the model's choice to make.
+    """
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return True
+    if not re.search(r"[^\W\d_]", cleaned, re.UNICODE):
+        return True
+    if cleaned[-1] in ".!?\"'”’":
+        return False
+    return bool(_TRUNCATED_REPLY_RE.search(cleaned)) and len(cleaned.split()) <= 3
 
 
 def _backfill_grounded_fields(
@@ -229,6 +340,23 @@ def _backfill_grounded_fields(
     schema = getattr(version, "extraction_schema", None)
     if not isinstance(schema, dict) or not schema:
         return 0
+    # The agent's last line is the question the caller is answering. When it
+    # names a field ("what was the reason for that rating?"), the caller's
+    # answer belongs to that field even if it shares none of its words -
+    # "the technician was late" is a reason and was being thrown away.
+    agent_prompt = str(
+        db.scalar(
+            select(Transcript.text)
+            .where(
+                Transcript.call_id == call.id,
+                Transcript.speaker == "agent",
+            )
+            .order_by(Transcript.turn_index.desc())
+            .limit(1)
+        )
+        or ""
+    ).lower()
+    prompt_words = set(re.findall(r"[a-z0-9']+", agent_prompt))
     already = {
         row.field_name
         for row in db.scalars(
@@ -243,18 +371,41 @@ def _backfill_grounded_fields(
     for field_name, spec in schema.items():
         if field_name in already:
             continue
-        # REQUIRED fields only. The net exists so a required answer the caller
-        # plainly gave is never lost; inferring optional/boolean fields from a
-        # sentence match produces low-value data ("He is sick" stored as a
-        # boolean) and is not worth the noise.
-        if not isinstance(spec, dict) or str(spec.get("validation") or "").lower() != "required":
+        # REQUIRED fields, date-typed fields, and optional free text. The net
+        # exists so an answer the caller plainly gave is never lost; inferring
+        # optional boolean/flag fields from a sentence match produces low-value
+        # data ("He is sick" stored as a boolean). Dates are the exception: a
+        # stated site-visit or reschedule date is exactly what the call was for,
+        # and the model routinely spoke it ("Friday would be the 30th") without
+        # recording it.
+        if not isinstance(spec, dict):
+            continue
+        is_required = str(spec.get("validation") or "").lower() == "required"
+        field_type = str(spec.get("type") or "").lower()
+        # Optional FREE-TEXT answers are included too: an optional reason or
+        # comment is still the point of the call, and contextual matching
+        # below decides whether the sentence answers this question.
+        contextual_ok = not is_required and field_type in ("", "string")
+        # A required SCORE is answerable in words ("three out of five") and
+        # the agent's own question names it ("rate the service out of five").
+        number_typed = field_type in ("number", "integer", "float") or any(
+            hint in field_name.lower() for hint in ("rating", "score")
+        )
+        if (
+            not is_required
+            and "date" not in field_type
+            and not contextual_ok
+            and not number_typed
+        ):
             continue
         description = str(spec.get("description") or "")
+        time_typed = "time" in field_name.lower() or (
+            field_type in ("", "string") and "time" in description.lower()
+        )
         # A date-typed field has to be recoverable from short answers like
         # "2 oct" or "on the 5th", which contain none of the field's words -
         # word overlap alone missed exactly these, and the caller was clearly
         # answering the date question.
-        field_type = str(spec.get("type") or "").lower()
         cue_words = {
             w.lower()
             for w in re.split(r"[^a-z0-9]+", f"{field_name} {description}")
@@ -262,17 +413,25 @@ def _backfill_grounded_fields(
         }
         if not cue_words and "date" not in field_type:
             continue
+        asked_about_field = bool(prompt_words & cue_words)
         for sentence in re.split(r"(?<=[.!?])\s+|,\s+", text):
             sentence = sentence.strip(" .")
             if not sentence:
                 continue
+            words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
+            date_shaped = "date" in field_type and bool(_DATE_LIKE_RE.search(sentence))
+            # A TIME field can only be answered with a time. "It's a follow-up
+            # for my BP check" was stored as reschedule_time purely because
+            # the agent's previous line contained "time".
+            if time_typed and not _TIME_LIKE_RE.search(sentence):
+                continue
             # Never record a QUESTION as an answer. "So tell me how can I help
             # you?" overlapped needs_human_help's description and was stored as
             # the value - a question is the opposite of captured information.
-            if sentence.rstrip().endswith("?"):
+            # A date is exempt: "can we reschedule to Friday?" is a request
+            # the caller means, and dropping it lost the reschedule.
+            if sentence.rstrip().endswith("?") and not date_shaped:
                 continue
-            words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
-            date_shaped = "date" in field_type and bool(_DATE_LIKE_RE.search(sentence))
             if date_shaped:
                 pass  # a date-shaped answer to a date field is self-evident
             elif len(words & cue_words) < 2:
@@ -290,14 +449,48 @@ def _backfill_grounded_fields(
                 if not (synonyms and (words & synonyms)):
                     # One generic word ("college", "today") is not evidence. The
                     # single-word rule stored explanations as flag values.
-                    continue
+                    # Contextual escape hatch: when the agent's own last line
+                    # named this field, the caller's sentence IS the answer even
+                    # if it shares none of the field's words ("the technician
+                    # was late" answers "what was the reason for that rating?").
+                    contextual = (
+                        (
+                            contextual_ok
+                            or (number_typed and bool(_coerce_number(sentence)))
+                        )
+                        and asked_about_field
+                        and len(words) >= 3
+                        and not words <= _ACK_ONLY_WORDS
+                    )
+                    if not contextual:
+                        continue
             value = sentence
+            if time_typed:
+                # Store the time itself, not the sentence around it:
+                # "Saturday 11 am works" -> "11 am".
+                clock = _TIME_LIKE_RE.search(sentence)
+                if not clock:
+                    continue
+                value = clock.group(0).strip()
+            if number_typed:
+                coerced = _coerce_number(sentence)
+                if not coerced:
+                    continue
+                value = coerced
             if "date" in field_type:
-                # Store the resolved date when the answer is explicit ("2nd
-                # oct" -> 2026-10-02); anything vague stays raw for the model.
+                # A date-typed field needs an actual date. "so she stayed home
+                # today" is date-shaped but says nothing about when she is
+                # back, and it was recorded as the return date. Unresolvable
+                # sentences are left to the model (which was asked the date
+                # question) instead of being stored as a wrong date.
                 normalized = _normalize_explicit_date(sentence, utcnow().date())
-                if normalized:
-                    value = normalized
+                if not normalized:
+                    continue
+                # An OPTIONAL date needs at least one word tying the sentence
+                # to its field ("this Saturday" alone could be any date).
+                if not is_required and not (words & cue_words):
+                    continue
+                value = normalized
             result_text, field_record, _done = _execute_text_tool(
                 db,
                 call,
@@ -333,9 +526,50 @@ def _backfill_grounded_fields(
 #: matter most, so they are spent on in full.
 _FULL_PROMPT_ROWS = 3
 
+#: Telugu models default to the literary (granthik) register they were trained
+#: on: a live call said "గైర్హాజరు", "వైద్య ధృవపత్రం", "విచారిస్తున్నాను" and even
+#: "ఆఫీస్" for a college - the caller answered "ardham kaledhu andi" and heard the
+#: same textbook sentence again. One GOOD/BAD pair plus a word-for-word swap
+#: list is what moves the output; "speak casually" alone does nothing.
+_SPOKEN_TELUGU_FULL = (
+    "SPOKEN TELUGU (hard rule): speak the everyday Telugu people use on the "
+    "phone in Hyderabad/Andhra - never bookish or newsreader Telugu.\n"
+    "GOOD: \"అర్థమైంది — fever వల్ల కాలేజీకి రాలేదు కదా. రేపు వస్తాడా?\"\n"
+    "BAD (never say): \"జ్వరము నిమిత్తము విద్యాలయమునకు విరామము కలదని "
+    "వివరము నమోదు చేయుచున్నాను.\"\n"
+    "Say: \"కాలేజీకి రాలేదు / leave\" not \"గైర్హాజరు\"; \"డాక్టర్ సర్టిఫికెట్\" not "
+    "\"వైద్య ధృవపత్రం\"; \"అడగడానికి కాల్ చేశా\" not \"విచారిస్తున్నాను\"; "
+    "\"థాంక్స్\" not \"ధన్యవాదాలు\"; \"హాయ్\" not \"నమస్కారం\" (unless the caller says "
+    "it first); \"బై\" not \"సెలవు\". Never call a college \"ఆఫీస్\" - it is "
+    "\"కాలేజీ\". Keep the caller's English words in English (college, fever, "
+    "doctor, certificate, leave, exam, bus). If they say \"అర్థం కాలేదు\", do not "
+    "repeat the same sentence: say it again shorter and simpler.\n"
+    "Ask: \"ఈరోజు ఎందుకు రాలేదు?\" not \"గైర్హాజరుకు కారణం తెలియజేయండి\"; "
+    "\"ఎప్పుడు తిరిగి వస్తారు?\" not \"ఎప్పుడు హాజరుకావాలని భావిస్తున్నారు?\". "
+    "Never start a sentence with \"దయచేసి\".\n"
+    "EMPATHY: if the student is sick, sound concerned (\"అయ్యో, ఏమైంది? ఇప్పుడు "
+    "ఎలా ఉన్నాడు?\") - never say \"అది బాగుంది\" / \"good\" about an illness."
+)
+
+_SPOKEN_TELUGU_COMPACT = (
+    "Speak everyday phone Telugu, never bookish Telugu: \"అర్థమైంది — fever వల్ల "
+    "కాలేజీకి రాలేదు కదా. రేపు వస్తాడా?\" Say కాలేజీకి రాలేదు (not గైర్హాజరు), "
+    "డాక్టర్ సర్టిఫికెట్ (not వైద్య ధృవపత్రం), కాల్ చేశా (not విచారిస్తున్నాను), "
+    "ఎప్పుడు తిరిగి వస్తారు (not హాజరుకావాలని), థాంక్స్, బై; never \"ఆఫీస్\" for "
+    "college and no \"దయచేసి\"; keep English words in English. If they say "
+    "\"అర్థం కాలేదు\", rephrase shorter - do not repeat the same sentence. If the "
+    "student is sick, sound concerned (\"అయ్యో, ఏమైంది?\"), never \"అది బాగుంది\".\n"
+)
+
+
 
 def _render_compact_system_prompt(
-    captured: list[str], remaining: list[str], today: str
+    captured: list[str],
+    remaining: list[str],
+    today: str,
+    agent_name: str = "",
+    language: str = "en",
+    derived: list[str] | None = None,
 ) -> str:
     """Short continuation prompt for mid/late turns.
 
@@ -355,29 +589,124 @@ def _render_compact_system_prompt(
         f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
     )
     todo = f"Still needed: {', '.join(remaining)}." if remaining else ""
+    goodbye_example = (
+        "'సరే, థాంక్స్. బై.'" if language == "te" else "'Thanks, Ram. Goodbye.'"
+    )
     close_rule = (
-        " Everything is recorded: say ONE short goodbye (e.g. 'Thanks, Ram. "
-        "Goodbye.'), call end_call(summary) in the SAME reply, and say nothing "
+        f" Everything is recorded: say ONE short goodbye (e.g. {goodbye_example}), "
+        "call end_call(summary) in the SAME reply, and say nothing "
         "else - no questions, no acknowledgments, no further turns."
         if not remaining
         else ""
     )
+    language_rule = {
+        "te": _SPOKEN_TELUGU_COMPACT,
+        "hi": "Speak Hindi, using the caller's own English words as they do.\n",
+    }.get(language, "")
+    # A disposition the AGENT decides is never a question for the caller.
+    # Listing it under "still needed" made a live Telugu agent ask the mother
+    # "what is the outcome of the call?".
+    derived = derived or []
+    derived_rule = (
+        f" You decide {', '.join(derived)} yourself when you close - record a "
+        "short label with record_extracted_field; never ask the caller for it."
+        if derived
+        else ""
+    )
     return (
         f"TODAY: {today}.\n"
-        "You are the same outbound phone agent from earlier in this call; the "
-        "person is already verified. Reply in 1-2 short spoken sentences, one "
-        "thing per reply: if you still need an answer, ask it and STOP - never "
-        "ask and thank/close in the same reply. Acknowledge what they said, then "
+        f"You are {agent_name or 'the outbound phone agent'}, the same agent from "
+        "earlier in this call; the person is already verified.\n"
+        f"{language_rule}"
+        "Reply in 1-2 short spoken sentences, one thing per reply: if you still "
+        "need an answer, ask it and STOP - never ask and thank/close in the same "
+        "reply. Always speak a complete sentence - never answer with a single "
+        "word, a fragment, or punctuation only. Acknowledge what they said, then "
         "move on. Never invent a value: only record what the caller actually "
-        "said, and never ask them to repeat an answer they already gave.\n"
+        "said, and never ask for something they already answered.\n"
         "Do NOT repeat yourself: no restating a value or confirmation you have "
         "already given, no re-confirming a date, no 'anything else?'. If they "
         "confirmed, ask the next missing thing or close politely.\n"
-        f"{state} {todo}{close_rule}\n"
+        f"{state} {todo}{close_rule}{derived_rule}\n"
         f"Record with record_extracted_field(field_name, value, confidence); "
-        f"finish with end_call(summary). Valid field names: "
-        f"{', '.join(captured + remaining) or 'none'}."
+        f"finish with end_call(summary). Fields you may ask about: "
+        f"{', '.join(remaining) or 'none'}."
+        + (
+            f" Fields you decide yourself, never ask about: {', '.join(derived)}."
+            if derived
+            else ""
+        )
     )
+
+
+_OPENING_PHRASES: dict[str, dict[str, str]] = {
+    "en": {
+        "greet": "Hi {name}.",
+        "intro_with_name": "Hi {name}, {who} here.",
+        "intro": "{who} here.",
+        "verify": "Am I speaking with {name}?",
+        "unknown": "May I know who I'm speaking with?",
+    },
+    "te": {
+        "greet": "హాయ్ {name} గారు.",
+        "intro_with_name": "హాయ్ {name} గారు, నేను {who}.",
+        "intro": "నేను {who} మాట్లాడుతున్నా.",
+        "verify": "{name} గారు మాట్లాడుతున్నారా?",
+        "unknown": "హలో, మీరు ఎవరు మాట్లాడుతున్నారు?",
+    },
+    "hi": {
+        "greet": "नमस्ते {name} जी।",
+        "intro_with_name": "नमस्ते {name} जी, मैं {who} बोल रही हूँ।",
+        "intro": "मैं {who} बोल रही हूँ।",
+        "verify": "क्या मैं {name} जी से बात कर रही हूँ?",
+        "unknown": "क्या आप बता सकते हैं कि मैं किससे बात कर रही हूँ?",
+    },
+}
+
+
+#: Providers occasionally return an empty completion (content stripped by a
+#: safety filter, or a tool-only round). An empty reply is the caller hearing
+#: dead air, so every empty turn is replaced with a short line in the agent's
+#: own language; a closed call gets a goodbye instead of a question it will
+#: never hear answered.
+_EMPTY_REPLY_LINES: dict[str, tuple[str, str]] = {
+    "en": (
+        "Sorry, I didn't catch that - could you say that again?",
+        "Thank you for your time. Goodbye.",
+    ),
+    "te": (
+        "సారీ, అర్థం కాలేదు - మళ్లీ చెప్పండి?",
+        "సరే, థాంక్స్ అండి. బై.",
+    ),
+    "hi": (
+        "क्षमा कीजिए, समझ नहीं आया - फिर से बता सकते हैं?",
+        "आपके समय के लिए धन्यवाद। नमस्ते।",
+    ),
+}
+
+#: Used instead of the retry line when the caller's answer WAS recorded but
+#: the model produced no speech. Asking them to repeat an answer we already
+#: have is the worst of both worlds.
+_ACK_LINES = {
+    "en": "Got it, thank you.",
+    "te": "సరే, థాంక్స్.",
+    "hi": "ठीक है, धन्यवाद।",
+}
+
+
+def _empty_reply_line(version: AgentVersion, done: bool) -> str:
+    retry, goodbye = _EMPTY_REPLY_LINES[_agent_language(version)]
+    return goodbye if done else retry
+
+
+def _agent_language(version: AgentVersion) -> str:
+    """Language of the voice this version ships with (drives opener phrasing)."""
+    settings = getattr(version, "voice_settings", None) or {}
+    if isinstance(settings, dict):
+        lang = str(settings.get("language") or "en").lower()
+        if lang in _OPENING_PHRASES:
+            return lang
+    return "en"
 
 
 def _build_short_opening(
@@ -413,23 +742,45 @@ def _build_short_opening(
     ).strip()
     if not disclosure:
         return ""
-    student = _proper_name(tokens.get("[Student Name]", ""))
+    card = contact or {}
+    # [Student Name] aliases any known name, so it is only a student-flow
+    # signal when the card actually carries student_name.
+    student = (
+        _proper_name(tokens.get("[Student Name]", ""))
+        if str(card.get("student_name") or "").strip()
+        else ""
+    )
     parent = _proper_name(tokens.get("[Parent/Guardian Name]", ""))
+    # Clinic, real-estate and service agents have no parent/student card:
+    # their lead field is the person answering, so use it instead of
+    # falling through to "May I know who I'm speaking with?".
+    subject = parent or student or _proper_name(
+        tokens.get("[Patient Name]", "")
+        or tokens.get("[Contact Name]", "")
+        or tokens.get("[Customer Name]", "")
+    )
     who = _proper_name(tokens.get("[Agent Name]", "")) or "an AI assistant"
+    phrases = _OPENING_PHRASES[_agent_language(version)]
+    # The same name for greeting and verification: the caller hears it once
+    # when greeted and once when asked to confirm it. No pronoun/relationship
+    # guess ("Are you Abhi's parent?") - that was wrong for every vertical
+    # where the lead is the person answering, not a guardian.
+    address = subject
     parts = [disclosure]
     # Identity is only re-introduced when it is genuinely new information;
     # the disclosure usually already named the caller and the college.
     if who.lower() not in disclosure.lower():
-        parts.append(f"Hi {parent}, {who} here." if parent else f"{who} here.")
-    elif parent:
-        parts.append(f"Hi {parent}.")
-    # Verification only, one short question.
-    if parent:
-        parts.append(f"Am I speaking with {parent}?")
-    elif student:
-        parts.append(f"Are you {student}'s parent?")
-    else:
-        parts.append("May I know who I'm speaking with?")
+        parts.append(
+            phrases["intro_with_name"].format(name=address, who=who)
+            if address
+            else phrases["intro"].format(who=who)
+        )
+    elif address:
+        parts.append(phrases["greet"].format(name=address))
+    # Verification only, one short question, in the agent's own language.
+    parts.append(
+        phrases["verify"].format(name=address) if address else phrases["unknown"]
+    )
     opening = " ".join(p for p in parts if p)
     # No unsubstituted [...] may ever be spoken; apply_token_substitution
     # already stripped them, this is belt-and-braces for merged text.
@@ -765,7 +1116,15 @@ def _question_text(item: Any) -> str:
     return str(item or "").strip()
 
 
-_GENERIC_SUBJECT_KEYS = ("full_name", "contact_name", "lead_name", "candidate_name", "name")
+_GENERIC_SUBJECT_KEYS = (
+    "patient_name",
+    "customer_name",
+    "full_name",
+    "contact_name",
+    "lead_name",
+    "candidate_name",
+    "name",
+)
 _GENERIC_PARENT_KEYS = ("parent_name", "parent", "guardian", "contact_person")
 
 
@@ -903,8 +1262,9 @@ def _render_text_system_prompt(
     # 2b. Creator's role definition - authoritative, verbatim (not a bullet).
     if persona:
         sections.append(
-            "ROLE & MISSION - defined by the agent creator (AUTHORITATIVE, and it "
-            "wins any conflict with the rules below):\n" + persona
+            "ROLE & MISSION - defined by the agent creator (AUTHORITATIVE for "
+            "who you are and what this call is about; the speaking and "
+            "recording rules below still apply):\n" + persona
         )
 
     # 3. Company context.
@@ -930,6 +1290,9 @@ def _render_text_system_prompt(
         "- ONE thing per reply: if you still need an answer, ask it and STOP. "
         "Never ask a question and also thank, offer a callback, or say goodbye "
         "in the same reply - the person has not answered yet.\n"
+        "- NEVER ask for something the caller just told you, even if you have "
+        "not recorded it yet: confirm it briefly and move to the next thing "
+        "still missing.\n"
         "- Be a person, not a form: acknowledge what they just said in a few "
         "words, then ask the next thing. Vary your wording; never read the "
         "goals out in order like a questionnaire; never stack two questions.\n"
@@ -941,8 +1304,21 @@ def _render_text_system_prompt(
         "updated...'), and do not ask 'anything else?' or re-confirm a date. If "
         "they confirmed, move on to what is still missing, or close the call.\n"
         "- Answer what they ACTUALLY said first. If you did not catch it, say "
-        "so plainly and move on after one retry. Stay polite even if upset."
+        "so plainly and move on after one retry. Stay polite even if upset.\n"
+        "- Once they confirm who they are, say in one short line who you are "
+        "calling about, then ask the first thing you still need.\n"
+        "- Write only words a person says aloud. NEVER include stage "
+        "directions, notes, or cues in brackets or parentheses such as "
+        "'(Waiting for response)' or '*laughs*'.\n"
+        "- Match the caller's language: start in the disclosure's language, "
+        "and if they speak another one or mix languages, follow them rather "
+        "than insisting on yours.\n"
+        "- You can only talk and record answers. You cannot send messages, "
+        "email anyone, book with a colleague, or transfer the call. Never say "
+        "you did any of those; say what will happen next instead."
     )
+    if _agent_language(config) == "te":
+        sections.append(_SPOKEN_TELUGU_FULL)
 
     # 5. Question flow as goals to weave in naturally.
     goals: list[str] = []
@@ -962,14 +1338,30 @@ def _render_text_system_prompt(
         "- The moment the caller states something that answers a goal, call "
         "`record_extracted_field(field_name, value, confidence)` in that same turn.",
         "- Use the EXACT field names below; quote values as the caller said them.",
+        "- Record silently: never tell the caller you are recording a field, "
+        "that something still needs to be recorded, or which field is next.",
+        "- One answer can fill several fields (a reason and a date): record "
+        "everything that answer covers before asking anything new.\n"
+        "- A yes/no field is what they said: 'yes, I'll be there' is true, "
+        "'I can't come' is false. Record it in the same turn.\n"
+        "- For a NUMBER field record only the number (3, not 'three out of "
+        "five'). For call_outcome use a short label such as visit_booked, "
+        "not_interested, callback_requested, confirmed, rescheduled, "
+        "feedback_captured or resolved - never a sentence.\n"
+        "- Fields marked YOU DECIDE are your own conclusion: fill them "
+        "yourself from what the caller said. NEVER ask the caller about them.",
         "- NEVER invent a value. A value the caller never said does not exist - "
         "no guessed date, not even a likely one. Silences, greetings and "
         "off-topic answers contain no answers. If unsure, ask instead.",
         "- If a tool reply says NOT RECORDED but the caller DID just tell you "
         "the value, call the tool AGAIN with what they said - do not ask them "
         "to repeat themselves. Never re-ask a question they already answered.",
-        "- When everything is captured (or they want to stop), call "
-        "`end_call(summary)` including any unfilled required fields.",
+        "- Say goodbye ONCE, only when nothing is left to ask. NEVER call "
+        "`end_call` while a REQUIRED field is still unanswered unless the "
+        "caller says they cannot or will not answer it, and never put a "
+        "goodbye in the same reply as a question.\n"
+        "- FINISH with `end_call(summary)` once everything is captured (or "
+        "they want to stop), including any unfilled required fields.",
         "- needs_human_help means ONLY an explicit request: the caller asks for "
         "a callback, asks to speak to a human/teacher/principal, or raises a "
         "complaint. An explanation, a confirmation, or any other sentence is "
@@ -991,9 +1383,12 @@ def _render_text_system_prompt(
                 # field; the type and validation words are recoverable from the
                 # name and the [REQUIRED] tag.
                 description = str(spec.get("description") or spec.get("type") or "").strip()
-                required_marker = (
-                    " [REQUIRED]" if str(spec.get("validation") or "").lower() == "required" else ""
-                )
+                if field_name in _AGENT_DERIVED_FIELDS:
+                    required_marker = " [YOU DECIDE - never ask the caller]"
+                elif str(spec.get("validation") or "").lower() == "required":
+                    required_marker = " [REQUIRED]"
+                else:
+                    required_marker = ""
                 extraction_lines.append(f"- `{field_name}`{required_marker}: {description}".rstrip(": "))
             else:
                 extraction_lines.append(f"- `{field_name}`: {spec}")
@@ -1268,6 +1663,14 @@ _CLOSING_PHRASES = (
     "talk to you later",
 )
 
+#: Farewells in the other agent languages. Without these a Telugu goodbye
+#: ("థాంక్స్, బై") never counted as one, so the call stayed open and the next
+#: caller turn produced yet another goodbye - the mirror of the English bug
+#: this list originally fixed. Word-bounded so "బైక్" (bike) never matches.
+_TE_FAREWELL_RE = re.compile(r"(?<![\w])బై(?![\w])|సెలవు")
+_HI_FAREWELL_RE = re.compile(r"अलविदा|फिर मिलेंगे")
+_THANKS_WORDS = ("thank", "thanks", "థాంక్స్", "ధన్యవాదాలు", "धन्यवाद")
+
 
 #: Dispositions the agent concludes from the conversation - never a question
 #: it can ask the caller. Waiting for one to be "recorded" before a goodbye
@@ -1286,12 +1689,15 @@ def _is_closing_line(text: str) -> bool:
         return False
     if any(phrase in lowered for phrase in _CLOSING_PHRASES):
         return True
-    # A bare short thanks ("Thanks", "Thank you, Ram.") is also a farewell -
-    # the live transcript showed the call drifting through four goodbye turns
-    # because "Thanks" alone was never recognized as the close. Length-gated
-    # so a mid-call "Thanks, Ram. Abhi was absent..." can never match.
+    if _TE_FAREWELL_RE.search(lowered) or _HI_FAREWELL_RE.search(lowered):
+        return True
+    # A bare short thanks ("Thanks", "Thank you, Ram.", "థాంక్స్") is also a
+    # farewell - the live transcript showed the call drifting through four
+    # goodbye turns because "Thanks" alone was never recognized as the close.
+    # Length-gated so a mid-call "Thanks, Ram. Abhi was absent..." can never
+    # match.
     words = lowered.split()
-    if len(words) <= 4 and ("thank" in lowered or "thanks" in lowered):
+    if len(words) <= 4 and any(w in lowered for w in _THANKS_WORDS):
         return True
     return False
 
@@ -1308,7 +1714,80 @@ def _is_explicit_farewell(text: str) -> bool:
         return False
     if any(phrase in lowered for phrase in _CLOSING_PHRASES):
         return True
-    return re.search(r"\bbye\b", lowered) is not None
+    if re.search(r"\bbye\b", lowered):
+        return True
+    return bool(_TE_FAREWELL_RE.search(lowered) or _HI_FAREWELL_RE.search(lowered))
+
+
+#: The caller saying "nothing more" ends the call. Waiting for the model to
+#: agree cost real turns: a mangled reply ("You're", "సర") never matched a
+#: farewell, so the facts were collected and the session still hung open.
+_CALLER_DONE_PHRASES = (
+    "that's all",
+    "thats all",
+    "that is all",
+    "that's it",
+    "thats it",
+    "nothing else",
+    "no that's it",
+    "no thanks",
+    "no thank you",
+    "we're good",
+    "we are good",
+    "don't need anything",
+    "do not need anything",
+    "not needed",
+    "అంతే",
+    "ఏమీ లేదు",
+    "వేరే ఏమీ",
+    "సరిపోతుంది",
+    "कुछ नहीं",
+    "बस इतना",
+)
+
+
+def _caller_is_finished(text: str) -> bool:
+    """True when the caller has said there is nothing more to discuss."""
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    return any(phrase in lowered for phrase in _CALLER_DONE_PHRASES)
+
+
+def _caller_asked_question(text: str) -> bool:
+    """The caller is waiting for an answer, so the call cannot close."""
+    return "?" in str(text or "")
+
+
+def _caller_is_acknowledging(text: str) -> bool:
+    """A short yes/no/thanks - nothing left to "repeat back"."""
+    lowered = str(text or "").strip().lower()
+    words = re.findall(r"[a-z']+", lowered)
+    if not words or len(words) > 10:
+        return False
+    if "thank" in lowered:
+        return True
+    return any(w in {"yes", "yeah", "yep", "no", "nope", "okay", "ok", "sure"} for w in words)
+
+
+def _question_targets(
+    text: str, schema: Mapping[str, Any], names: list[str]
+) -> set[str]:
+    """Which of ``names`` the question is about (one shared content word)."""
+    words = set(re.findall(r"[a-z0-9']+", str(text or "").lower()))
+    hits: set[str] = set()
+    for name in names:
+        spec = schema.get(name) if isinstance(schema.get(name), dict) else {}
+        cues = {
+            w
+            for w in re.split(
+                r"[^a-z0-9]+", f"{name} {spec.get('description') or ''}"
+            )
+            if len(w) > 3
+        }
+        if words & cues:
+            hits.add(name)
+    return hits
 
 
 def _fields_known(
@@ -1402,9 +1881,7 @@ _EXHAUSTED_PROVIDERS: dict[int, tuple[float, set[str]]] = {}
 _EXHAUSTED_TTL_S = 2 * 3600
 
 
-def _record_llm_response(
-    settings: Settings, name: str, api_key: str, model: str, response: Any
-) -> None:
+def _record_llm_response(name: str, api_key: str, model: str, response: Any) -> None:
     """Persist rate-limit headers from one LLM attempt (never raises)."""
     provider = "groq" if str(name).startswith("groq") else str(name)
     try:
@@ -1413,7 +1890,6 @@ def _record_llm_response(
             provider=provider,
             api_key=api_key,
             model=model,
-            settings=settings,
         )
     except Exception:  # noqa: BLE001 - usage must never break a chat turn
         logger.debug("provider usage capture failed", exc_info=True)
@@ -1526,7 +2002,7 @@ async def _groq_chat(
                     # Groq reports quota only in response headers; persist them
                     # so the dashboard can show which key dies first. Never
                     # raises, never blocks the turn.
-                    _record_llm_response(settings, name, api_key, model, response)
+                    _record_llm_response(name, api_key, model, response)
                     telemetry.record(
                         "llm_attempt",
                         level="info" if response.status_code == 200 else "warn",
@@ -1594,7 +2070,7 @@ async def _groq_chat(
                         json=member_body,
                         headers=headers,
                     )
-                    _record_llm_response(settings, name, api_key, model, response)
+                    _record_llm_response(name, api_key, model, response)
                     if response.status_code == 200:
                         return _message_or_raise(response, served_by=(name, model))
                 # Hard-quota FIRST, on ANY status: a DeepSeek 402 ("Insufficient
@@ -1651,7 +2127,35 @@ async def _groq_chat(
             if response is None:
                 continue
             if response.status_code == 200:
-                return _message_or_raise(response, served_by=(name, model))
+                message = _message_or_raise(response, served_by=(name, model))
+                content = str(message.get("content") or "")
+                if message.get("tool_calls") or not _is_unusable_reply(content):
+                    return message
+                # A 200 carrying no usable words and no tool call is not a
+                # reply: the caller would hear dead air. That covers an empty
+                # body, a punctuation-only "..." and a one-word stub ("You're")
+                # cut off by the provider, so the request moves to the next
+                # member instead of being spoken.
+                last_error_text = (
+                    "empty completion (no content, no tool calls)"
+                    if not content.strip()
+                    else f"unusable completion: {content.strip()[:40]!r}"
+                )
+                logger.warning(
+                    "LLM %s returned %s; trying the next member",
+                    name,
+                    last_error_text,
+                )
+                telemetry.record(
+                    "llm_empty_completion",
+                    level="warn",
+                    provider=name,
+                    model=model,
+                    status=200,
+                    message=f"{last_error_text}; moving to the next provider",
+                    call_id=call_id,
+                )
+                continue
             last_error_text = response.text[:300]
             rate_limited = rate_limited or response.status_code == 429
             logger.warning(
@@ -1752,13 +2256,30 @@ _FIELD_SYNONYMS: dict[str, frozenset[str]] = {
     "sick": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
     "leave": frozenset({"sick", "ill", "illness", "fever", "feverish", "unwell", "leave", "absent", "absence"}),
 }
+# "Yes please" after "what was the reason?" answers the question but carries
+# no reason; only acknowledgements are refused as a contextual answer.
+_ACK_ONLY_WORDS = frozenset(
+    {
+        "yes", "yeah", "yep", "no", "nope", "okay", "ok", "sure", "thanks",
+        "thank", "you", "please", "fine", "good", "right", "correct", "alright",
+    }
+)
 # A value counts as a resolved date (exempt from word-overlap grounding)
 # when it names an actual day: digits ("30", "2026-09-30"), month names, or
 # weekday/today/tomorrow tokens. Bare spans like "next week" or "one month"
 # are NOT dates — that vagueness is exactly the fabrication shape.
 _DATE_LIKE_RE = re.compile(
     r"\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|today|tomorrow|"
-    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday",
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"ఇవాళ|ఈరోజు|రేపు|సోమవారం|మంగళవారం|బుధవారం|గురువారం|శుక్రవారం|శనివారం|ఆదివారం",
+    re.IGNORECASE,
+)
+
+#: A value that names a time of day, for time-typed fields.
+_TIME_LIKE_RE = re.compile(
+    r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)\b|\b\d{1,2}\s*o'?clock\b|"
+    r"morning|afternoon|evening|noon|midday|half past|quarter past|"
+    r"ఉదయం|మధ్యాహ్నం|సాయంత్రం|రాత్రి",
     re.IGNORECASE,
 )
 
@@ -1789,7 +2310,28 @@ _RELATIVE_DAYS_RE = re.compile(
     r"\b(?:after|in|within|next)\s+(\d{1,3})\s+days?\b|\b(\d{1,3})\s+days?\s+(?:later|from\s+now|hence)\b",
     re.IGNORECASE,
 )
-_TOMORROW_RE = re.compile(r"\btomorrow\b|\btmrw\b", re.IGNORECASE)
+_TOMORROW_RE = re.compile(r"\btomorrow\b|\btmrw\b|రేపు", re.IGNORECASE)
+_WEEKDAY_RE = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|(సోమవారం|మంగళవారం|బుధవారం|గురువారం|శుక్రవారం|శనివారం|ఆదివారం)",
+    re.IGNORECASE,
+)
+_WEEKDAY_NUMBERS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+    "సోమవారం": 0,
+    "మంగళవారం": 1,
+    "బుధవారం": 2,
+    "గురువారం": 3,
+    "శుక్రవారం": 4,
+    "శనివారం": 5,
+    "ఆదివారం": 6,
+}
 #: Date-shaped cue on the CALLER's side. Deliberately stricter than
 #: _DATE_LIKE_RE (which matches any digit): caller_text spans the WHOLE call,
 #: so a bare digit anywhere ("10-B", "class 5", a phone fragment) used to
@@ -1801,11 +2343,27 @@ _CALLER_DATE_CUE_RE = re.compile(
     r"jul|aug|sep|sept|oct|nov|dec)\b"
     r"|\b(?:after|in|within|next)\s+\d{1,3}\s+days?\b"
     r"|\b\d{1,3}\s+days?\s+(?:later|from\s+now|hence)\b"
-    r"|\btomorrow\b|\btmrw\b|\btoday\b"
+    r"|\btomorrow\b|\btmrw\b|\btoday\b|రేపు|ఇవాళ|ఈరోజు"
     r"|\bmonday\b|\btuesday\b|\bwednesday\b|\bthursday\b|\bfriday\b|\bsaturday\b|\bsunday\b"
+    r"|సోమవారం|మంగళవారం|బుధవారం|గురువారం|శుక్రవారం|శనివారం|ఆదివారం"
     r"|\b\d{4}-\d{2}-\d{2}\b",
     re.IGNORECASE,
 )
+
+
+def _field_schema_type(db: Session, call: Call, field_name: str) -> str:
+    try:
+        version = (
+            db.get(AgentVersion, call.agent_version_id)
+            if call.agent_version_id
+            else None
+        )
+        spec = (getattr(version, "extraction_schema", None) or {}).get(str(field_name))
+        if isinstance(spec, dict):
+            return str(spec.get("type") or "").lower()
+    except Exception:  # noqa: BLE001 — normalization is best-effort
+        pass
+    return ""
 
 
 def _field_is_date_typed(db: Session, call: Call, field_name: str) -> bool:
@@ -1816,18 +2374,53 @@ def _field_is_date_typed(db: Session, call: Call, field_name: str) -> bool:
     path and ISO dates from the other. Schema type wins; the name fallback
     covers configs whose schema omits explicit types.
     """
-    try:
-        version = (
-            db.get(AgentVersion, call.agent_version_id)
-            if call.agent_version_id
-            else None
-        )
-        spec = (getattr(version, "extraction_schema", None) or {}).get(str(field_name))
-        if isinstance(spec, dict) and str(spec.get("type") or "").lower() == "date":
-            return True
-    except Exception:  # noqa: BLE001 — normalization is best-effort
-        pass
-    return "date" in str(field_name).lower()
+    return _field_schema_type(db, call, field_name) == "date" or "date" in str(
+        field_name
+    ).lower()
+
+
+def _field_is_number_typed(db: Session, call: Call, field_name: str) -> bool:
+    return _field_schema_type(db, call, field_name) in ("number", "integer", "float")
+
+
+_WORD_NUMBERS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "half": 0.5,
+}
+
+
+def _coerce_number(value: str) -> Optional[str]:
+    """Store a number as a number: "three out of five" -> "3".
+
+    The model was told to quote the caller's words, so a numeric field held
+    "three out of five" and every export showed a sentence where a score was
+    expected. The first number mentioned (digit or word) is the value.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    digit = re.search(r"\d+(?:\.\d+)?", text)
+    word_match: Optional[tuple[int, str]] = None
+    for word in _WORD_NUMBERS:
+        found = re.search(rf"\b{word}\b", text)
+        if found and (word_match is None or found.start() < word_match[0]):
+            word_match = (found.start(), word)
+    if digit and (word_match is None or digit.start() < word_match[0]):
+        return digit.group(0)
+    if word_match is not None:
+        number = _WORD_NUMBERS[word_match[1]]
+        return str(int(number)) if float(number).is_integer() else str(number)
+    return None
 
 
 def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[str]:
@@ -1836,10 +2429,11 @@ def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[st
     The agent was storing the raw phrase ("2nd oct", "after 2 days") while
     speaking a resolved date - the export and the speech disagreed. Two shapes
     are resolved deterministically against TODAY (which is known, not guessed):
-    an explicit day+month (year = this year, or next year when passed), and an
-    explicit day count ("after/in N days", "tomorrow"). Anything vaguer
-    ("soon", "next week", "in a few days") is returned unchanged for the model,
-    because picking a day from those IS guessing.
+    an explicit day+month (year = this year, or next year when passed), an
+    explicit day count ("after/in N days", "tomorrow"), and a weekday name
+    ("back on Monday" -> next Monday). Anything vaguer ("soon", "next week",
+    "in a few days") is returned unchanged for the model, because picking a
+    day from those IS guessing.
     """
     text = str(answer or "")
     match = _EXPLICIT_DAY_MONTH_RE.search(text)
@@ -1862,8 +2456,24 @@ def _normalize_explicit_date(answer: str, today: "datetime.date") -> Optional[st
         if 1 <= days <= 60:
             return (today + datetime.timedelta(days=days)).isoformat()
         return None
-    if _TOMORROW_RE.search(text):
+    # "I can't come tomorrow, can we reschedule to Friday?" is a request for
+    # FRIDAY; reading the negated "tomorrow" as the answer booked the wrong
+    # day. A negated tomorrow is not a date the caller wants.
+    negated_tomorrow = re.search(
+        r"\b(?:can'?t|cannot|can not|won'?t|not)\b[^.]{0,25}\btomorrow\b",
+        text,
+        re.IGNORECASE,
+    )
+    if _TOMORROW_RE.search(text) and not negated_tomorrow:
         return (today + datetime.timedelta(days=1)).isoformat()
+    weekday = _WEEKDAY_RE.search(text)
+    if weekday:
+        # "back on Monday" means the NEXT Monday; today's weekday maps to +7
+        # so a bare weekday never resolves to the past.
+        name = (weekday.group(1) or weekday.group(2) or "").lower()
+        target = _WEEKDAY_NUMBERS[name]
+        days_ahead = (target - today.weekday()) % 7 or 7
+        return (today + datetime.timedelta(days=days_ahead)).isoformat()
     return None
 
 
@@ -2005,6 +2615,10 @@ def _execute_text_tool(
             normalized = _normalize_explicit_date(stored_value, utcnow().date())
             if normalized:
                 stored_value = normalized
+        elif stored_value and _field_is_number_typed(db, call, field_name):
+            coerced = _coerce_number(stored_value)
+            if coerced is not None:
+                stored_value = coerced
         db.add(
             ExtractedField(
                 call_id=call.id,
@@ -2022,6 +2636,10 @@ def _execute_text_tool(
             normalized = _normalize_explicit_date(reported, utcnow().date())
             if normalized:
                 reported = normalized
+        elif reported and _field_is_number_typed(db, call, field_name):
+            coerced = _coerce_number(reported)
+            if coerced is not None:
+                reported = coerced
         recorded = {
             "field_name": field_name,
             "field_value": reported,
@@ -2031,6 +2649,17 @@ def _execute_text_tool(
 
     if name == "end_call":
         summary = str(arguments.get("summary") or "").strip() or None
+        if not summary:
+            # A call whose answers were all recorded still exported a blank
+            # outcome because the model's end_call carried no summary. Build
+            # one from what is actually stored.
+            rows = db.scalars(
+                select(ExtractedField).where(ExtractedField.call_id == call.id)
+            ).all()
+            if rows:
+                summary = "; ".join(
+                    f"{row.field_name}={row.field_value}" for row in rows
+                )
         now = utcnow()
         call.summary = summary
         call.status = "completed"
@@ -2046,6 +2675,49 @@ _TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL | re.I
 _FUNCTION_RE = re.compile(r"<function\s*=\s*([^>\s]+)\s*>", re.IGNORECASE)
 _PARAMETER_RE = re.compile(r"<parameter\s*=\s*([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DOTALL | re.IGNORECASE)
 _TAG_REMAINDER_RE = re.compile(r"</?(?:function|parameter)[^>]*>", re.IGNORECASE)
+# DeepSeek's own pseudo-call markup (<｜DSML｜function_calls> ...). It was read
+# aloud as "less than DSML calls invoke name..." on a live turn. Whatever
+# follows the marker is tool arguments, not speech - including the truncated
+# case where the provider cut the tag mid-attribute, hence the "$" branch.
+_DSML_BLOCK_RE = re.compile(
+    r"</?[｜|]DSML[｜|].*?(?:</[｜|]DSML[｜|][^>]*>|$)", re.DOTALL | re.IGNORECASE
+)
+#: Reasoning wrappers that qwen/gpt-oss sometimes stream as CONTENT. A live
+#: Telugu text call shipped the whole reply as "<think> The caller is saying
+#: 'ardham kaledhu andi' ..." - the caller saw the model thinking, not an
+#: answer. Well-formed blocks go first; an unclosed opener swallows the rest
+#: because everything after it is reasoning, never speech.
+_THINK_BLOCK_RE = re.compile(
+    r"<think(?:ing)?>.*?</think(?:ing)?>|<think(?:ing)?>[^<]*$|</think(?:ing)?>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+#: Inline pseudo-calls written as prose instead of a function call: a live
+#: turn shipped "record_extracted_field(expected_return_date, repu, high);
+#: end_call(Call completed successfully)." straight into the spoken reply.
+_PSEUDO_CALL_RE = re.compile(
+    r"\b(?:record_extracted_field|end_call|escalate_to_human|transfer_call)"
+    r"\s*\([^)]*\)\s*;?",
+    re.IGNORECASE,
+)
+
+#: qwen also emits tool calls as XML-ish tags with a JSON body. A live Telugu
+#: turn spoke "<record_extracted_field>{...}</record_extracted_field" to the
+#: caller AND lost the return date. The closing tag may be truncated by the
+#: provider, hence the optional ">".
+_TOOL_XML_BLOCK_RE = re.compile(
+    r"<record_extracted_field\b[^>]*>.*?(?:</record_extracted_field\s*>?|$)"
+    r"|</record_extracted_field\b[^>]*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_TOOL_XML_TAG_RE = re.compile(
+    r"</?(?:end_call|escalate_to_human|transfer_call)\b[^>]*>", re.IGNORECASE
+)
+_XML_RECORD_RE = re.compile(
+    r"<record_extracted_field\b[^>]*>\s*(.*?)\s*(?:</record_extracted_field\s*>?|$)",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def _parse_pseudo_tool_calls(text: str) -> list[dict[str, Any]]:
@@ -2063,14 +2735,80 @@ def _parse_pseudo_tool_calls(text: str) -> list[dict[str, Any]]:
         for key, value in _PARAMETER_RE.findall(block):
             args[key.strip()] = value.strip()
         found.append({"name": func.group(1).strip(), "arguments": args})
+    for body in _XML_RECORD_RE.findall(str(text or "")):
+        try:
+            data = json.loads(body)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        args = {
+            key: data[key]
+            for key in ("field_name", "value", "field_value", "confidence")
+            if key in data
+        }
+        if "value" not in args and "field_value" in args:
+            args["value"] = args.pop("field_value")
+        found.append({"name": "record_extracted_field", "arguments": args})
     return found
+
+
+_PUNCT_LEFTOVER_RE = re.compile(r"([.!?])\s*[.,;:)]+")
+
+#: Stage directions qwen appended to spoken questions: a live Telugu turn said
+#: "ఎప్పుడు తిరిగి వస్తారు? (Waiting for response)(Waiting for your reply)."
+_META_CUE_RE = re.compile(
+    r"\((?:waiting for (?:your )?(?:response|reply)|silent|pauses?)[^)]*\)",
+    re.IGNORECASE,
+)
 
 
 def _scrub_tool_markup(text: str) -> str:
     """Remove tool-call markup so it never ships to the transcript/UI."""
-    out = _TOOL_CALL_BLOCK_RE.sub(" ", str(text or ""))
+    out = _THINK_BLOCK_RE.sub(" ", str(text or ""))
+    out = _DSML_BLOCK_RE.sub(" ", out)
+    out = _TOOL_CALL_BLOCK_RE.sub(" ", out)
+    out = _TOOL_XML_BLOCK_RE.sub(" ", out)
+    out = _TOOL_XML_TAG_RE.sub(" ", out)
+    out = _PSEUDO_CALL_RE.sub(" ", out)
     out = _TAG_REMAINDER_RE.sub(" ", out)
+    out = _META_CUE_RE.sub(" ", out)
+    # A call cut out of the middle of a sentence leaves " ." behind.
+    out = _PUNCT_LEFTOVER_RE.sub(r"\1", out)
     return " ".join(out.split())
+
+
+#: The model writes Telugu in the literary register its training data is full
+#: of, even when the prompt asks for everyday speech: a live call asked
+#: "ఎప్పుడు తిరిగి హాజరుకావాలని భావిస్తున్నారు?" and closed with "మీ సమయానికి
+#: ధన్యవాదాలు. సెలవు." These are grammar-safe substrings - they replace the
+#: bookish noun/phrase inside whatever sentence the model built.
+_TELUGU_SWAPS: tuple[tuple[str, str], ...] = (
+    ("వైద్య ధృవపత్రం", "డాక్టర్ సర్టిఫికెట్"),
+    ("ధృవపత్రం", "సర్టిఫికెట్"),
+    ("గైర్హాజరు", "లీవ్"),
+    ("హాజరుకావాలని", "రావాలని"),
+    ("హాజరుకావడం", "రావడం"),
+    ("హాజరుకాని", "రాని"),
+    ("హాజరు", "రావడం"),
+    ("విచారిస్తున్నాను", "అడుగుతున్నా"),
+    ("విచారించడానికి", "అడగడానికి"),
+    ("దయచేసి ", ""),
+    ("మీ సమయానికి ", ""),
+    ("ధన్యవాదాలు", "థాంక్స్"),
+    ("సర్వే", "కాల్"),
+)
+_TELUGU_FAREWELL_RE = re.compile(r"\bసెలవు\s*[.!]?\s*$")
+
+
+def _humanize_telugu(text: str) -> str:
+    """Swap bookish Telugu for what people actually say on a phone call."""
+    out = str(text or "")
+    if not out:
+        return out
+    for bookish, everyday in _TELUGU_SWAPS:
+        out = out.replace(bookish, everyday)
+    return " ".join(_TELUGU_FAREWELL_RE.sub("బై.", out.strip()).split())
 
 
 @router.post("/sessions/{call_id}/turns")
@@ -2159,8 +2897,19 @@ async def _run_agent_turn(
         ]
         system_prompt = _render_compact_system_prompt(
             [f for f in already if f in schema_fields],
-            [f for f in required if f not in already],
+            [
+                f
+                for f in required
+                if f not in already and f not in _AGENT_DERIVED_FIELDS
+            ],
             utcnow().strftime("%A %d %B %Y"),
+            agent_name=agent_name,
+            language=_agent_language(version),
+            derived=[
+                f
+                for f in required
+                if f in _AGENT_DERIVED_FIELDS and f not in already
+            ],
         )
     else:
         system_prompt = _render_text_system_prompt(
@@ -2237,6 +2986,9 @@ async def _run_agent_turn(
     done = False
     started_mono = time.monotonic()
     assistant_text = ""
+    # Tool markup the model wrote as content. Kept even when the turn is
+    # retried for real speech, so the field it tried to record still lands.
+    markup_source = ""
     groq_call_ms: list[float] = []
     # Continuity state: who served the previous turn, what is already captured,
     # and the last utterances. If failover moves this turn to another model,
@@ -2265,15 +3017,38 @@ async def _run_agent_turn(
         # ones like container.exec) and a request with tools absent makes any
         # tool call a server-side error. A legal tool call costs one round
         # trip; an illegal one costs a 400 plus a wasted key.
-        message = await _groq_chat(
-            settings,
-            messages,
-            include_tools=True,
-            call_id=call.id,
-            previous_provider=previous_provider,
-            captured=captured_before,
-            recent_turns=recent_turns,
-        )
+        try:
+            message = await _groq_chat(
+                settings,
+                messages,
+                include_tools=True,
+                call_id=call.id,
+                previous_provider=previous_provider,
+                captured=captured_before,
+                recent_turns=recent_turns,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 429:
+                # The caller (or UI) should back off and try again; a 429 is
+                # actionable and must not be masked by a spoken apology.
+                raise
+            # Every provider failed in a way retrying cannot fix (empty
+            # completions, bad payloads, 5xx). Silence is worse than asking
+            # the caller to repeat themselves, so the turn degrades to the
+            # deterministic line - and extraction below still records what
+            # the caller just said. A 502 here used to kill the whole turn.
+            logger.warning(
+                "text_turn call=%s: LLM chain failed (%s); speaking fallback line",
+                call.id,
+                exc.status_code,
+            )
+            telemetry.record(
+                "llm_chain_failed",
+                level="error",
+                message=str(exc.detail)[:200],
+                call_id=call.id,
+            )
+            break
         served = message.get("served_by")
         if isinstance(served, dict) and served.get("provider"):
             previous_provider = (str(served["provider"]), str(served.get("model") or ""))
@@ -2281,17 +3056,43 @@ async def _run_agent_turn(
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "").strip()
         if not tool_calls:
+            # Judge usability on what would actually be SPOKEN. A content that
+            # is nothing but tool markup scrubs to nothing and must not be
+            # read aloud; ask for the real line instead.
+            spoken = _scrub_tool_markup(content)
+            if (
+                not assistant_text
+                and _is_unusable_reply(spoken)
+                and round_no + 1 < _MAX_TOOL_ROUNDS
+            ):
+                # Empty or cut-off 200 (no words, no tool call) would be dead
+                # air. Ask for the line once more before giving the turn up.
+                markup_source += f"\n{content}"
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "[The caller is waiting. Say your next line "
+                        "now in one short sentence.]",
+                    }
+                )
+                telemetry.record(
+                    "llm_empty_retry",
+                    level="warn",
+                    message="empty completion; asking the model for its line again",
+                    call_id=call.id,
+                )
+                continue
             # Prefer speech that already rode along with an earlier tool call;
             # otherwise the follow-up round's short ack ("Thanks") replaces a
             # full reply the model already gave.
-            if not assistant_text:
-                assistant_text = content
+            if not assistant_text and not _is_unusable_reply(spoken):
+                assistant_text = spoken
             break
         # Keep any spoken text that rode along with the tool calls. Dropping
         # it produced truncated replies ("When is Abhi expected to return to"
         # with the rest lost) whenever the model spoke AND recorded in one
         # turn; the follow-up round then added only a short ack.
-        if content and not assistant_text:
+        if content and not assistant_text and not _is_unusable_reply(content):
             assistant_text = content
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         for tool_call in tool_calls:
@@ -2326,13 +3127,17 @@ async def _run_agent_turn(
         try:
             message = await _groq_chat(
                 settings,
+                # A systems message appended after "tool" messages is not a
+                # valid tail for every provider (DeepSeek answered it with an
+                # empty completion, leaving the caller in silence). A user
+                # turn is legal everywhere.
                 messages
                 + [
                     {
-                        "role": "system",
+                        "role": "user",
                         "content": (
-                            "Speak to the caller now in one short sentence. "
-                            "Do not call any tool this turn."
+                            "[Say your next line to the caller now, in one "
+                            "short sentence. Do not call any tool this turn.]"
                         ),
                     }
                 ],
@@ -2350,19 +3155,50 @@ async def _run_agent_turn(
         # round's short ack - "Thanks - noted." replacing a substantive answer
         # is exactly the truncation this fallback was built to prevent.
         if not assistant_text:
-            assistant_text = str(message.get("content") or "").strip()
-            if not assistant_text:
-                assistant_text = "Thanks - noted."
+            candidate = str(message.get("content") or "").strip()
+            if _is_unusable_reply(candidate):
+                # Tools stay on because a tools-less request can 400, but a
+                # model that spent every round on tools still owes the caller
+                # a line. De-prime the history and ask once in plain text.
                 logger.warning(
-                    "text_turn call=%s: no speech after tool rounds; using fallback line",
+                    "text_turn call=%s: no speech after tool rounds; asking "
+                    "once in plain text",
                     call.id,
                 )
+                try:
+                    plain = await _groq_chat(
+                        settings,
+                        _strip_tool_traffic(messages)
+                        + [
+                            {
+                                "role": "user",
+                                "content": "[Say your next line to the caller "
+                                "now, in one short sentence.]",
+                            }
+                        ],
+                        include_tools=False,
+                        call_id=call.id,
+                        previous_provider=previous_provider,
+                        captured=captured_before,
+                        recent_turns=recent_turns,
+                    )
+                    candidate = str(plain.get("content") or "").strip()
+                except HTTPException:
+                    candidate = ""
+                if _is_unusable_reply(candidate):
+                    candidate = "Thanks - noted."
+                logger.warning(
+                    "text_turn call=%s: plain-text round produced %r",
+                    call.id,
+                    candidate[:60],
+                )
+            assistant_text = candidate
 
     # Pseudo tool calls: the model sometimes emits <tool_call> XML as text
     # instead of a real function call (seen live: the field was lost and raw
     # markup was saved to the transcript). Execute record_* ones with identical
     # semantics, then scrub all markup so it never ships to the UI.
-    for pseudo in _parse_pseudo_tool_calls(assistant_text):
+    for pseudo in _parse_pseudo_tool_calls(f"{assistant_text}\n{markup_source}"):
         if pseudo["name"] != "record_extracted_field":
             continue
         _result_text, field_record, _done_flag = _execute_text_tool(
@@ -2371,7 +3207,50 @@ async def _run_agent_turn(
         if field_record and "summary" not in field_record:
             extracted_now.append(field_record)
     assistant_text = _scrub_tool_markup(assistant_text)
-    assistant_text = _cap_reply(assistant_text)
+    assistant_text = _cap_reply(_trim_partial_tail(assistant_text))
+    fallback_used = False
+    if _is_unusable_reply(assistant_text):
+        assistant_text = _empty_reply_line(version, done)
+        fallback_used = True
+        logger.warning(
+            "text_turn call=%s: model returned no usable speech; using fallback line",
+            call.id,
+        )
+
+    caller_question = _caller_asked_question(user_text)
+    if not done and caller_question and (
+        _is_closing_line(assistant_text) or fallback_used
+    ):
+        # Live failure: the caller asked "can we do a site visit this Saturday?"
+        # and the model answered "Thanks, Vikram. Goodbye." One plain-text
+        # nudge gets the actual answer instead of hanging up on a question.
+        try:
+            answer = await _groq_chat(
+                settings,
+                _strip_tool_traffic(messages)
+                + [
+                    {
+                        "role": "user",
+                        "content": "[The caller just asked you something. Answer "
+                        "it in one short sentence. Do not say goodbye and do "
+                        "not end the call.]",
+                    }
+                ],
+                include_tools=False,
+                call_id=call.id,
+                previous_provider=previous_provider,
+                captured=captured_before,
+                recent_turns=recent_turns,
+            )
+            candidate = _cap_reply(
+                _trim_partial_tail(str(answer.get("content") or "").strip())
+            )
+            if not _is_unusable_reply(candidate) and not _is_explicit_farewell(
+                candidate
+            ):
+                assistant_text = candidate
+        except HTTPException:
+            pass
 
     # Deterministic closing. The model regularly said a full goodbye
     # ("Thanks, have a good day") WITHOUT calling end_call, and if the caller
@@ -2402,10 +3281,21 @@ async def _run_agent_turn(
         for name, known in zip(required, all_known)
         if name in _AGENT_DERIVED_FIELDS and not known
     ]
-    closes = all(blocking_known) and (
-        not derived_pending or _is_explicit_farewell(assistant_text)
+    caller_done = _caller_is_finished(user_text)
+    closes = (
+        all(blocking_known)
+        and (not caller_question or caller_done)
+        and (
+            not derived_pending
+            or _is_explicit_farewell(assistant_text)
+            or caller_done
+        )
     )
-    if required and closes and _is_closing_line(assistant_text) and not done:
+    if required and closes and (_is_closing_line(assistant_text) or caller_done) and not done:
+        if not _is_closing_line(assistant_text):
+            # The caller ended it, whatever the model said. Speak the
+            # deterministic farewell in the agent's language and close.
+            assistant_text = _empty_reply_line(version, True)
         # Summarize ALL known fields (DB + this turn), not just this turn's:
         # fields captured on earlier turns would otherwise leave an empty
         # summary on exactly the calls that closed cleanly.
@@ -2463,6 +3353,92 @@ async def _run_agent_turn(
     _backfill_grounded_fields(
         db, call, version, user_text, extracted_now, next_index
     )
+
+    # The model asked for something the caller had just given ("which date
+    # would suit you better?" right after "reschedule to Friday"): the value
+    # was captured by the backfill, so it was invisible to the model when it
+    # wrote that line. One nudge with the fact stated gets the next line.
+    schema_for_ask = getattr(version, "extraction_schema", None) or {}
+    if not done and "?" in assistant_text and extracted_now and isinstance(
+        schema_for_ask, dict
+    ):
+        just_recorded = [
+            str(item.get("field_name"))
+            for item in extracted_now
+            if item.get("field_name")
+        ]
+        known_now = {
+            row.field_name
+            for row in db.scalars(
+                select(ExtractedField).where(ExtractedField.call_id == call.id)
+            ).all()
+        } | set(just_recorded)
+        still_missing = [
+            name
+            for name in schema_for_ask
+            if name not in known_now and name not in _AGENT_DERIVED_FIELDS
+        ]
+        reasked = _question_targets(
+            assistant_text, schema_for_ask, just_recorded
+        ) - _question_targets(assistant_text, schema_for_ask, still_missing)
+        if reasked:
+            try:
+                values = "; ".join(
+                    f"{item.get('field_name')}={item.get('field_value')}"
+                    for item in extracted_now
+                    if item.get("field_name") in reasked
+                )
+                better = await _groq_chat(
+                    settings,
+                    _strip_tool_traffic(messages)
+                    + [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[The caller already answered: {values}. Do not "
+                                "ask about it again. Say your next line in one "
+                                "short sentence.]"
+                            ),
+                        }
+                    ],
+                    include_tools=False,
+                    call_id=call.id,
+                    previous_provider=previous_provider,
+                    captured=captured_before,
+                    recent_turns=recent_turns,
+                )
+                candidate = _cap_reply(
+                    _trim_partial_tail(str(better.get("content") or "").strip())
+                )
+                if (
+                    not _is_unusable_reply(candidate)
+                    and not (
+                        _question_targets(candidate, schema_for_ask, reasked)
+                        - _question_targets(candidate, schema_for_ask, still_missing)
+                    )
+                ):
+                    assistant_text = candidate
+                    logger.warning(
+                        "text_turn call=%s: replaced a re-ask of %s",
+                        call.id,
+                        reasked,
+                    )
+            except HTTPException:
+                pass
+
+    if (
+        fallback_used
+        and not done
+        and not caller_question
+        and (extracted_now or _caller_is_acknowledging(user_text))
+    ):
+        # The caller's answer WAS captured (by the model or the backfill), or
+        # their line was a plain acknowledgment, so a "could you say that
+        # again?" would ask them to repeat something we already have.
+        assistant_text = _ACK_LINES[_agent_language(version)]
+
+    if _agent_language(version) == "te":
+        assistant_text = _humanize_telugu(assistant_text)
 
     elapsed_ms = round((time.monotonic() - started_mono) * 1000.0)
 

@@ -1,24 +1,14 @@
 import React from 'react';
 
-/**
- * Pre-filled contact card for testing.
- *
- * These were empty, so every test run began with the operator typing the same
- * student/parent names by hand - pure friction during the verification loop.
- * They are only DEFAULTS for the form: edit any field before starting a
- * session, and the change is used verbatim.
- */
-export const ABSENT_STUDENT_DEFAULTS = {
-  student_name: 'Abhi',
-  parent_name: 'Ram',
-  class_section: '10-B',
-  absent_date: '',
-};
-
 /** Generic key/value lead card ("who are we calling?").
- * Props: {value: object, onChange: (next) => void, defaults?: object}
+ *
+ * `defaults` is the per-agent prefill from src/utils/leadCard.js - the fields
+ * that agent's own script asks about, so a clinic is never handed
+ * student_name rows. `hints` maps a field key to the value box placeholder.
+ *
+ * Props: {value: object, onChange: (next) => void, defaults?: object, hints?: object}
  */
-export default function LeadCardForm({ value, onChange, defaults }) {
+export default function LeadCardForm({ value, onChange, defaults, hints }) {
   const rows = Object.entries(value || {});
   const set = (next) => onChange(next);
 
@@ -61,7 +51,7 @@ export default function LeadCardForm({ value, onChange, defaults }) {
             type="text"
             aria-label="Field value"
             value={v}
-            placeholder="value"
+            placeholder={hints?.[k] || 'value'}
             onChange={(e) => updateRow(i, k, e.target.value)}
           />
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => removeRow(i)}>
@@ -79,7 +69,7 @@ export default function LeadCardForm({ value, onChange, defaults }) {
           </button>
         )}
       </div>
-      <p className="hint">Only non-empty values are sent. The agent uses these names instead of asking who it is calling.</p>
+      <p className="hint">Prefilled with the fields this agent's script asks about. Only non-empty values are sent, and the agent uses them instead of asking who it is calling.</p>
     </div>
   );
 }

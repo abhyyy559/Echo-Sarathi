@@ -3,7 +3,7 @@
     Stop the local dev stack. Data volumes are KEPT by default.
 
 .PARAMETER Clean
-    Also delete the postgres/redis volumes - ALL local data (tenants, agents,
+    Also delete the postgres volume - ALL local data (tenants, agents,
     call records) is permanently lost. Prompts nothing; read the warning.
 
 .USAGE
@@ -23,7 +23,7 @@ $EnvFile     = Join-Path $Root '.env'
 Write-Host '=== AI Voice Calling Agent - dev-down ===' -ForegroundColor Cyan
 
 if ($Clean) {
-    Write-Host '[dev-down] WARNING: -Clean removes named volumes (postgres_data, redis_data).' -ForegroundColor Yellow
+    Write-Host '[dev-down] WARNING: -Clean removes named volumes (postgres_data).' -ForegroundColor Yellow
     Write-Host '[dev-down] ALL local data (organizations, agents, calls, transcripts) is deleted.' -ForegroundColor Yellow
     & docker compose -f $ComposeFile --env-file $EnvFile down -v
 } else {

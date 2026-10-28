@@ -18,12 +18,12 @@ No telephony calls are placed anywhere in this stack (see the warning below).
                  +----------------------+        http://localhost:8000
                  |  FastAPI backend     |        /docs = Swagger UI
                  |  (:8000)             |
-                 +----+------------+----+
-                      |            |
-          +-----------+--+      +--+-----------+
-          | PostgreSQL   |      | Redis        |
-          | :5432        |      | :6379        |
-          +--------------+      +--------------+
+                 +----------+-----------+
+                            |
+                 +----------+-----------+
+                 | PostgreSQL            |
+                 | :5432                 |
+                 +----------------------+
 
                  +----------------------+        ws://localhost:7880
    browser mic   |  LiveKit server      |   (signaling; RTC on :7881 tcp/udp)
@@ -124,7 +124,6 @@ instead of crashing.
 | Key | Default used by compose | Notes |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/voice_agent` | wired to the `db` service |
-| `REDIS_URL` | `redis://redis:6379/0` | wired to the `redis` service |
 | `JWT_SECRET` | `change_me_dev` | obvious dev placeholder; set a real value before any real deployment |
 | `INTERNAL_API_TOKEN` | `change_me_internal` | shared secret backend <-> voice worker; keep both sides equal |
 | `LIVEKIT_URL` | `ws://localhost:7880` | browser-facing URL baked into playground tokens |

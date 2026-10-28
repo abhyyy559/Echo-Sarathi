@@ -44,7 +44,7 @@ $health = Check "GET /api/health" {
     $h
 }
 if ($health) {
-    Write-Host ("        db=" + $health.db + " redis=" + $health.redis + " livekit_ws=" + $health.livekit_ws)
+    Write-Host ("        db=" + $health.db + " livekit_ws=" + $health.livekit_ws)
     Write-Host ("        llm chain: " + ((@($health.llm_chain) | ForEach-Object { $_.name + "/" + $_.model }) -join ", "))
 }
 

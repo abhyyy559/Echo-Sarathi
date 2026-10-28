@@ -1,6 +1,6 @@
-"""Shared phone-bridge helpers (pure audio plumbing for twilio/plivo routers).
+"""Shared phone-bridge helpers (pure audio plumbing for twilio/vobiz routers).
 
-The provider routers (twilio.py, plivo.py) keep their provider-specific pump
+The provider routers (twilio.py, vobiz.py) keep their provider-specific pump
 loops; everything identical across providers lives here: LiveKit AudioFrame
 construction, end-of-stream queue sentinels, and remote-track draining into a
 shared queue as 8 kHz mu-law bytes.

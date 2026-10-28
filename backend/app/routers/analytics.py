@@ -34,7 +34,7 @@ RECENT_CALLS_LIMIT = 8
 
 # update per invoice
 PRICING_USD_PER_MINUTE: dict[str, float] = {
-    "telephony": 0.0120,          # Plivo outbound local (India) sample rate
+    "telephony": 0.0120,          # Vobiz outbound local (India) sample rate
     "stt_deepgram_nova3": 0.0043, # Deepgram nova-3 streaming
     "tts_cartesia": 0.0080,       # Cartesia sonic English
     "llm_groq": 0.0007,           # Groq small-model share per voice minute

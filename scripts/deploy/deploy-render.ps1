@@ -64,7 +64,6 @@ if ($dbUrl -match "^postgresql://") {
     $dbUrl = "postgresql+psycopg2://" + $dbUrl.Substring("postgresql://".Length)
 }
 Add-EnvVar "DATABASE_URL" $dbUrl
-Add-EnvVar "REDIS_URL" ""
 Add-EnvVar "CORS_ORIGINS" $AppOrigin
 Add-EnvVar "JWT_SECRET" $cfg["JWT_SECRET"]
 Add-EnvVar "INTERNAL_API_TOKEN" $cfg["INTERNAL_API_TOKEN"]

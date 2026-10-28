@@ -59,6 +59,8 @@ def test_list_presets_returns_valid_payloads(client):
         "real-estate-site-visit",
         "clinic-appointment-confirmation",
         "service-feedback",
+        "prankster",
+        "sweet-checkin",
     }
     for preset in presets:
         assert preset["name"]
@@ -69,6 +71,34 @@ def test_list_presets_returns_valid_payloads(client):
         assert payload["extraction_schema"]
         assert payload["disclosure_script"]
         assert payload["escalation_rules"]
+
+
+def test_persona_presets_disclose_and_keep_guardrails(client):
+    """Prank and check-in are still AI calls: disclosure first, consent and a
+    clean exit for the prank, and no selling or counselling for the check-in."""
+    token, _user = register(client)
+    presets = client.get("/api/agents/presets", headers=auth_headers(token)).json()
+    prank = next(p for p in presets if p["preset_id"] == "prankster")["version_payload"]
+    anu = next(p for p in presets if p["preset_id"] == "sweet-checkin")["version_payload"]
+
+    for payload in (prank, anu):
+        disclosure = payload["disclosure_script"].lower()
+        assert "ai assistant" in disclosure
+        assert "recorded" in disclosure
+        assert payload["company_context"]["company_name"]
+
+    prompt = prank["system_prompt"].lower()
+    assert "harmless" in prompt
+    assert "only continue on a clear yes" in prompt
+    assert "never claim to be police" in prompt
+    assert "never ask for money" in prompt
+    assert "exactly one" in prompt
+
+    prompt = anu["system_prompt"].lower()
+    assert "sweet" in prompt
+    assert "never sell" in prompt
+    assert "serious distress" in prompt
+    assert anu["voice_settings"]["speaking_rate"] < 1.0
 
 
 def test_telugu_preset_routes_stt_and_tts_by_language(client):

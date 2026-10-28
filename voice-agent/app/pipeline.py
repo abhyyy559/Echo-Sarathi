@@ -72,7 +72,14 @@ from app.extraction_tools import (
     ExtractionCoordinator,
     VoiceAgentTools,
 )
-from app.prompting import build_opening_line, build_token_map, render_system_prompt, scrub_speech_text, speakable_text
+from app.prompting import (
+    _AGENT_DERIVED_FIELDS,
+    build_opening_line,
+    build_token_map,
+    render_system_prompt,
+    scrub_speech_text,
+    speakable_text,
+)
 
 logger = logging.getLogger("voice_agent.pipeline")
 
@@ -2612,10 +2619,19 @@ async def _shutdown_ctx(ctx: JobContext) -> None:
 
 
 def _required_fields_from_schema(config: Mapping[str, Any]) -> frozenset[str]:
+    """Fields the agent must collect from the caller.
+
+    Agent-derived fields are excluded: call 96 asked the parent "May I know the
+    outcome" and then reported call_outcome as an unfilled required field,
+    because the schema had validation=required on something only the agent can
+    decide when it closes.
+    """
     schema = config.get("extraction_schema")
     required: set[str] = set()
     if isinstance(schema, Mapping):
         for name, spec in schema.items():
+            if str(name) in _AGENT_DERIVED_FIELDS:
+                continue
             if isinstance(spec, Mapping):
                 validation = str(spec.get("validation") or "").strip().lower()
                 if validation == "required":

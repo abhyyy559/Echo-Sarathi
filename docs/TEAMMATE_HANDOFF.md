@@ -170,7 +170,6 @@ infra\docker-compose.yml`; there is no root-level compose file.
 Compose starts all of these:
 
 - `db` (Postgres)
-- `redis`
 - `backend` (`:8000`)
 - `livekit` (`:7880`, local mode)
 - `voice-agent` (the worker)

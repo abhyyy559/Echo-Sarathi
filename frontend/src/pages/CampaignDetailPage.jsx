@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, agentsApi, campaignExportUrl } from '../api.js';
+import { api, agentsApi, downloadCampaignExport } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import StatusBadge, { statusLabel } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
@@ -667,10 +667,10 @@ export default function CampaignDetailPage() {
           )}
           <div className="export-group">
             <span className="export-label">Export:</span>
-            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'csv'), '_blank')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'csv'))}>
               CSV
             </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => window.open(campaignExportUrl(id, 'xlsx'), '_blank')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => runAction(() => downloadCampaignExport(id, 'xlsx'))}>
               XLSX
             </button>
           </div>

@@ -38,6 +38,18 @@ def test_openai_tool_calls_json_scrubbed() -> None:
     assert "done" in out
 
 
+def test_xml_record_markup_scrubbed() -> None:
+    out = scrub_speech_text(
+        '<record_extracted_field>{"field_name": "reason", "value": "fever"}</record_extracted_field>'
+    )
+    assert out == ""
+    mixed = scrub_speech_text(
+        'Sorry to hear. <record_extracted_field>{"field_name": "reason", '
+        '"value": "fever"}</record_extracted_field'
+    )
+    assert mixed == "Sorry to hear."
+
+
 def test_plain_text_untouched() -> None:
     original = "Good morning, is this Alex Johnson?"
     assert scrub_speech_text(original) == original

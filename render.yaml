@@ -5,7 +5,6 @@
 #   - Frontend       -> Vercel (see frontend/vercel.json)
 #   - Voice worker   -> LiveKit Cloud agent deployment (scripts/deploy/deploy-livekit.ps1)
 #   - Postgres       -> Neon free (no 30-day expiry; Render free Postgres expires)
-#   - Redis          -> not used by this app (health reports it as "unknown")
 #
 # Render free web services sleep after 15 minutes without traffic and take
 # ~1 minute to wake. Keep the API warm during a demo with
@@ -44,10 +43,6 @@ services:
       # deploy-render.ps1 applies this rewrite automatically.
       - key: DATABASE_URL
         sync: false
-      # Redis is optional and unused by the app; empty string => health shows
-      # "unknown" instead of a misleading red dot.
-      - key: REDIS_URL
-        value: ""
 
       # The deployed Vercel origin, e.g. https://your-app.vercel.app
       - key: CORS_ORIGINS

@@ -5,9 +5,9 @@ Real-time AI voice calling platform for India. Phase 0 = English-only browser pl
 
 **Locked stack (do not change):**
 - Voice: cascaded (Deepgram STT → Groq/OpenAI LLM tool-calling → Cartesia TTS) via LiveKit Agents (Python)
-- Backend: FastAPI + PostgreSQL + Redis
+- Backend: FastAPI + PostgreSQL
 - Frontend: React + Vite
-- Telephony: Plivo first (Exotel fallback) — **dormant this phase**
+- Telephony: Vobiz (Twilio adapter dormant)
 - All services India-region (Mumbai) for data localization
 
 ## Repository Layout
@@ -86,7 +86,7 @@ python agent.py dev        # or: python agent.py start
 
 ## Common Pitfalls
 - **LiveKit key mismatch**: `LIVEKIT_API_SECRET` must be identical for `backend`, `voice-agent`, and `livekit` services. Compose enforces this via single `.env` — do not override only one.
-- **Port conflicts**: Default ports 3000 (frontend), 8000 (backend), 7880/7881 (LiveKit), 5432 (Postgres), 6379 (Redis). Change left side of `ports:` in `infra/docker-compose.yml` if needed, then update `VITE_API_URL` and `LIVEKIT_URL` accordingly.
+- **Port conflicts**: Default ports 3000 (frontend), 8000 (backend), 7880/7881 (LiveKit), 5432 (Postgres). Change left side of `ports:` in `infra/docker-compose.yml` if needed, then update `VITE_API_URL` and `LIVEKIT_URL` accordingly.
 - **Microphone permission**: Browser settings → allow microphone for `localhost:3000`.
 - **Stale .env overriding compose defaults**: Run `docker compose logs backend` to diagnose.
 

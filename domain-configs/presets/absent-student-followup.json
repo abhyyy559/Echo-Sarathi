@@ -14,7 +14,7 @@
       },
       {
         "step": 2,
-        "question": "Do you expect [Student Name] to return by [Expected Return Date]?"
+        "question": "When does [Student Name] expect to return to school?"
       },
       {
         "step": 3,

@@ -1,13 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Room, RoomEvent, Track } from 'livekit-client';
-import { agentsApi, api, callExportUrl, playgroundApi } from '../api.js';
+import { agentsApi, api, downloadCallExport, playgroundApi } from '../api.js';
 import LatencyPanel from '../components/LatencyPanel.jsx';
 import DiagnosticsPanel from '../components/DiagnosticsPanel.jsx';
 import LiveConsole from '../components/LiveConsole.jsx';
 import TestCallPanel from '../components/TestCallPanel.jsx';
-import LeadCardForm, { ABSENT_STUDENT_DEFAULTS } from '../components/LeadCardForm.jsx';
+import LeadCardForm from '../components/LeadCardForm.jsx';
 import TextPlayground, { confidenceClass } from '../components/TextPlayground.jsx';
+import { LEAD_FIELD_HINTS, leadCardDefaults } from '../utils/leadCard.js';
 import { cleanTranscriptText } from '../utils/transcript.js';
 import { agentOptionLabel } from '../utils/agentPurpose.js';
 
@@ -83,8 +84,8 @@ export default function PlaygroundPage() {
   const [versions, setVersions] = useState([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState(routeVersionId || '');
-  const [contactCard, setContactCard] = useState({ ...ABSENT_STUDENT_DEFAULTS });
-  const [versionInfo, setVersionInfo] = useState(null); // {agentName, version}
+  const [contactCard, setContactCard] = useState(() => leadCardDefaults(null));
+  const [versionInfo, setVersionInfo] = useState(null); // {agentName, version, config}
   const [infoError, setInfoError] = useState(null);
   // Surfaced in the Diagnostics panel so an operator can tell which run an
   // event belongs to.
@@ -107,6 +108,7 @@ export default function PlaygroundPage() {
   // keeps the finished report for the ENDED view.
   const [result, setResult] = useState(null);
   const [completeError, setCompleteError] = useState(null);
+  const [exportError, setExportError] = useState(null);
   const [completing, setCompleting] = useState(false);
 
   // refs (mutable values not rendered directly)
@@ -186,13 +188,20 @@ export default function PlaygroundPage() {
         } catch {
           /* header still renders without the agent name */
         }
-        setVersionInfo({ agentName, version: v.version });
+        setVersionInfo({ agentName, version: v.version, config: v });
       })
       .catch((e) => !cancelled && setInfoError(e.message || String(e)));
     return () => {
       cancelled = true;
     };
   }, [selectedVersionId]);
+
+  // The lead card belongs to the agent, not the playground: student fields for
+  // an attendance agent, patient + appointment slot for a clinic, and so on.
+  const leadDefaults = useMemo(() => leadCardDefaults(versionInfo?.config), [versionInfo]);
+  useEffect(() => {
+    setContactCard({ ...leadDefaults });
+  }, [leadDefaults]);
 
   // ---- teardown on unmount ----
   useEffect(
@@ -608,6 +617,7 @@ export default function PlaygroundPage() {
             key={selectedVersionId}
             versionId={selectedVersionId}
             contact={contactCard}
+            leadDefaults={leadDefaults}
             onFinishReport={(res) => {
               setResult(res || {});
               setPhase(PHASES.ENDED);
@@ -872,20 +882,35 @@ export default function PlaygroundPage() {
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
-                  onClick={() => window.open(callExportUrl(resolvedCallId, 'csv'), '_blank')}
+                  onClick={async () => {
+                    setExportError(null);
+                    try {
+                      await downloadCallExport(resolvedCallId, 'csv');
+                    } catch (e) {
+                      setExportError(e.message || 'Export failed.');
+                    }
+                  }}
                 >
                   Export CSV
                 </button>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
-                  onClick={() => window.open(callExportUrl(resolvedCallId, 'xlsx'), '_blank')}
+                  onClick={async () => {
+                    setExportError(null);
+                    try {
+                      await downloadCallExport(resolvedCallId, 'xlsx');
+                    } catch (e) {
+                      setExportError(e.message || 'Export failed.');
+                    }
+                  }}
                 >
                   Export XLSX
                 </button>
               </>
             )}
           </div>
+          {exportError && <div className="banner banner-error">{exportError}</div>}
           {renderLatencySidebar(turns)}
         </aside>
       </div>
@@ -944,7 +969,7 @@ export default function PlaygroundPage() {
                   setConnectError(null);
                 }}
               >
-                Phone call
+                Test call
               </button>
             </div>
 
@@ -1014,7 +1039,12 @@ export default function PlaygroundPage() {
                 dial control stays above the fold. */}
             <details className="card" open={mode !== MODES.PHONE} style={{ marginTop: 12 }}>
               <summary>Who are we calling? (optional lead card)</summary>
-              <LeadCardForm value={contactCard} onChange={setContactCard} defaults={ABSENT_STUDENT_DEFAULTS} />
+              <LeadCardForm
+                value={contactCard}
+                onChange={setContactCard}
+                defaults={leadDefaults}
+                hints={LEAD_FIELD_HINTS}
+              />
             </details>
 
             {selectedVersionId && mode === MODES.PHONE && (

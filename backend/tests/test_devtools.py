@@ -15,7 +15,6 @@ def test_health_reports_presence_booleans(client):
     assert resp.status_code == 200
     body: dict[str, Any] = resp.json()
     assert body["db"] is True  # sqlite in-memory answers SELECT 1
-    assert body["redis"] is None  # nothing configures redis in the test settings
     assert body["voice_agent"] == "unknown"  # no registry this phase
 
     providers = body["providers"]
@@ -25,7 +24,6 @@ def test_health_reports_presence_booleans(client):
         "groq",
         "openai",
         "twilio",
-        "plivo",
         "vobiz",
         "livekit",
     }
@@ -34,20 +32,6 @@ def test_health_reports_presence_booleans(client):
     assert providers["livekit"] is True, "test settings configure devkey/devsecret"
     # Presence only — the response must never contain any key material.
     assert "devsecret" not in resp.text and "sk-" not in resp.text
-
-
-def test_health_reports_redis_down_without_crashing(app, session_factory):
-    from fastapi.testclient import TestClient
-
-    from app.main import create_app
-    from conftest import make_settings
-
-    fresh = create_app(make_settings(redis_url="redis://localhost:59999/0"))
-    fresh.state.session_factory = session_factory
-    with TestClient(fresh) as client:
-        resp = client.get("/api/health")
-    assert resp.status_code == 200
-    assert resp.json()["redis"] is False
 
 
 def test_dev_status_requires_auth(client):

@@ -24,6 +24,51 @@ def test_known_tokens_cover_lead_gen_aliases() -> None:
     }
 
 
+def test_known_tokens_cover_clinic_preset() -> None:
+    """The clinic preset uses patient/doctor/appointment tokens the text-mode
+    map did not know, so it answered "Am I speaking with ?"."""
+    assert set(KNOWN_TOKENS) >= {
+        "[Patient Name]",
+        "[Doctor Name]",
+        "[Appointment Date]",
+        "[Appointment Time]",
+    }
+
+
+def test_build_token_map_resolves_clinic_card() -> None:
+    tokens = build_token_map(
+        {
+            "patient_name": "Ananya Rao",
+            "appointment_date": "2026-11-03",
+            "appointment_time": "10:30 AM",
+        },
+        company_context={"clinic_name": "Sunrise Dental", "doctor_name": "Dr Rao"},
+    )
+    assert tokens["[Patient Name]"] == "Ananya Rao"
+    assert tokens["[Doctor Name]"] == "Dr Rao"
+    assert tokens["[Appointment Date]"] == "2026-11-03"
+    assert tokens["[Appointment Time]"] == "10:30 AM"
+
+
+def test_appointment_slot_falls_back_to_company_context() -> None:
+    """The clinic preset stores the slot in company_context, not the contact."""
+    tokens = build_token_map(
+        {},
+        company_context={"appointment_date": "2026-11-04", "appointment_time": "4 PM"},
+    )
+    assert tokens["[Appointment Date]"] == "2026-11-04"
+    assert tokens["[Appointment Time]"] == "4 PM"
+
+
+def test_contact_appointment_slot_wins_over_company_context() -> None:
+    tokens = build_token_map(
+        {"appointment_date": "2026-11-05", "appointment_time": "9 AM"},
+        company_context={"appointment_date": "2026-11-04", "appointment_time": "4 PM"},
+    )
+    assert tokens["[Appointment Date]"] == "2026-11-05"
+    assert tokens["[Appointment Time]"] == "9 AM"
+
+
 def test_build_token_map_resolves_names_and_institution() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     tokens = build_token_map(contact, institution="Demo School")
@@ -76,6 +121,27 @@ def test_build_token_map_resolves_vertical_tokens_from_company_context() -> None
     assert tokens["[Institution Name]"] == "Acme Realty"
     assert tokens["[Property Name]"] == "Green Meadows"
     assert tokens["[Locality]"] == "Kondapur"
+
+
+def test_build_token_map_contact_wins_over_company_context_for_call_facts() -> None:
+    """The lead card is per call; company_context is only the default."""
+    tokens = build_token_map(
+        {
+            "lead_name": "Riya",
+            "property_name": "Lake View",
+            "locality": "Gachibowli",
+            "service_date": "2026-11-02",
+        },
+        institution="Acme Realty",
+        company_context={
+            "property_name": "Green Meadows",
+            "locality": "Kondapur",
+            "service_date": "2026-10-30",
+        },
+    )
+    assert tokens["[Property Name]"] == "Lake View"
+    assert tokens["[Locality]"] == "Gachibowli"
+    assert tokens["[Service Date]"] == "2026-11-02"
 
 
 def test_build_token_map_unfilled_clinic_name_never_borrows_institution() -> None:
@@ -148,6 +214,26 @@ def test_apply_token_substitution_leaves_no_holes_in_preset_opening() -> None:
     assert out == (
         "Hello, this is Priya from Skyline Estates. I am calling about your "
         "enquiry for Green Meadows in Kondapur."
+    )
+
+
+def test_clinic_preset_opening_has_no_holes_after_substitution() -> None:
+    tokens = build_token_map(
+        {"patient_name": "Ananya Rao", "appointment_date": "2026-11-03", "appointment_time": "10:30 AM"},
+        company_context={
+            "clinic_name": "Sunrise Dental",
+            "doctor_name": "Dr Rao",
+            "appointment_date": "[Appointment Date]",
+        },
+    )
+    out = apply_token_substitution(
+        "Hello, this is Priya from [Clinic Name]. I am calling to confirm your "
+        "appointment with [Doctor Name] on [Appointment Date] at [Appointment Time].",
+        tokens,
+    )
+    assert out == (
+        "Hello, this is Priya from Sunrise Dental. I am calling to confirm your "
+        "appointment with Dr Rao on 2026-11-03 at 10:30 AM."
     )
 
 

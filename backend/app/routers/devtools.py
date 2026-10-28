@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["devtools"])
 
-_REDIS_TIMEOUT_SECONDS = 0.5
-
 # Provider hosts the voice worker must reach (STT / TTS / LLM). Key PRESENCE
 # alone is not enough — a container can hold valid keys yet fail DNS/egress
 # (seen live: Deepgram ClientConnectorDNSError with a good key), so health
@@ -88,31 +86,6 @@ def _pipeline_reachability(settings) -> dict[str, Any]:
     return results
 
 
-def _redis_ping(redis_url: str) -> bool | None:
-    """True when redis answers PING, False when configured but down.
-
-    ``None`` means Redis is not configured at all — this deployment does not
-    use it (the dialer is Postgres-backed), and reporting a permanent red dot
-    for an optional dependency is misleading.
-    """
-    if not str(redis_url or "").strip():
-        return None
-    try:
-        import redis as redis_lib
-
-        client = redis_lib.Redis.from_url(
-            redis_url,
-            socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
-            socket_timeout=_REDIS_TIMEOUT_SECONDS,
-        )
-        try:
-            return bool(client.ping())
-        finally:
-            client.close()
-    except Exception:  # noqa: BLE001 — health checks must never raise
-        return False
-
-
 def _alembic_revision(db: Session) -> dict[str, Any]:
     """Current alembic revision recorded in the DB, if the table exists."""
     try:
@@ -131,7 +104,6 @@ def health(request: Request) -> dict[str, Any]:
     livekit_ws = reachability.pop("livekit_server", None)
     return {
         "db": db_ping(request.app.state.session_factory),
-        "redis": _redis_ping(settings.redis_url),
         # No service registry this phase; the voice worker is checked manually.
         "voice_agent": "unknown",
         "providers": settings.provider_presence,

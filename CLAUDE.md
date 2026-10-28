@@ -9,9 +9,9 @@ A real-time AI voice calling platform for India. Phase 1 = English only, one use
 ## Locked technical decisions — do not change without discussing first
 - Voice architecture: **cascaded** (STT → LLM tool-calling → TTS). Never build a speech-to-speech (OpenAI Realtime / Gemini Live) path — it was deliberately rejected, see `PRD.md` §3.
 - Real-time voice orchestration: **LiveKit Agents** (Python). Don't hand-roll WebSocket/session management.
-- Telephony: **Plivo** first (Exotel as fallback). Not Twilio.
+- Telephony: **Vobiz** (India CPaaS). Twilio adapter stays dormant.
 - STT: **Deepgram**. TTS: **Cartesia**. LLM: a fast/cheap model by default (Groq-hosted or GPT-4o-mini class), with rule-based escalation for hard turns — not a large model on every turn.
-- Backend: **FastAPI** + **PostgreSQL** + **Redis**.
+- Backend: **FastAPI** + **PostgreSQL**.
 - Frontend: **React**.
 - All of the above are India-region hosted (Mumbai) for data-localization reasons.
 
@@ -30,7 +30,7 @@ Delegate to these instead of doing cross-cutting work in the main session. Each 
 
 | Agent | Owns | Invoke when the task is about... |
 |---|---|---|
-| `telephony-agent` | Plivo/Exotel integration, call placement, webhooks, DID/number config | placing calls, call status webhooks, provider SDK issues |
+| `telephony-agent` | Vobiz/Twilio integration, call placement, webhooks, DID/number config | placing calls, call status webhooks, provider SDK issues |
 | `voice-pipeline-agent` | LiveKit Agents service, STT/TTS wiring, VAD/turn-detection tuning, barge-in, latency instrumentation | anything inside `/voice-agent`, "the agent talked over the caller," latency tuning |
 | `conversation-ai-agent` | LLM prompts, tool-calling schemas, domain-config format and runtime, escalation logic | conversation flow, extraction accuracy, `/domain-configs`, prompt changes |
 | `backend-agent` | FastAPI app, Postgres schema/migrations, campaign dialer/queue, export | anything inside `/backend`, DB schema changes, CSV/XLSX import-export |

@@ -179,7 +179,7 @@ export default function CreditsPage() {
         .topup(pack.id)
         .then((next) => {
           setData(next);
-          setNotice(`${pack.name} pack added — ${pack.minutes} minutes credited.`);
+          setNotice(`${pack.name} added — ${pack.minutes} minutes credited.`);
           load();
         })
         .catch((e) => setNotice(e.message || String(e)))
@@ -193,8 +193,8 @@ export default function CreditsPage() {
       .then((order) =>
         startCheckout(
           order,
-          `${order.pack_name} pack · ${order.minutes} minutes`,
-          () => `${pack.name} pack added — ${pack.minutes} minutes credited.`
+          `${order.pack_name} · ${order.minutes} minutes`,
+          () => `${pack.name} added — ${pack.minutes} minutes credited.`
         )
       )
       .catch((e) => {

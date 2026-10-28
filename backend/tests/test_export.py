@@ -124,7 +124,7 @@ def _seed_call_export(db: Any, org_id: int) -> int:
         org_id=org_id,
         kind="phone",
         status="completed",
-        provider_call_id="plivo-123",
+        provider_call_id="vobiz-123",
         started_at=datetime(2026, 9, 1, 10, 0, 0),
         ended_at=datetime(2026, 9, 1, 10, 1, 35),
         duration_seconds=95.0,
@@ -203,7 +203,7 @@ def test_call_export_csv_with_contact_fields_and_transcript(client, session_fact
     assert cell("Call ID") == str(call_id)
     assert cell("Kind") == "phone"
     assert cell("Status") == "completed"
-    assert cell("Provider Call ID") == "plivo-123"
+    assert cell("Provider Call ID") == "vobiz-123"
     assert cell("Started") == "2026-09-01T10:00:00"
     assert cell("Ended") == "2026-09-01T10:01:35"
     assert float(cell("Duration (s)")) == 95.0

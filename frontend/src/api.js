@@ -350,10 +350,73 @@ export const api = {
   listAgents: agentsApi.list,
 };
 
-export function campaignExportUrl(campaignId, format) {
-  return `${API_BASE}/api/campaigns/${campaignId}/export?format=${encodeURIComponent(format)}`;
+/**
+ * Download an authenticated file (CSV/XLSX export).
+ *
+ * ``window.open`` cannot carry the Authorization header, so an export URL
+ * opened in a new tab always 401s. Fetch the bytes with the session token,
+ * then save them through a temporary object URL.
+ */
+export async function downloadExport(path, fallbackName) {
+  const token = getToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { headers });
+  } catch {
+    throw new ApiError(
+      `Cannot reach the backend at ${apiTargetLabel()}. Check that the API service is running.`,
+      0,
+      null
+    );
+  }
+
+  if (!res.ok) {
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    if (res.status === 401 && !isMockToken(token)) {
+      clearSession();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+    }
+    throw new ApiError(
+      extractErrorDetail(body) || `Export failed (${res.status} ${res.statusText})`,
+      res.status,
+      body
+    );
+  }
+
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = match ? match[1].trim() : fallbackName;
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return filename;
 }
 
-export function callExportUrl(callId, format) {
-  return `${API_BASE}/api/calls/${callId}/export?format=${encodeURIComponent(format)}`;
+export function downloadCampaignExport(campaignId, format = 'csv') {
+  const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+  return downloadExport(
+    `/api/campaigns/${campaignId}/export?format=${ext}`,
+    `campaign-${campaignId}.${ext}`
+  );
+}
+
+export function downloadCallExport(callId, format = 'csv') {
+  const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+  return downloadExport(`/api/calls/${callId}/export?format=${ext}`, `call-${callId}.${ext}`);
 }

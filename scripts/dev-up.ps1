@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Bring up the full local dev stack: db, redis, backend (:8000), LiveKit
+    Bring up the full local dev stack: db, backend (:8000), LiveKit
     (:7880), voice-agent worker, frontend (:3000). Waits for backend health.
 
 .DESCRIPTION

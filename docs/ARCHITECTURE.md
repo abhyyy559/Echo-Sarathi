@@ -5,7 +5,7 @@ Strict rules for anything that touches the call path. Violate these only with ow
 ## 1. System map (one call, end to end)
 
 ```
-PSTN phone --(Vobiz/Twilio/Plivo)--> provider media WS --> backend bridge
+PSTN phone --(Vobiz/Twilio)--> provider media WS --> backend bridge
   --> LiveKit room (phone-<call_id>) --> voice-agent worker:
      Sarvam Saaras STT (Deepgram fallback) --turn--> Groq Qwen 3.8-27B
      (+tools) --reply--> Sarvam Bulbul TTS (Cartesia/Deepgram fallback)
@@ -15,14 +15,14 @@ Browser playground skips PSTN: mic -> same LiveKit room -> same worker.
 
 ## 2. Component contracts (strict)
 
-- **Telephony (`backend/app/services/telephony.py`)**: `place_call(to, call_id)` only. Provider choice via `TELEPHONY_PROVIDER` ("" | twilio | plivo | vobiz); empty = auto (Plivo > Twilio). No credentials = `FakeTelephonyClient`, dialer must never dial without them (`_provider_configured`).
-- **Bridges (`twilio_bridge`, `plivo_bridge`, `vobiz_bridge` + routers)**: mu-law 8kHz both directions, always. WS handshake ≤10s or close 4400. Unknown events are skipped, never crash. Call matching: our `?call_id=` first, provider id second.
+- **Telephony (`backend/app/services/telephony.py`)**: `place_call(to, call_id)` only. Provider choice via `TELEPHONY_PROVIDER` ("" | twilio | vobiz); empty = auto (Twilio when its credentials exist, else Vobiz). No credentials = `FakeTelephonyClient`, dialer must never dial without them (`_provider_configured`).
+- **Bridges (`twilio_bridge`, `vobiz_bridge` + routers)**: mu-law 8kHz both directions, always. WS handshake ≤10s or close 4400. Unknown events are skipped, never crash. Call matching: our `?call_id=` first, provider id second.
 - **Call rows**: a media leg ending IS the call ending — finalize to a terminal status on close. Never leave `in_progress`/`ringing` rows (they vanish from reports). Test-call campaigns MUST carry `org_id` (org-scoped reads hide NULL-org rows entirely).
 - **Voice pipeline (`voice-agent/app`)**: cascaded STT -> LLM tools -> TTS only — no speech-to-speech path, ever. Missing keys degrade with clear logs, never raise. `max_completion_tokens=300` on Groq (on_demand 1000 OTPM tier 429s anything larger and wedges the call). Turn-taking is semantic (Smart Turn v3, `inference.TurnDetector` fallback) with a 0.4s floor / **2.5s wall-clock ceiling** so a turn can never hang; preemptive generation speculates on the LLM only (`preemptive_tts=False`), and every silent tool call gets one short spoken filler. Log one `EOU |`, `STT |`, `LLM |`, and `TTS |` line per exchange for stage-level latency. Non-English agents route STT/TTS to Sarvam automatically.
 - **Prompt (`prompting.py`)**: disclosure first verbatim; verify-then-continue (never end after identity check); end only when REQUIRED goals are covered or caller ends; never fabricate field values (ask again, flag at `end_call`).
 - **Frontend**: no `type="submit"` without a `<form>`; no `.map` on possibly-missing API arrays; mock demo tokens must never trigger login redirects; captions honor worker `final` flags (interim updates in place).
 - **Secrets**: `.env` is gitignored and never committed; `.env.example` stays in sync; no key VALUES in logs, health, or docs (presence booleans only).
-- **Health (`GET /api/health`, no auth)**: db, redis, provider presence, egress TCP reachability, LiveKit WS. Presence without reachability is a lie — probe both.
+- **Health (`GET /api/health`, no auth)**: db, provider presence, egress TCP reachability, LiveKit WS. Presence without reachability is a lie — probe both.
 
 ## 3. Environment / network laws learned the hard way
 

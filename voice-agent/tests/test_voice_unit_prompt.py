@@ -161,6 +161,46 @@ def test_required_fields_marked_in_schema_block() -> None:
     assert "[REQUIRED]" not in schema_block.split("`is_sick_leave`")[1].split("\n")[0]
 
 
+def test_derived_fields_are_never_asked_of_the_caller() -> None:
+    """Call 96 asked the parent "May I know the outcome" because call_outcome
+    rendered as a [REQUIRED] goal. Derived fields are decided by the agent at
+    close, so the schema block must say so instead of demanding an answer."""
+    config = dict(BASE_CONFIG)
+    config["extraction_schema"] = {
+        **BASE_CONFIG["extraction_schema"],
+        "call_outcome": {
+            "type": "string",
+            "description": "What happened on the call.",
+            "validation": "required",
+        },
+    }
+
+    rendered = render_system_prompt(config)
+    schema_block = rendered[rendered.index(EXTRACTION_HEADER):]
+    outcome_line = schema_block.split("`call_outcome`")[1].split("\n")[0]
+
+    assert "NEVER ask the caller" in outcome_line
+    assert "[REQUIRED]" not in outcome_line
+
+
+def test_derived_fields_are_not_required_from_the_caller() -> None:
+    """Same defect from the collection side: the worker's required set drove
+    the wrap-up and the "Unfilled required fields" flag on call 96."""
+    from app.pipeline import _required_fields_from_schema
+
+    required = _required_fields_from_schema(
+        {
+            "extraction_schema": {
+                "reason_for_absence": {"validation": "required"},
+                "call_outcome": {"validation": "required"},
+                "is_sick_leave": {"validation": "optional"},
+            }
+        }
+    )
+
+    assert required == frozenset({"reason_for_absence"})
+
+
 def test_legacy_mandatory_disclosure_key_supported() -> None:
     legacy: Dict[str, Any] = dict(BASE_CONFIG)
     del legacy["disclosure_script"]

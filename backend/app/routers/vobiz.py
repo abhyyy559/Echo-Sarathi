@@ -62,7 +62,7 @@ VOBIZ_STATUS_MAP = {
     "failed": "failed",
     "canceled": "canceled",
     "cancelled": "canceled",
-    # Plivo-style hangup callback (Event=Hangup) â€” the call is over either way.
+    # Hangup callback (Event=Hangup) — the call is over either way.
     "hangup": "completed",
 }
 

@@ -23,7 +23,6 @@ LiveKit Cloud  ◄── browser playground
 | Frontend | Vercel Hobby | Unlimited deploys, 100 GB bandwidth |
 | Backend API | Render **free** web service | 512 MB RAM, sleeps after 15 min idle, ~1 min cold start, 750 instance-hours/month per workspace |
 | Database | Neon **free** Postgres | 0.5 GB, branches, no 30-day expiry (Render's free Postgres *is* deleted after 30 days — that is why it is not used) |
-| Redis | not used | `REDIS_URL` stays empty; `/api/health` reports `redis: null` |
 | Voice worker | LiveKit Cloud **Build** | 1 agent deployment, monthly agent-minute allowance, scales to zero, 10–20 s cold start |
 
 There is no free background worker on Render, and a 750-hour workspace budget
@@ -76,6 +75,20 @@ Optional: `RENDER_OWNER_ID` (workspace id — the script looks it up),
 Provider keys (Deepgram, Cartesia, Sarvam, Groq, Vobiz, `TEST_PHONE_NUMBERS`)
 are **not** duplicated here: the scripts read them from the repo-root `.env`
 and push them to both Render and LiveKit. Nothing is ever printed.
+
+SaaS billing keys are optional and read from either `.deploy.env` or the
+repo-root `.env`: `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` /
+`RAZORPAY_WEBHOOK_SECRET` (card + UPI checkout), `SMTP_*` (invites, password
+resets, renewal reminders), `COMPANY_LEGAL_NAME/GSTIN/ADDRESS/STATE` (the
+seller block on GST invoices), `PLATFORM_ADMIN_EMAILS` (platform admin
+console), and `ALLOW_PUBLIC_REGISTRATION`. `FRONTEND_BASE_URL` is set from
+`-AppOrigin` and `BILLING_LIFECYCLE_INTERVAL_HOURS` defaults to 6, so emailed
+links always point at the deployed frontend.
+
+Without `SMTP_HOST`, invite and reset links are only written to the service
+log. Without `COMPANY_GSTIN`, invoices print "GSTIN not configured". With
+`ALLOW_PUBLIC_REGISTRATION=false` (the default), pricing-page sign-up is
+disabled and only invited users can join.
 
 ---
 
@@ -135,7 +148,7 @@ directly, so the first request after a sleep is slow instead of broken.
 
 The Vercel project's **root directory is the repo root**, so the root
 `vercel.json` is the config that ships. It declares the `frontend` service
-(`root: "frontend"`, Vite) and rewrites `/api`, `/vobiz`, `/twilio`, `/plivo`
+(`root: "frontend"`, Vite) and rewrites `/api`, `/vobiz`, `/twilio`
 and `/internal` to the Render URL, so the public domain and the API cannot
 drift apart. Do **not** add a `backend` service there: a serverless backend
 cannot run the dialer (it starts a long-lived asyncio task in `lifespan`) and

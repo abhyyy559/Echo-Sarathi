@@ -8,6 +8,8 @@ const PURPOSES = [
   [/\b(attendance|absence|absent|student|school|guardian)\b/i, 'Attendance follow-up'],
   [/\b(clinic|patient|appointment|hospital|doctor)\b/i, 'Clinic appointments'],
   [/\b(property|real estate|buyer|locality|site visit)\b/i, 'Real estate enquiries'],
+  [/\b(prank|mischief|silly|comedy)\b/i, 'Prank call'],
+  [/\b(check-in|check in|companion|wellbeing|well-being)\b/i, 'Warm check-in'],
   [/\b(feedback|survey|customer care|callback|post-service|rating)\b/i, 'Customer feedback'],
   [/\b(lead|sales|enquiry|inquiry|demo)\b/i, 'Lead follow-up'],
   [/\b(billing|payment|invoice|renewal)\b/i, 'Billing follow-up'],

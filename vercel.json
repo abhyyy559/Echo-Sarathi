@@ -30,10 +30,6 @@
       "destination": "https://echosarathi-api.onrender.com/twilio/:path*"
     },
     {
-      "source": "/plivo/:path*",
-      "destination": "https://echosarathi-api.onrender.com/plivo/:path*"
-    },
-    {
       "source": "/internal/:path*",
       "destination": "https://echosarathi-api.onrender.com/internal/:path*"
     },

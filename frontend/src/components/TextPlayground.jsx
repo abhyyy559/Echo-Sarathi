@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { playgroundApi } from '../api.js';
-import LeadCardForm, { ABSENT_STUDENT_DEFAULTS } from './LeadCardForm.jsx';
+import LeadCardForm from './LeadCardForm.jsx';
+import { LEAD_FIELD_HINTS } from '../utils/leadCard.js';
 
 export function confidenceClass(v) {
   const n = typeof v === 'number' ? v : Number(v);
@@ -25,8 +26,9 @@ export function confidenceClass(v) {
  *   autoStart      begin the session as soon as versionId is set (default true)
  *   contact        optional lead-card object passed to startSession; falls back
  *                  to the card edited in the form below (applies on (re)start).
+ *   leadDefaults   per-agent contact-card prefill from utils/leadCard.js.
  */
-export default function TextPlayground({ versionId, onFinishReport, autoStart = true, contact }) {
+export default function TextPlayground({ versionId, onFinishReport, autoStart = true, contact, leadDefaults }) {
   const [messages, setMessages] = useState([]); // [{speaker:'caller'|'agent', text}]
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export default function TextPlayground({ versionId, onFinishReport, autoStart = 
   const [fields, setFields] = useState([]);
   const [completing, setCompleting] = useState(false);
   const [attempt, setAttempt] = useState(0); // bump to retry a failed start
-  const [contactCard, setContactCard] = useState(contact || { ...ABSENT_STUDENT_DEFAULTS });
+  const [contactCard, setContactCard] = useState(() => ({ ...(leadDefaults || contact || {}) }));
 
   const sessionRef = useRef(null);
   const logRef = useRef(null);
@@ -44,6 +46,17 @@ export default function TextPlayground({ versionId, onFinishReport, autoStart = 
   // restarting the session on every keystroke.
   const contactRef = useRef(contactCard);
   contactRef.current = contactCard;
+
+  // The parent resolves the version (and its fields) asynchronously; when
+  // that lands, replace the provisional card before a session starts.
+  const defaultsKey = JSON.stringify(leadDefaults || {});
+  useEffect(() => {
+    if (!leadDefaults) return;
+    const next = { ...leadDefaults };
+    setContactCard(next);
+    contactRef.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultsKey]);
 
   // (Re)start the session whenever the target version changes.
   useEffect(() => {
@@ -141,7 +154,12 @@ export default function TextPlayground({ versionId, onFinishReport, autoStart = 
     <div className="text-playground">
       <details className="card" open>
         <summary>Who are we calling? (optional lead card)</summary>
-        <LeadCardForm value={contactCard} onChange={setContactCard} defaults={ABSENT_STUDENT_DEFAULTS} />
+        <LeadCardForm
+          value={contactCard}
+          onChange={setContactCard}
+          defaults={leadDefaults}
+          hints={LEAD_FIELD_HINTS}
+        />
       </details>
       <div className="form-actions space-between tp-toolbar">
         <span className="meta-line">

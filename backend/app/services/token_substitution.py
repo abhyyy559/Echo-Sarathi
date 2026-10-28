@@ -21,8 +21,12 @@ KNOWN_TOKENS: tuple[str, ...] = (
     "[Lead Name]",
     "[Contact Name]",
     "[Customer Name]",
+    "[Patient Name]",
     "[Parent/Guardian Name]",
     "[Agent Name]",
+    "[Doctor Name]",
+    "[Appointment Date]",
+    "[Appointment Time]",
     "[Source]",
     "[Expected Return Date]",
 )
@@ -30,7 +34,15 @@ KNOWN_TOKENS: tuple[str, ...] = (
 _BRACKET_ARTIFACT_RE = re.compile(r"\[[^\]]*\]")
 _DOUBLE_SPACE_RE = re.compile(r"\s{2,}")
 
-_NAME_KEYS = ("student_name", "name", "contact_name", "full_name", "lead_name")
+_NAME_KEYS = (
+    "student_name",
+    "patient_name",
+    "customer_name",
+    "name",
+    "contact_name",
+    "full_name",
+    "lead_name",
+)
 _PARENT_KEYS = ("parent_name", "parent", "guardian", "contact_person")
 
 
@@ -175,17 +187,34 @@ def build_token_map(
         "[Institution Name]": org,
         "[Company Name]": company_name,
         "[Clinic Name]": clinic_name,
-        "[Property Name]": _context_value(company_context, "property_name"),
-        "[Locality]": _context_value(company_context, "locality"),
-        "[Service Type]": _context_value(company_context, "service_type"),
-        "[Service Date]": _context_value(company_context, "service_date"),
+        # Per-call card data wins over the version's generic context: the
+        # lead knows which property/locality this call is about, and a
+        # company-context default would make every call speak the same one.
+        "[Property Name]": _first(card, ("property_name",))
+        or _context_value(company_context, "property_name"),
+        "[Locality]": _first(card, ("locality", "area"))
+        or _context_value(company_context, "locality"),
+        "[Service Type]": _first(card, ("service_type",))
+        or _context_value(company_context, "service_type"),
+        "[Service Date]": _first(card, ("service_date",))
+        or _context_value(company_context, "service_date"),
         "[Student Name]": name,
         "[Lead Name]": name,
         "[Contact Name]": name,
         "[Customer Name]": name,
+        "[Patient Name]": name,
         "[Parent/Guardian Name]": parent,
         "[Agent Name]": who,
-        "[Source]": _context_value(company_context, "source", "lead_source"),
+        # Clinic presets put the slot in company_context; a contact card may
+        # also carry it per call, so the contact wins when both are present.
+        "[Doctor Name]": _context_value(company_context, "doctor_name")
+        or _first(card, ("doctor_name", "doctor")),
+        "[Appointment Date]": _first(card, ("appointment_date", "date"))
+        or _context_value(company_context, "appointment_date"),
+        "[Appointment Time]": _first(card, ("appointment_time", "time"))
+        or _context_value(company_context, "appointment_time"),
+        "[Source]": _first(card, ("source", "lead_source"))
+        or _context_value(company_context, "source", "lead_source"),
         "[Expected Return Date]": "",
     }
 

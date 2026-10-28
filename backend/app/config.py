@@ -56,19 +56,14 @@ class Settings(BaseSettings):
 
     # --- infrastructure -------------------------------------------------
     database_url: str = "sqlite:///./voice_agent.db"
-    # Redis is optional: nothing in this app uses it (the dialer is
-    # Postgres-backed). Empty means "not configured" and /api/health reports
-    # it as unknown instead of a permanent red dot.
-    redis_url: str = ""
     environment: str = "development"
     log_level: str = "info"
     # Daily Deepgram/Cartesia poll cadence. Zero disables the background task.
     usage_refresh_interval_hours: int = 24
 
     # --- telephony (provider selection) -----------------------------------
-    # "", "twilio", "plivo" or "vobiz". Empty = auto-select (Plivo wins when
-    # both credential sets are present; Plivo is the cheaper India leg).
-    # Set explicitly to "vobiz" to place calls over Vobiz.
+    # "", "twilio" or "vobiz". Empty = auto-select (Twilio when its
+    # credentials are present, otherwise Vobiz).
     telephony_provider: str = ""
 
     # Twilio
@@ -85,12 +80,6 @@ class Settings(BaseSettings):
     # header must equal this value). Empty = accept + warn (Vobiz offers no
     # native signing); set it on exposed deployments.
     vobiz_webhook_secret: str = ""
-
-    # Plivo
-    plivo_auth_id: str = ""
-    plivo_auth_token: str = ""
-    plivo_phone_number: str = ""
-    plivo_validate_signature: bool = True
 
     # Public https base URL of this backend (e.g. https://x.ngrok-free.app).
     # TwiML webhooks and the Twilio Media Streams WS URL are derived from it.
@@ -409,7 +398,6 @@ class Settings(BaseSettings):
             "groq": bool(self.groq_api_key_list),
             "openai": bool(self.openai_api_key),
             "twilio": bool(self.twilio_account_sid and self.twilio_auth_token),
-            "plivo": bool(self.plivo_auth_id and self.plivo_auth_token),
             "vobiz": bool(self.vobiz_auth_id and self.vobiz_auth_token),
             "livekit": bool(self.livekit_api_key and self.livekit_api_secret),
         }

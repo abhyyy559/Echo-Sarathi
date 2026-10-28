@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { API_BASE, callExportUrl } from '../api.js';
+import { API_BASE, downloadCallExport } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import { resolveCallActivity } from '../utils/callActivity.js';
 import { cleanTranscriptText } from '../utils/transcript.js';
@@ -80,6 +80,16 @@ export default function CallDetailPage() {
   const navigate = useNavigate();
   const [isLive, setIsLive] = useState(true);
   const [playing, setPlaying] = useState(false);
+  const [exportError, setExportError] = useState(null);
+
+  async function exportCall(format) {
+    setExportError(null);
+    try {
+      await downloadCallExport(id, format);
+    } catch (e) {
+      setExportError(e.message || 'Export failed.');
+    }
+  }
 
   const { data: call, error, loading, reload } = usePoll(`/api/calls/${id}`, 3000, isLive);
 
@@ -143,13 +153,13 @@ export default function CallDetailPage() {
           <span className="export-label">Export:</span>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={() => window.open(callExportUrl(id, 'csv'), '_blank')}
+            onClick={() => exportCall('csv')}
           >
             CSV
           </button>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={() => window.open(callExportUrl(id, 'xlsx'), '_blank')}
+            onClick={() => exportCall('xlsx')}
           >
             XLSX
           </button>
@@ -157,6 +167,7 @@ export default function CallDetailPage() {
       </div>
 
       {error && <div className="banner banner-error">{error}</div>}
+      {exportError && <div className="banner banner-error">{exportError}</div>}
 
       <p className="meta-line">
         <span>
