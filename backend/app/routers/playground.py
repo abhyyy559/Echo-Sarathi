@@ -526,39 +526,43 @@ def _backfill_grounded_fields(
 #: matter most, so they are spent on in full.
 _FULL_PROMPT_ROWS = 3
 
-#: Telugu models default to the literary (granthik) register they were trained
-#: on: a live call said "గైర్హాజరు", "వైద్య ధృవపత్రం", "విచారిస్తున్నాను" and even
-#: "ఆఫీస్" for a college - the caller answered "ardham kaledhu andi" and heard the
-#: same textbook sentence again. One GOOD/BAD pair plus a word-for-word swap
-#: list is what moves the output; "speak casually" alone does nothing.
+#: Default to natural Telugu-English mixing, not literary Telugu or mixing
+#: only after the caller does. Examples guide style, never the call's mission.
 _SPOKEN_TELUGU_FULL = (
-    "SPOKEN TELUGU (hard rule): speak the everyday Telugu people use on the "
-    "phone in Hyderabad/Andhra - never bookish or newsreader Telugu.\n"
-    "GOOD: \"అర్థమైంది — fever వల్ల కాలేజీకి రాలేదు కదా. రేపు వస్తాడా?\"\n"
-    "BAD (never say): \"జ్వరము నిమిత్తము విద్యాలయమునకు విరామము కలదని "
-    "వివరము నమోదు చేయుచున్నాను.\"\n"
-    "Say: \"కాలేజీకి రాలేదు / leave\" not \"గైర్హాజరు\"; \"డాక్టర్ సర్టిఫికెట్\" not "
-    "\"వైద్య ధృవపత్రం\"; \"అడగడానికి కాల్ చేశా\" not \"విచారిస్తున్నాను\"; "
-    "\"థాంక్స్\" not \"ధన్యవాదాలు\"; \"హాయ్\" not \"నమస్కారం\" (unless the caller says "
-    "it first); \"బై\" not \"సెలవు\". Never call a college \"ఆఫీస్\" - it is "
-    "\"కాలేజీ\". Keep the caller's English words in English (college, fever, "
-    "doctor, certificate, leave, exam, bus). If they say \"అర్థం కాలేదు\", do not "
-    "repeat the same sentence: say it again shorter and simpler.\n"
-    "Ask: \"ఈరోజు ఎందుకు రాలేదు?\" not \"గైర్హాజరుకు కారణం తెలియజేయండి\"; "
-    "\"ఎప్పుడు తిరిగి వస్తారు?\" not \"ఎప్పుడు హాజరుకావాలని భావిస్తున్నారు?\". "
-    "Never start a sentence with \"దయచేసి\".\n"
-    "EMPATHY: if the student is sick, sound concerned (\"అయ్యో, ఏమైంది? ఇప్పుడు "
-    "ఎలా ఉన్నాడు?\") - never say \"అది బాగుంది\" / \"good\" about an illness."
+    "Default to Tenglish: everyday spoken Telugu syntax with familiar English "
+    "terms even if the caller uses only Telugu; not full/formal or bookish Telugu. "
+    "Use Telugu script for Telugu and English spelling for English. "
+    "No English word quota; do not translate every word. "
+    "Never translate verbatim disclosures or proper names.\n"
+    "Honor requested English fully; stay in English while the caller continues; "
+    "return naturally on Telugu/Tenglish, never automatically after one turn. "
+    "Answer questions directly from known facts, then ask the next missing fact.\n"
+    "Examples are style only, not facts or mission: "
+    "\"రేపటి site visit‌కి వస్తున్నారా అండి, లేక reschedule చేయాలా?\" "
+    "Say \"కాలేజీకి రాలేదు / leave\" not \"గైర్హాజరు\", \"doctor certificate\" not "
+    "\"వైద్య ధృవపత్రం\", \"అడగడానికి call చేశా\" not \"విచారిస్తున్నాను\", "
+    "\"Thanks\" not \"ధన్యవాదాలు\", \"Hi\" not \"నమస్కారం\" (unless the caller "
+    "says it first), \"బై\" not \"సెలవు\". Never call a college \"ఆఫీస్\". "
+    "No \"దయచేసి\". If they say \"అర్థం కాలేదు\", rephrase shorter and simpler, "
+    "not the same sentence. For illness, sound concerned (\"అయ్యో, ఏమైంది?\"), "
+    "never \"అది బాగుంది\" / \"good\"."
 )
 
 _SPOKEN_TELUGU_COMPACT = (
-    "Speak everyday phone Telugu, never bookish Telugu: \"అర్థమైంది — fever వల్ల "
-    "కాలేజీకి రాలేదు కదా. రేపు వస్తాడా?\" Say కాలేజీకి రాలేదు (not గైర్హాజరు), "
-    "డాక్టర్ సర్టిఫికెట్ (not వైద్య ధృవపత్రం), కాల్ చేశా (not విచారిస్తున్నాను), "
-    "ఎప్పుడు తిరిగి వస్తారు (not హాజరుకావాలని), థాంక్స్, బై; never \"ఆఫీస్\" for "
-    "college and no \"దయచేసి\"; keep English words in English. If they say "
-    "\"అర్థం కాలేదు\", rephrase shorter - do not repeat the same sentence. If the "
-    "student is sick, sound concerned (\"అయ్యో, ఏమైంది?\"), never \"అది బాగుంది\".\n"
+    "Default to Tenglish: everyday spoken Telugu syntax with familiar English "
+    "terms even if the caller uses only Telugu; not full/formal or bookish Telugu. "
+    "Use Telugu script for Telugu and English spelling for English. "
+    "No English word quota; do not translate every word. "
+    "Never translate verbatim disclosures or proper names. "
+    "Honor requested English fully; stay in English while the caller continues; "
+    "return naturally on Telugu/Tenglish, never automatically after one turn. "
+    "Answer questions directly from known facts, then ask the next missing fact. "
+    "You can only talk and record: never claim actions you cannot perform. "
+    "Never claim WhatsApp sent or coordinator notified. "
+    "Examples are style only, not facts or mission: కాలేజీకి రాలేదు / leave "
+    "(not గైర్హాజరు), doctor certificate (not వైద్య ధృవపత్రం), Thanks, బై; "
+    "never \"ఆఫీస్\" for college or \"దయచేసి\". If unclear, rephrase shorter. "
+    "For illness, sound concerned, never \"అది బాగుంది\".\n"
 )
 
 
@@ -648,8 +652,8 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "unknown": "May I know who I'm speaking with?",
     },
     "te": {
-        "greet": "హాయ్ {name} గారు.",
-        "intro_with_name": "హాయ్ {name} గారు, నేను {who}.",
+        "greet": "Hi {name} గారు.",
+        "intro_with_name": "Hi {name} గారు, నేను {who}.",
         "intro": "నేను {who} మాట్లాడుతున్నా.",
         "verify": "{name} గారు మాట్లాడుతున్నారా?",
         "unknown": "హలో, మీరు ఎవరు మాట్లాడుతున్నారు?",
@@ -675,8 +679,8 @@ _EMPTY_REPLY_LINES: dict[str, tuple[str, str]] = {
         "Thank you for your time. Goodbye.",
     ),
     "te": (
-        "సారీ, అర్థం కాలేదు - మళ్లీ చెప్పండి?",
-        "సరే, థాంక్స్ అండి. బై.",
+        "Sorry, అర్థం కాలేదు - మళ్లీ చెప్పండి?",
+        "సరే, Thanks అండి. బై.",
     ),
     "hi": (
         "क्षमा कीजिए, समझ नहीं आया - फिर से बता सकते हैं?",
@@ -689,7 +693,7 @@ _EMPTY_REPLY_LINES: dict[str, tuple[str, str]] = {
 #: have is the worst of both worlds.
 _ACK_LINES = {
     "en": "Got it, thank you.",
-    "te": "సరే, థాంక్స్.",
+    "te": "సరే, Thanks.",
     "hi": "ठीक है, धन्यवाद।",
 }
 
@@ -1310,10 +1314,15 @@ def _render_text_system_prompt(
         "- Write only words a person says aloud. NEVER include stage "
         "directions, notes, or cues in brackets or parentheses such as "
         "'(Waiting for response)' or '*laughs*'.\n"
-        "- Match the caller's language: start in the disclosure's language, "
-        "and if they speak another one or mix languages, follow them rather "
-        "than insisting on yours.\n"
-        "- You can only talk and record answers. You cannot send messages, "
+        + (
+            "- After the verbatim disclosure, default generated replies to Tenglish; "
+            "follow the caller's language preference.\n"
+            if _agent_language(config) == "te"
+            else "- Match the caller's language: start in the disclosure's language, "
+            "and if they speak another one or mix languages, follow them rather "
+            "than insisting on yours.\n"
+        )
+        + "- You can only talk and record answers. You cannot send messages, "
         "email anyone, book with a colleague, or transfer the call. Never say "
         "you did any of those; say what will happen next instead."
     )

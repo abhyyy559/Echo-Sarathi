@@ -62,20 +62,26 @@ _AGENT_DERIVED_FIELDS = frozenset(
 #: One GOOD/BAD pair per language is what actually moves the output.
 _SPOKEN_STYLE: dict[str, str] = {
     "te": (
-        "- Telugu script for the Telugu, English words IN ENGLISH inside the "
-        "same sentence, the way Hyderabad speaks on the phone.\n"
+        "- Default to natural Tenglish: everyday spoken Telugu mixed with "
+        "familiar English, even when the caller uses only Telugu; not pure "
+        "Telugu or the book register. Use Telugu script for Telugu and English "
+        "words in English (college, fever, doctor, certificate, site visit, "
+        "reschedule). Never hunt for a Sanskrit or classical synonym. "
+        "No word-for-word translation or forced English quota.\n"
         "  GOOD: \"అర్థమైంది — fever వల్ల కాలేజ్‌కి రాలేదు కదా. రేపు వస్తాడా?\"\n"
-        "  BAD (bookish, never say this): \"జ్వరము నిమిత్తము విద్యాలయమునకు "
-        "విరామము కలదని వివరము నమోదు చేయుచున్నాను.\"\n"
-        "- When the caller used an English word (fever, college, attendance, "
-        "tomorrow, fee), give it back to them in English. Never hunt for a "
-        "Sanskrit or classical synonym for a word they already said.\n"
-        "- Say కాలేజీకి రాలేదు / leave (not గైర్హాజరు), డాక్టర్ సర్టిఫికెట్ (not "
-        "వైద్య ధృవపత్రం), అడగడానికి కాల్ చేశా (not విచారిస్తున్నాను), థాంక్స్ (not "
-        "ధన్యవాదాలు), సరే/బై (not సెలవు at the phone). Never call a college "
-        "\"ఆఫీస్\" - that confused a live caller who asked \"ekkadaki raledhu?\".\n"
-        "- If the caller says \"అర్థం కాలేదు\", rephrase shorter and simpler once. "
-        "Repeating the same formal sentence is what made them hang up.\n"
+        "  GOOD: \"రేపటి site visit‌కి వస్తున్నారా అండి, లేక reschedule చేయాలా?\"\n"
+        "  BAD: \"జ్వరము నిమిత్తము విద్యాలయమునకు విరామము కలదని వివరము "
+        "నమోదు చేయుచున్నాను.\" Examples show style, not facts about this call.\n"
+        "- Prefer Hi, Sorry, Thanks and బై; college, not ఆఫీస్ for a college. "
+        "If they say \"అర్థం కాలేదు\", rephrase shorter and simpler once.\n"
+        "- If they request English or answer fully in English, reply in English. "
+        "Stay in English while they continue in English; return to Tenglish "
+        "when they do. Do not translate names or the verbatim disclosure. "
+        "Keep extraction field names in English when calling tools.\n"
+        "- Answer the caller's question from known facts, then ask only the next "
+        "missing thing. Unknown: \"Sorry అండి, ఆ detail నా దగ్గర లేదు.\" "
+        "Never promise or claim a message, update or follow-up without a "
+        "successful tool result. Recording an answer is not sending a message.\n"
     ),
     "hi": (
         "- Devanagari for the Hindi, English words IN ENGLISH inside the same "
@@ -359,7 +365,7 @@ _AI_MENTION_RE = re.compile(r"\bai\b", re.IGNORECASE)
 #: greetings match on word boundaries so "hi" cannot fire inside "this".
 _GREETING_WORDS: tuple[str, ...] = (
     "hello", "hi", "namaste", "namaskar", "namaskaram", "vanakkam",
-    "నమస్కారం", "నమస్తే", "హలో",
+    "నమస్కారం", "నమస్తే", "హలో", "హాయ్",
     "नमस्ते", "नमस्कार", "हैलो", "हेलो",
 )
 _GREETING_RE = re.compile(
@@ -397,13 +403,13 @@ _OPENING_PHRASES: dict[str, dict[str, str]] = {
         "ask_who": "May I know who I'm speaking with?",
     },
     "te": {
-        "hello": "నమస్కారం",
-        "ai_assistant": "ఒక AI అసిస్టెంట్",
-        "self_intro": "నేను {who} మాట్లాడుతున్నాను",
+        "hello": "Hi",
+        "ai_assistant": "ఒక AI assistant",
+        "self_intro": "నేను {who} మాట్లాడుతున్నా",
         "name_only": "నేను {who}.",
         "from_suffix": " {institution} నుండి",
-        "from_standalone": "{institution} నుండి కాల్ చేస్తున్నాను.",
-        "about": " {subject} గురించి కాల్ చేస్తున్నాను.",
+        "from_standalone": "{institution} నుండి call చేస్తున్నా.",
+        "about": " {subject} గురించి call చేస్తున్నా.",
         "ask_who": "మీ పేరు ఏంటి?",
         # Bare "Ram." is how a form letter addresses someone; on a Telugu phone
         # call the caller is "Ram గారూ". Without it the name also runs into the
@@ -824,7 +830,9 @@ def render_compact_instructions(
     """
     lang_code = str(language or "").strip().lower()
     language_line = ""
-    if lang_code and lang_code != "en":
+    if lang_code == "te":
+        language_line = _SPOKEN_STYLE["te"]
+    elif lang_code and lang_code != "en":
         lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
         language_line = (
             f"Answer in {lang_name} when the caller writes "
@@ -834,6 +842,14 @@ def render_compact_instructions(
             + "If the caller answers the whole turn in English, reply in English "
             "for that turn and go back afterwards.\n"
         )
+    mirroring_rule = (
+        "" if lang_code == "te" else "Keep their language; code-switch only as they do. "
+    )
+    goodbye_rule = (
+        'say one short goodbye ("సరే అండి, Thanks. బై.") '
+        if lang_code == "te"
+        else "say the goodbye - one half-line on what happens next because they spoke to you - "
+    )
     state = (
         f"Already recorded: {', '.join(captured)}" if captured else "Nothing recorded yet."
     )
@@ -854,8 +870,8 @@ def render_compact_instructions(
         "A tool result is bookkeeping, not the caller speaking: after one, add "
         "nothing to what you already said. Never read the caller's words back "
         "verbatim - the phone transcript is often misspelled, so say what you "
-        "understood in your own words. Keep their language; code-switch only "
-        "as they do. If they change an earlier answer, record only the latest "
+        "understood in your own words. "
+        f"{mirroring_rule}If they change an earlier answer, record only the latest "
         "and check it once (\"so Wednesday, not Monday?\"). Read the room: a "
         "busy caller gets the point fast, a chatty one gets to finish.\n"
         "The caller does not know your checklist: never ask what the purpose, "
@@ -869,8 +885,7 @@ def render_compact_instructions(
         f"Record with record_extracted_field(field_name, value, confidence); "
         f"finish with end_call(summary). Valid field names: "
         f"{', '.join(captured + remaining) or 'none'}.\n"
-        "NOTHING STILL NEEDED means the call is over: say the goodbye - one "
-        "half-line on what happens next because they spoke to you - and call "
+        f"NOTHING STILL NEEDED means the call is over: {goodbye_rule}and call "
         "end_call(summary) in that same turn. end_call hangs up the line, so "
         "nothing you write after it is heard - do not ask one more question, "
         "do not add a second farewell. This is information collection with a "
@@ -997,7 +1012,9 @@ def render_system_prompt(
     else:
         lang_code = "en"
     lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
-    if lang_code != "en":
+    if lang_code == "te":
+        sections.append(f"{LANGUAGE_HEADER}\n{_SPOKEN_STYLE['te']}")
+    elif lang_code != "en":
         sections.append(
             f"{LANGUAGE_HEADER}\n"
             "- Speak the everyday phone register of this language, not its "
@@ -1077,11 +1094,23 @@ def render_system_prompt(
         "- Their name at most twice in the call, not in every sentence.\n"
         "- If they change an earlier answer, name the change neutrally (\"so "
         "not Monday but Wednesday?\") and record only the latest.\n"
-        "- On the goodbye, one half-line on what happens next because they "
-        "spoke to you (\"I'll make sure the right person follows up\")."
+        + (
+            '- Close once: "సరే అండి, Thanks. బై." No extra promises or questions.'
+            if lang_code == "te"
+            else "- On the goodbye, one half-line on what happens next because they "
+            "spoke to you (\"I'll make sure the right person follows up\")."
+        )
     )
 
     # 4b. Guardrails. Same token warning as above: one line per rule.
+    trouble_rule = (
+        "- TROUBLE LINES: can't hear — 'Sorry అండి, సరిగ్గా వినిపించలేదు. "
+        "మళ్లీ చెప్తారా?'; technical problem — 'Sorry అండి, technical problem "
+        "వల్ల call కొనసాగించలేకపోతున్నా. బై.' then end_call."
+        if lang_code == "te"
+        else "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
+        "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
+    )
     sections.append(
         "HARD RULES (non-negotiable):\n"
         "- AI IDENTITY (legal): if anyone asks whether you are a bot, AI, or a "
@@ -1119,9 +1148,7 @@ def render_system_prompt(
         "and NEVER a reason to end — ask a short clarifying question.\n"
         "- STOP SIGNALS (close on the FIRST one, no rebuttal, no callback offer): not "
         "interested / call later / busy / remove number / stop calling / wants a human.\n"
-        "- TROUBLE LINES: can't hear — 'Sorry, the line is unclear — could you say that "
-        "once more?'; technical problem — apologize, promise human follow-up, `end_call`."
-        "\n"
+        f"{trouble_rule}\n"
         "- TWO-ASK LIMIT: any single goal gets asked at most TWICE. No usable "
         "answer twice → acknowledge what they DID say, note the gap, move to "
         "the next goal. Never a third identical question — repetition is how "
