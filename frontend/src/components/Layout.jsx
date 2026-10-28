@@ -97,19 +97,41 @@ function IconCredits() {
   );
 }
 
+function IconTeam() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 5.5a3 3 0 0 1 0 5.8M17.5 14.2a5.5 5.5 0 0 1 4 5.3" />
+    </svg>
+  );
+}
+
+function IconAdmin() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3 4.5 6v6c0 4.4 3.2 7.7 7.5 9 4.3-1.3 7.5-4.6 7.5-9V6z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
 /* --- nav model -------------------------------------------------------------- */
 
 const NAV_ITEMS = [
   { to: '/', end: true, icon: <IconOverview />, label: 'Overview' },
-  { to: '/credits', icon: <IconCredits />, label: 'Credits' },
   { to: '/agents', icon: <IconAgents />, label: 'Agents' },
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
   { to: '/test-call', icon: <IconTestCall />, label: 'Test Call' },
   { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
   { to: '/phone-numbers', icon: <IconPhone />, label: 'Phone Numbers', soon: true },
+  { to: '/team', icon: <IconTeam />, label: 'Team' },
+  { to: '/credits', icon: <IconCredits />, label: 'Billing' },
   { to: '/guide', icon: <IconGuide />, label: 'Guide' },
 ];
+
+const ADMIN_ITEM = { to: '/admin', icon: <IconAdmin />, label: 'Platform admin' };
 
 const UTILITY_LINKS = [
   { to: '/dev', icon: <IconDev />, label: 'Dev' },
@@ -131,7 +153,10 @@ function titleFor(pathname) {
   if (pathname.startsWith('/playground')) return ['Playground', 'Talk or type with any saved agent version — zero minutes used'];
   if (pathname.startsWith('/test-call')) return ['Test call', 'Place a single sandbox call to your own number'];
   if (pathname.startsWith('/dev')) return ['Developer tools', 'Service health, provider keys, API catalog'];
-  if (pathname.startsWith('/credits')) return ['Credits', 'Prepaid wallet, top-up packs and call spend'];
+  if (pathname.startsWith('/credits')) return ['Billing & credits', 'Plan, invoices and the prepaid overage wallet'];
+  if (pathname.match(/^\/invoices\/\d+\/?$/)) return ['Invoice', 'GST tax invoice for a plan or top-up payment'];
+  if (pathname.startsWith('/team')) return ['Team', 'Members, roles and seats'];
+  if (pathname.startsWith('/admin')) return ['Platform admin', 'Every organization, contracts and credit adjustments'];
   if (pathname.startsWith('/phone-numbers')) return ['Phone numbers', 'Provision and manage DIDs'];
   if (pathname.startsWith('/guide')) return ['Guide', 'From empty account to first campaign'];
   return ['Echo Sarathi', 'AI voice calling console'];
@@ -190,6 +215,12 @@ export default function Layout() {
               {item.soon && <span className="nav-soon">soon</span>}
             </NavLink>
           ))}
+          {user && user.is_platform_admin && (
+            <NavLink to={ADMIN_ITEM.to} className={navClass} title={ADMIN_ITEM.label}>
+              {ADMIN_ITEM.icon}
+              <span>{ADMIN_ITEM.label}</span>
+            </NavLink>
+          )}
         </nav>
         {/* Utility surfaces — kept out of the main nav on purpose. */}
         <div className="sidebar-footlinks">
@@ -230,7 +261,13 @@ export default function Layout() {
                 })}
               </Link>
             )}
-            <span className="topbar-tag">Admin</span>
+            <span className="topbar-tag">
+              {user && user.role === 'owner'
+                ? 'Owner'
+                : user && user.role === 'admin'
+                  ? 'Admin'
+                  : 'Member'}
+            </span>
           </div>
         </header>
         <main className="content">

@@ -61,6 +61,16 @@ def require_roles(*roles: str):
     return checker
 
 
+def require_platform_admin(
+    request: Request, user: User = Depends(get_current_user)
+) -> User:
+    """Allow only emails listed in ``PLATFORM_ADMIN_EMAILS`` (empty = nobody)."""
+    allowed = request.app.state.settings.platform_admin_email_list
+    if user.email.strip().lower() not in allowed:
+        raise HTTPException(status_code=403, detail="platform admin only")
+    return user
+
+
 def get_org_or_404(db: Session, model: Any, entity_id: int, org_id: int) -> Any:
     """Fetch an org-scoped entity by primary key.
 

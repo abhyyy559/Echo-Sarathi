@@ -137,11 +137,12 @@ def place_test_call(
     elif campaign.domain_config_id != domain_config_id:
         campaign.domain_config_id = domain_config_id
 
-    from app.services.billing import MINIMUM_DIAL_BALANCE_PAISE, balance_paise
+    from app.services import billing
 
-    if balance_paise(db, user.org_id) < MINIMUM_DIAL_BALANCE_PAISE:
+    if not billing.can_dial(db, user.org_id):
         raise HTTPException(
-            status_code=402, detail="insufficient credits — top up to place calls"
+            status_code=402,
+            detail="insufficient minutes — top up or renew your plan to place calls",
         )
 
     contact = db.scalar(

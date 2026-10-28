@@ -6,6 +6,8 @@ Tokens are cookie-less bearer JWTs: ``{"sub": "<user_id>", "org": "<org_id>",
 """
 from __future__ import annotations
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -30,6 +32,17 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     except ValueError:
         return False
+
+
+def hash_token(raw: str) -> str:
+    """SHA-256 of a one-time token; only the hash is ever persisted."""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def new_token() -> tuple[str, str]:
+    """Return ``(raw_token, token_hash)`` for invite/reset links."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_token(raw)
 
 
 def create_access_token(user_id: int, org_id: int, role: str, settings: Settings) -> str:

@@ -60,6 +60,9 @@ services:
       # Keep public sign-up closed on a public deployment.
       - key: ALLOW_PUBLIC_REGISTRATION
         value: "false"
+      # Google OAuth client id for "Sign in with Google" (optional).
+      - key: GOOGLE_CLIENT_ID
+        sync: false
 
       # Demo tenant created by the boot seed. Set a non-default password on
       # any internet-exposed deployment.

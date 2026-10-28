@@ -173,7 +173,27 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
+  googleLogin: (credential) =>
+    apiFetch('/api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential }),
+    }),
   me: () => apiFetch('/api/auth/me'),
+  forgotPassword: (email) =>
+    apiFetch('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: ({ token, password }) =>
+    apiFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
+  acceptInvite: ({ token, password }) =>
+    apiFetch('/api/auth/accept-invite', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
 };
 
 export const agentsApi = {
@@ -238,8 +258,23 @@ export const analyticsApi = {
 };
 
 export const billingApi = {
-  /** Wallet balance, this month's spend, packs and the recent ledger. */
+  /** Plan, minutes, wallet balance, this month's spend, packs and ledger. */
   summary: () => apiFetch('/api/billing'),
+  /** Public plan catalog plus the organization's current plan. */
+  plans: () => apiFetch('/api/billing/plans'),
+  /** Start a plan period (gateway checkout or operator-settled). */
+  subscribe: (planId) =>
+    apiFetch('/api/billing/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: planId }),
+    }),
+  /** Stop renewal at the end of the paid period. */
+  cancel: () => apiFetch('/api/billing/cancel', { method: 'POST' }),
+  profile: () => apiFetch('/api/billing/profile'),
+  updateProfile: (data) =>
+    apiFetch('/api/billing/profile', { method: 'PATCH', body: JSON.stringify(data) }),
+  invoices: () => apiFetch('/api/billing/invoices'),
+  invoice: (id) => apiFetch(`/api/billing/invoices/${id}`),
   /** Creates a gateway order. Credits are granted only after /verify. */
   checkout: (packId) =>
     apiFetch('/api/billing/checkout', {
@@ -252,6 +287,47 @@ export const billingApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  /** Offline top-up; only enabled when the operator turned payments on. */
+  topup: (packId) =>
+    apiFetch('/api/billing/topup', {
+      method: 'POST',
+      body: JSON.stringify({ pack_id: packId }),
+    }),
+};
+
+export const teamApi = {
+  list: () => apiFetch('/api/team'),
+  invite: ({ email, role }) =>
+    apiFetch('/api/team/invites', {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    }),
+  revokeInvite: (id) => apiFetch(`/api/team/invites/${id}`, { method: 'DELETE' }),
+  setRole: (memberId, role) =>
+    apiFetch(`/api/team/members/${memberId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
+  removeMember: (memberId) =>
+    apiFetch(`/api/team/members/${memberId}`, { method: 'DELETE' }),
+};
+
+export const platformApi = {
+  summary: () => apiFetch('/api/platform/summary'),
+  orgs: (query) =>
+    apiFetch(`/api/platform/orgs${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+  org: (id) => apiFetch(`/api/platform/orgs/${id}`),
+  adjustCredits: (orgId, { amountPaise, description }) =>
+    apiFetch(`/api/platform/orgs/${orgId}/credits`, {
+      method: 'POST',
+      body: JSON.stringify({ amount_paise: amountPaise, description }),
+    }),
+  assignPlan: (orgId, body) =>
+    apiFetch(`/api/platform/orgs/${orgId}/plan`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  runLifecycle: () => apiFetch('/api/platform/lifecycle/run', { method: 'POST' }),
 };
 
 // Legacy flat surface kept for existing pages (campaigns / contacts / calls).

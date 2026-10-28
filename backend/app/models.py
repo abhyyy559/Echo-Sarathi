@@ -80,13 +80,25 @@ class Organization(Base):
     credit_balance_paise: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Snapshot used on GST invoices. Empty values fall back to the org name
+    # and owner email at invoice time, so a customer can be invoiced before
+    # they fill this in.
+    legal_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    gstin: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    billing_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    billing_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    billing_state: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    # Cooldown for the low-wallet email (see services/billing.py).
+    low_balance_alerted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     users: Mapped[list["User"]] = relationship(back_populates="organization")
 
 
 class User(Base):
-    """A member of an organization (email/password, JWT auth)."""
+    """A member of an organization (email/password or Google Sign-In, JWT auth)."""
 
     __tablename__ = "users"
 
@@ -95,7 +107,14 @@ class User(Base):
         ForeignKey("organizations.id"), nullable=False, index=True
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # NULL for accounts created through Google Sign-In that never set a
+    # password; password login rejects those rows instead of hashing None.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Google's stable OIDC subject id. Set when the account is linked to a
+    # Google identity; one identity maps to at most one user.
+    google_sub: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -465,3 +484,108 @@ class ConsentRecord(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     contact: Mapped[Optional[Contact]] = relationship(back_populates="consent_records")
+
+
+class Subscription(Base):
+    """One purchased plan period (monthly pass) for an organization.
+
+    Rows are historical: a renewal or plan change expires the previous row and
+    appends a new one. ``status`` is ``active`` until the period ends, then the
+    lifecycle job marks it ``expired`` (``active_subscription`` already ignores
+    periods whose end has passed, so expiry is never load-bearing for gating).
+    """
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_org_period", "org_id", "period_end"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    plan_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    period_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    included_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payment_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider_order_id: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    canceled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class Invoice(Base):
+    """A GST invoice issued when a plan or top-up payment succeeds.
+
+    Customer fields are snapshotted so a later profile edit never rewrites
+    history. Prices are GST-inclusive: ``subtotal_paise + gst_paise`` equals
+    ``total_paise``.
+    """
+
+    __tablename__ = "invoices"
+    __table_args__ = (Index("ix_invoices_org_issued", "org_id", "issued_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    subscription_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    payment_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    number: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    subtotal_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    gst_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    customer_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    customer_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    customer_gstin: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    customer_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    customer_state: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    issued_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Invite(Base):
+    """A pending team invitation; the raw token only ever travels by email/link."""
+
+    __tablename__ = "invites"
+    __table_args__ = (Index("ix_invites_org_email", "org_id", "email"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PasswordReset(Base):
+    """Single-use password-reset token (hashed at rest)."""
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

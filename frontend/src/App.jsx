@@ -15,6 +15,14 @@ import GuidePage from './pages/GuidePage.jsx';
 import TestCallPage from './pages/TestCallPage.jsx';
 import PhoneNumbersPage from './pages/PhoneNumbersPage.jsx';
 import CreditsPage from './pages/CreditsPage.jsx';
+import TeamPage from './pages/TeamPage.jsx';
+import AdminPage from './pages/AdminPage.jsx';
+import InvoicePage from './pages/InvoicePage.jsx';
+import {
+  AcceptInvitePage,
+  ForgotPasswordPage,
+  ResetPasswordPage,
+} from './pages/PasswordPages.jsx';
 
 // three.js (~600 kB) ships only on the marketing pages — keep it out of the
 // initial bundle the same way livekit-client is kept out.
@@ -58,6 +66,9 @@ export default function App() {
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
           {/* Public marketing pages. LandingPage itself bounces signed-in users home. */}
           <Route path="/landing" element={<LandingPage />} />
           <Route path="/pricing" element={<PricingPage />} />
@@ -81,6 +92,9 @@ export default function App() {
             <Route path="calls/:id" element={<CallDetailPage />} />
             <Route path="guide" element={<GuidePage />} />
             <Route path="credits" element={<CreditsPage />} />
+            <Route path="invoices/:id" element={<InvoicePage />} />
+            <Route path="team" element={<TeamPage />} />
+            <Route path="admin" element={<AdminPage />} />
             <Route path="test-call" element={<TestCallPage />} />
             <Route path="phone-numbers" element={<PhoneNumbersPage />} />
             <Route path="dev" element={<DevToolsPage />} />

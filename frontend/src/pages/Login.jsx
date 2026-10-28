@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiTargetLabel, authApi, setSession } from '../api.js';
+
+const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
 export default function Login() {
   const navigate = useNavigate();
@@ -12,6 +14,8 @@ export default function Login() {
   const [form, setForm] = useState({ orgName: '', email: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const googleBtnRef = useRef(null);
+  const [googleReady, setGoogleReady] = useState(false);
 
   const isRegister = mode === 'register';
   // The offline mock session is a local-development convenience only. In a
@@ -42,6 +46,85 @@ export default function Login() {
     setForm({ orgName: '', email: DEMO_EMAIL, password: DEMO_PASSWORD });
     setError(null);
   }
+
+  async function completeGoogleSignIn(credential) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await authApi.googleLogin(credential);
+      if (!res || !res.token) {
+        throw new Error(
+          `The backend at ${apiTargetLabel()} did not return a session token. Check the API deployment and database migrations.`
+        );
+      }
+      setSession(res.token, res.user);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Google Identity Services renders its own button. The script is only
+  // loaded when a client id was baked into the build (VITE_GOOGLE_CLIENT_ID).
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return undefined;
+    let cancelled = false;
+
+    function mountButton() {
+      const target = googleBtnRef.current;
+      if (cancelled || !target || !window.google?.accounts?.id) return;
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (response) => {
+          if (response && response.credential) {
+            completeGoogleSignIn(response.credential);
+          }
+        },
+      });
+      const width = Math.max(200, Math.min(360, Math.floor(target.clientWidth || 360)));
+      target.innerHTML = '';
+      window.google.accounts.id.renderButton(target, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        shape: 'rectangular',
+        text: 'continue_with',
+        logo_alignment: 'left',
+        width,
+      });
+      setGoogleReady(true);
+    }
+
+    if (window.google?.accounts?.id) {
+      mountButton();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const existing = document.getElementById('google-identity-services');
+    if (existing) {
+      existing.addEventListener('load', mountButton);
+      return () => {
+        cancelled = true;
+        existing.removeEventListener('load', mountButton);
+      };
+    }
+
+    const script = document.createElement('script');
+    script.id = 'google-identity-services';
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.addEventListener('load', mountButton);
+    document.head.appendChild(script);
+    return () => {
+      cancelled = true;
+      script.removeEventListener('load', mountButton);
+    };
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -132,6 +215,13 @@ export default function Login() {
           </button>
         </div>
 
+        {GOOGLE_CLIENT_ID && <div className="google-auth" ref={googleBtnRef} />}
+        {googleReady && (
+          <div className="auth-divider">
+            <span>or use your email</span>
+          </div>
+        )}
+
         <form onSubmit={submit}>
         {isRegister && (
           <div className="field">
@@ -177,6 +267,12 @@ export default function Login() {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
         </div>
+
+        {!isRegister && (
+          <div className="field-foot">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </div>
+        )}
 
         <div className={`err-msg${error ? ' show' : ''}`}>{error}</div>
 

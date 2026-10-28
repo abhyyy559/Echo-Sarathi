@@ -19,6 +19,7 @@ param(
 . (Join-Path $PSScriptRoot "common.ps1")
 
 $cfg = Get-DeployConfig
+$local = Get-LocalEnv
 Require-Values -Map $cfg -Keys @("VERCEL_TOKEN", "VERCEL_PROJECT_ID", "VERCEL_ORG_ID")
 
 if ([string]::IsNullOrWhiteSpace($RenderServiceUrl)) {
@@ -92,6 +93,14 @@ function Set-VercelEnv {
 }
 
 Set-VercelEnv -Key "VITE_API_URL" -Value $RenderServiceUrl
+# "Continue with Google" is baked in at build time; the backend verifies the
+# token against the same client id (GOOGLE_CLIENT_ID on Render).
+$googleClientId = Get-ProviderValue -Maps @($local, $cfg) -Key "GOOGLE_CLIENT_ID"
+if ([string]::IsNullOrWhiteSpace($googleClientId)) {
+    Write-Host "  Google sign-in skipped (GOOGLE_CLIENT_ID not set)"
+} else {
+    Set-VercelEnv -Key "VITE_GOOGLE_CLIENT_ID" -Value $googleClientId
+}
 # The login page's demo hint is build-time config, never a hardcoded password:
 # setting these is what makes "click to fill" appear. They are baked into the
 # public bundle by definition, which is the same exposure the old hardcoded

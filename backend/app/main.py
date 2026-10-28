@@ -126,14 +126,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         domain_configs,
         export,
         internal,
+        platform,
         playground,
         plivo,
+        team,
         test_call,
         twilio,
         vobiz,
     )
 
     fast_app.include_router(auth.router)
+    fast_app.include_router(team.router)
+    fast_app.include_router(platform.router)
     fast_app.include_router(agents.router)
     fast_app.include_router(agents.agent_versions_router)
     fast_app.include_router(analytics.router)
@@ -215,10 +219,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "(no outbound calls will be placed)"
             )
 
+        from app.services.billing_lifecycle import billing_lifecycle_loop
         from app.services.usage_collector import usage_refresh_loop
 
         usage_task = asyncio.create_task(
             usage_refresh_loop(app_settings, app.state.session_factory)
+        )
+        lifecycle_task = asyncio.create_task(
+            billing_lifecycle_loop(app_settings, app.state.session_factory)
         )
         try:
             yield
@@ -232,6 +240,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             usage_task.cancel()
             try:
                 await usage_task
+            except asyncio.CancelledError:
+                pass
+            lifecycle_task.cancel()
+            try:
+                await lifecycle_task
             except asyncio.CancelledError:
                 pass
 

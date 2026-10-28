@@ -158,9 +158,40 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
 
+    # Transactional email. Empty SMTP_HOST disables delivery: messages are
+    # logged (without secrets) so local development still shows invite/reset
+    # links. Set SMTP_HOST/SMTP_USER/SMTP_PASSWORD in production.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Echo Sarathi <hello@echosarathi.ai>"
+    smtp_tls: bool = True
+    # Public app URL used in email links (invite, reset, invoice).
+    frontend_base_url: str = "http://localhost:5173"
+    # Seller details printed on GST invoices.
+    company_legal_name: str = "Echo Sarathi Labs"
+    company_gstin: str = ""
+    company_address: str = ""
+    company_state: str = ""
+    # Comma-separated emails that can open the platform admin console.
+    platform_admin_emails: str = ""
+    # How often the plan lifecycle runs (expiry + 7-day renewal reminders).
+    # Zero disables the background loop; the platform admin can always run it
+    # manually.
+    billing_lifecycle_interval_hours: int = 6
+
     @property
     def checkout_enabled(self) -> bool:
         return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @property
+    def platform_admin_email_list(self) -> list[str]:
+        return [
+            email.strip().lower()
+            for email in self.platform_admin_emails.split(",")
+            if email.strip()
+        ]
 
     # --- domain configs ------------------------------------------------------
     # Default: ../domain-configs relative to repo root. In container: /domain-configs.
@@ -170,6 +201,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "change_me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # one week
+    # Google OAuth client id for "Sign in with Google". The browser receives a
+    # signed ID token from Google Identity Services and posts it to
+    # /api/auth/google; the backend verifies its signature and audience.
+    # Empty = Google sign-in disabled (the login page hides the button).
+    google_client_id: str = ""
     # H5: open registration mints owner-role orgs. Leave true for local
     # demos; set false on any network-exposed deployment.
     allow_public_registration: bool = True

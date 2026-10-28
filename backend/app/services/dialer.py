@@ -168,20 +168,25 @@ class DialerService:
             return 0
         placed = 0
         with self.session_factory() as db:
-            in_flight = in_flight_call_count(db, phone_only=True)
+            in_flight: dict[Optional[int], int] = {}
             campaigns = db.scalars(select(Campaign).where(Campaign.status == "running")).all()
             for campaign in campaigns:
                 if not self._credit_ok(db, campaign):
                     continue
+                limit = self._concurrency_limit(db, campaign)
+                if campaign.org_id not in in_flight:
+                    in_flight[campaign.org_id] = in_flight_call_count(
+                        db, phone_only=True, org_id=campaign.org_id
+                    )
                 while (
-                    in_flight < self.settings.default_concurrency_limit
+                    in_flight[campaign.org_id] < limit
                     and self._cps_slots_available(now)
                 ):
                     outcome = self._process_next(db, campaign, now)
                     if outcome == "idle":
                         break
                     if outcome == "dialled":
-                        in_flight += 1
+                        in_flight[campaign.org_id] += 1
                         placed += 1
                     # "skipped" consumed a pick without a leg: keep looping so a
                     # non-dialable contact cannot stall the campaign, but never
@@ -196,22 +201,34 @@ class DialerService:
 
         A campaign stays ``running`` while blocked — pausing it automatically
         would lose the operator's intent — but it places no legs until the
-        wallet is topped up.
+        wallet is topped up or the plan's included minutes reset.
         """
-        from app.services.billing import MINIMUM_DIAL_BALANCE_PAISE, balance_paise
+        from app.services import billing, plans
 
         if campaign.org_id is None:
             return True
-        balance = balance_paise(db, campaign.org_id)
-        if balance >= MINIMUM_DIAL_BALANCE_PAISE:
+        if billing.can_dial(db, campaign.org_id):
             self._credit_blocked.discard(campaign.id)
             return True
         if campaign.id not in self._credit_blocked:
             self._credit_blocked.add(campaign.id)
+            _plan, subscription = plans.org_plan(db, campaign.org_id)
             logger.warning(
-                "dialer: campaign %s paused on credits (balance %s paise)", campaign.id, balance
+                "dialer: campaign %s paused on credits (plan minutes left=%s, balance=%s paise)",
+                campaign.id,
+                plans.included_seconds_remaining(db, campaign.org_id, subscription) // 60,
+                billing.balance_paise(db, campaign.org_id),
             )
         return False
+
+    def _concurrency_limit(self, db: Session, campaign: Campaign) -> int:
+        """Per-org concurrent dial cap, bounded by the deployment default."""
+        from app.services import plans
+
+        deployment_cap = max(1, int(self.settings.default_concurrency_limit))
+        if campaign.org_id is None:
+            return deployment_cap
+        return max(1, min(plans.concurrency_limit(db, campaign.org_id), deployment_cap))
 
     def _sweep_stale_ringing(self, db: Session, now: datetime, limit: int = 5) -> int:
         """Reconcile phone calls stuck ringing with no media leg.

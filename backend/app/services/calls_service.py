@@ -46,18 +46,35 @@ def log_call_event(
     return event
 
 
-def in_flight_call_count(db: Session, *, phone_only: bool = False) -> int:
-    """Calls still occupying capacity.
+def in_flight_call_count(
+    db: Session, *, phone_only: bool = False, org_id: Optional[int] = None
+) -> int:
+    """Calls still occupying capacity, optionally for one organization.
 
     ``phone_only`` scopes the count to telephony legs. Without it a browser
     playground session that was never finalised holds a dial slot forever: in
     production a ten-hour-old ``in_progress`` playground row stopped every
     campaign dial while the concurrency limit was 1. A NULL kind predates the
     column and was always a phone leg, so it stays counted.
+
+    ``org_id`` scopes the count to one tenant's concurrent dial limit; calls
+    without a denormalized org fall back to their campaign's org so pre-tenancy
+    rows still count against the right organization.
     """
-    query = select(func.count()).select_from(Call).where(
-        Call.status.in_(IN_FLIGHT_CALL_STATUSES)
-    )
+    if org_id is not None:
+        query = (
+            select(func.count())
+            .select_from(Call)
+            .outerjoin(Campaign, Campaign.id == Call.campaign_id)
+            .where(
+                Call.status.in_(IN_FLIGHT_CALL_STATUSES),
+                or_(Call.org_id == org_id, Campaign.org_id == org_id),
+            )
+        )
+    else:
+        query = select(func.count()).select_from(Call).where(
+            Call.status.in_(IN_FLIGHT_CALL_STATUSES)
+        )
     if phone_only:
         query = query.where(or_(Call.kind.is_(None), Call.kind != "playground"))
     return int(db.scalar(query) or 0)

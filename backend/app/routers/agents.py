@@ -16,12 +16,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user, get_org_or_404, require_roles
 from app.models import AGENT_STATUSES, Agent, AgentVersion, DomainConfig, User
+from app.services import plans
 from domain_config_schema import validate_agent_version_payload
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -179,6 +180,18 @@ def create_agent(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    plan, _subscription = plans.org_plan(db, user.org_id)
+    active = db.scalar(
+        select(func.count(Agent.id)).where(
+            Agent.org_id == user.org_id, Agent.status != "archived"
+        )
+    )
+    limit = int(plan["max_agents"])
+    if int(active or 0) >= limit:
+        raise HTTPException(
+            status_code=403,
+            detail=plans.limit_message(plan, "agents", limit),
+        )
     agent = Agent(
         org_id=user.org_id,
         name=payload.name.strip(),

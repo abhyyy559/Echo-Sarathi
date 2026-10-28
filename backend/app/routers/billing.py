@@ -1,9 +1,10 @@
-"""Prepaid credit wallet: balance, usage history and top-ups."""
+"""Plans, subscriptions, GST invoices and the prepaid credit wallet."""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import logging
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,15 +14,20 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.database import get_db
-from app.deps import get_current_user
-from app.models import Payment, User
-from app.services import billing
+from app.deps import get_current_user, require_roles
+from app.models import Invoice, Organization, Payment, User
+from app.services import billing, plans
+from app.services import invoices as invoice_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 RAZORPAY_ORDERS_URL = "https://api.razorpay.com/v1/orders"
+
+_GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
+
+require_billing_admin = require_roles("owner", "admin")
 
 
 class TopupRequest(BaseModel):
@@ -39,18 +45,49 @@ class VerifyRequest(BaseModel):
     pack_id: str
 
 
+class SubscribeRequest(BaseModel):
+    plan_id: str
+
+
+class ProfileUpdate(BaseModel):
+    legal_name: str = ""
+    gstin: str = ""
+    billing_email: str = ""
+    billing_address: str = ""
+    billing_state: str = ""
+
+
 @router.get("")
 def get_billing(
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Wallet state, this month's spend, packs and recent ledger."""
+    """Plan state, minutes, wallet, this month's spend, packs and ledger."""
     settings: Settings = request.app.state.settings
     data = billing.summary(db, user.org_id)
     data["manual_payments_enabled"] = bool(settings.allow_manual_payments)
     data["checkout_enabled"] = bool(settings.checkout_enabled)
     return data
+
+
+@router.get("/plans")
+def get_plans(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Public plan catalog plus where this organization currently sits."""
+    settings: Settings = request.app.state.settings
+    plan, subscription = plans.org_plan(db, user.org_id)
+    return {
+        "plans": plans.public_plans(),
+        "current_plan_id": plan["id"],
+        "subscription": billing.summary(db, user.org_id)["subscription"],
+        "checkout_enabled": bool(settings.checkout_enabled),
+        "manual_payments_enabled": bool(settings.allow_manual_payments),
+        "enterprise_contact": "hello@echosarathi.ai",
+    }
 
 
 def _razorpay_signature(order_id: str, payment_id: str, secret: str) -> str:
@@ -61,24 +98,15 @@ def _razorpay_signature(order_id: str, payment_id: str, secret: str) -> str:
     ).hexdigest()
 
 
-@router.post("/checkout")
-def checkout(
-    payload: CheckoutRequest,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+def _create_order(
+    settings: Settings,
+    *,
+    org_id: int,
+    user_id: int,
+    sku: str,
+    amount_paise: int,
 ) -> dict[str, Any]:
-    """Open a gateway order for a pack. Credits are NOT granted here."""
-    settings: Settings = request.app.state.settings
-    if not settings.checkout_enabled:
-        raise HTTPException(
-            status_code=503,
-            detail="online payments are not configured in this environment",
-        )
-    pack = billing.get_pack(payload.pack_id)
-    if pack is None:
-        raise HTTPException(status_code=404, detail="unknown pack")
-
+    """Open a Razorpay order for any SKU (pack or plan). No credits granted."""
     import httpx
 
     try:
@@ -86,13 +114,13 @@ def checkout(
             RAZORPAY_ORDERS_URL,
             auth=(settings.razorpay_key_id, settings.razorpay_key_secret),
             json={
-                "amount": int(pack["price_paise"]),
+                "amount": int(amount_paise),
                 "currency": "INR",
-                "receipt": f"org{user.org_id}-{pack['id']}",
+                "receipt": f"org{org_id}-{sku}"[:40],
                 "notes": {
-                    "org_id": str(user.org_id),
-                    "pack_id": str(pack["id"]),
-                    "user_id": str(user.id),
+                    "org_id": str(org_id),
+                    "pack_id": sku,
+                    "user_id": str(user_id),
                 },
             },
             timeout=20.0,
@@ -109,7 +137,221 @@ def checkout(
             resp.text[:300],
         )
         raise HTTPException(status_code=502, detail="payment gateway refused the order")
-    order = resp.json()
+    return resp.json()
+
+
+def _notify_payment_invoice(
+    db: Session, settings: Settings, payment_id: int
+) -> Optional[dict[str, Any]]:
+    invoice = billing.invoice_for_payment(db, payment_id)
+    if invoice is None:
+        return None
+    billing.notify_invoice(db, settings, invoice)
+    return invoice_service.invoice_out(invoice)
+
+
+@router.post("/subscribe")
+def subscribe(
+    payload: SubscribeRequest,
+    request: Request,
+    user: User = Depends(require_billing_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Start a plan period — via gateway checkout, or instantly when manual."""
+    settings: Settings = request.app.state.settings
+    plan = plans.get_plan(payload.plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="unknown plan")
+    if plan["id"] == plans.FREE_PLAN_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="the free plan is automatic — no checkout needed",
+        )
+    if plan["custom"] or not plan["self_serve"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{plan['name']} is arranged with our team — "
+                "write to hello@echosarathi.ai"
+            ),
+        )
+
+    if settings.checkout_enabled:
+        order = _create_order(
+            settings,
+            org_id=user.org_id,
+            user_id=user.id,
+            sku=billing.plan_sku(plan["id"]),
+            amount_paise=int(plan["price_paise"]),
+        )
+        billing.open_payment(
+            db,
+            org_id=user.org_id,
+            pack=billing.plan_pack(plan),
+            provider_order_id=str(order["id"]),
+            created_by=user.id,
+        )
+        db.commit()
+        return {
+            "mode": "checkout",
+            "order_id": order["id"],
+            "amount": int(order["amount"]),
+            "currency": order.get("currency", "INR"),
+            "key_id": settings.razorpay_key_id,
+            "pack_id": billing.plan_sku(plan["id"]),
+            "plan_id": plan["id"],
+            "plan_name": plan["name"],
+            "minutes": plan["included_minutes"],
+        }
+
+    if settings.allow_manual_payments:
+        payment = billing.open_manual_payment(
+            db,
+            org_id=user.org_id,
+            sku=billing.plan_sku(plan["id"]),
+            amount_paise=int(plan["price_paise"]),
+            created_by=user.id,
+        )
+        org = db.get(Organization, user.org_id)
+        assert org is not None
+        billing.purchase_plan(db, org, plan, payment)
+        db.commit()
+        invoice = _notify_payment_invoice(db, settings, payment.id)
+        logger.info(
+            "plan: org=%s plan=%s manual payment=%s", user.org_id, plan["id"], payment.id
+        )
+        return billing.summary(db, user.org_id) | {
+            "mode": "manual",
+            "invoice": invoice,
+        }
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "online payments are not configured — write to hello@echosarathi.ai "
+            "to activate a plan"
+        ),
+    )
+
+
+@router.post("/cancel")
+def cancel(
+    user: User = Depends(require_billing_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Stop renewal at period end; the paid period keeps running."""
+    subscription = billing.cancel_subscription(db, user.org_id)
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="no active plan period")
+    db.commit()
+    return billing.summary(db, user.org_id)
+
+
+@router.get("/profile")
+def get_profile(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return billing.summary(db, user.org_id)["billing_profile"]
+
+
+@router.patch("/profile")
+def update_profile(
+    payload: ProfileUpdate,
+    user: User = Depends(require_billing_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Billing details used on future invoices (issued ones stay frozen)."""
+    org = db.get(Organization, user.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="organization not found")
+    gstin = payload.gstin.strip().upper()
+    if gstin and not _GSTIN_RE.match(gstin):
+        raise HTTPException(
+            status_code=400,
+            detail="GSTIN must be 15 characters, e.g. 29ABCDE1234F1Z5",
+        )
+    email = payload.billing_email.strip().lower()
+    if email and "@" not in email:
+        raise HTTPException(status_code=400, detail="billing email is not valid")
+    org.legal_name = payload.legal_name.strip()[:200]
+    org.gstin = gstin[:20]
+    org.billing_email = email[:255]
+    org.billing_address = payload.billing_address.strip()
+    org.billing_state = payload.billing_state.strip()[:100]
+    db.commit()
+    return billing.summary(db, user.org_id)["billing_profile"]
+
+
+def _invoice_detail(settings: Settings, invoice) -> dict[str, Any]:
+    data = invoice_service.invoice_out(invoice)
+    data["seller"] = {
+        "name": settings.company_legal_name,
+        "gstin": settings.company_gstin,
+        "address": settings.company_address,
+        "state": settings.company_state,
+    }
+    data["gst_rate_percent"] = invoice_service.GST_RATE_PERCENT
+    return data
+
+
+@router.get("/invoices")
+def list_invoices(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    settings: Settings = request.app.state.settings
+    rows = invoice_service.list_invoices(db, user.org_id)
+    return {
+        "invoices": [invoice_service.invoice_out(row) for row in rows],
+        "seller": {
+            "name": settings.company_legal_name,
+            "gstin": settings.company_gstin,
+            "address": settings.company_address,
+            "state": settings.company_state,
+        },
+    }
+
+
+@router.get("/invoices/{invoice_id}")
+def get_invoice(
+    invoice_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None or invoice.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="not found")
+    return _invoice_detail(request.app.state.settings, invoice)
+
+
+@router.post("/checkout")
+def checkout(
+    payload: CheckoutRequest,
+    request: Request,
+    user: User = Depends(require_billing_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Open a gateway order for a top-up pack. Credits are NOT granted here."""
+    settings: Settings = request.app.state.settings
+    if not settings.checkout_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="online payments are not configured in this environment",
+        )
+    pack = billing.get_pack(payload.pack_id)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="unknown pack")
+
+    order = _create_order(
+        settings,
+        org_id=user.org_id,
+        user_id=user.id,
+        sku=str(pack["id"]),
+        amount_paise=int(pack["price_paise"]),
+    )
     billing.open_payment(
         db,
         org_id=user.org_id,
@@ -143,7 +385,7 @@ def verify(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Verify the checkout signature, then credit the pack exactly once."""
+    """Verify the checkout signature, then settle the SKU exactly once."""
     settings: Settings = request.app.state.settings
     if not settings.checkout_enabled:
         raise HTTPException(status_code=503, detail="online payments are not configured")
@@ -172,7 +414,11 @@ def verify(
         raise HTTPException(status_code=400, detail="pack does not match the order")
     granted = billing.settle_payment(db, payment, payload.razorpay_payment_id)
     db.commit()
-    return billing.summary(db, user.org_id) | {"credits_granted": granted}
+    invoice = _notify_payment_invoice(db, settings, payment.id)
+    return billing.summary(db, user.org_id) | {
+        "credits_granted": granted,
+        "invoice": invoice,
+    }
 
 
 @router.post("/webhook")
@@ -220,6 +466,8 @@ async def razorpay_webhook(
         return {"status": "amount_mismatch"}
     granted = billing.settle_payment(db, payment, payment_id or f"webhook-{order_id}")
     db.commit()
+    if granted:
+        _notify_payment_invoice(db, settings, payment.id)
     logger.info(
         "razorpay webhook: order=%s payment=%s granted=%s",
         order_id,
@@ -233,7 +481,7 @@ async def razorpay_webhook(
 def topup(
     payload: TopupRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_billing_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Credit a pack. Only available when a payment path is configured.
@@ -252,8 +500,25 @@ def topup(
     pack = billing.get_pack(payload.pack_id)
     if pack is None:
         raise HTTPException(status_code=404, detail="unknown pack")
+    payment = billing.open_manual_payment(
+        db,
+        org_id=user.org_id,
+        sku=str(pack["id"]),
+        amount_paise=int(pack["price_paise"]),
+        created_by=user.id,
+    )
     entry = billing.purchase_pack(db, user.org_id, pack, created_by=user.id)
+    org = db.get(Organization, user.org_id)
+    if org is not None:
+        invoice_service.create_invoice(
+            db,
+            org,
+            description=f"{pack['name']} pack · {pack['minutes']} minutes",
+            total_paise=payment.amount_paise,
+            payment_id=payment.id,
+        )
     db.commit()
+    invoice = _notify_payment_invoice(db, settings, payment.id)
     logger.info(
         "credits: org=%s pack=%s value=%s paid=%s",
         user.org_id,
@@ -261,4 +526,4 @@ def topup(
         entry.amount_paise,
         entry.paid_paise,
     )
-    return billing.summary(db, user.org_id)
+    return billing.summary(db, user.org_id) | {"invoice": invoice}
