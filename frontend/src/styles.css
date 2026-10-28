@@ -5812,3 +5812,29 @@ input[type='range']::-moz-range-thumb {
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+
+/* The dashboard's .stat-card glow pseudo is a fixed 120px box at the top-right
+ * corner; the landing reuses the class for a full-card 1px border ring, so
+ * without this the corner box paints over the card. */
+.od-landing .problem-stat .stat-card::before {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+}
+
+/* The showcase transcript is a static mock, not a live feed: scrolling it
+ * inside 160px cuts the last message into what looks like an empty bar. */
+.od-landing .showcase-body .s-bubbles {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* .conf is a 130px confidence *bar* in the dashboard; on the landing it is an
+ * inline percentage chip, so it must hug its text. */
+.od-landing .conf {
+  display: inline-block;
+  min-width: 0;
+}

@@ -162,6 +162,19 @@ html[data-theme="light"] .od-landing .choice-btn:hover { background: rgba(28, 25
 html[data-theme="light"] .od-landing .btn-end { border-color: rgba(28, 25, 23, 0.25); color: #5c5346; }
 html[data-theme="light"] .od-landing .btn-end:hover { border-color: rgba(28, 25, 23, 0.45); color: #1c1917; }
 html[data-theme="light"] .od-landing .demo-summary { border-color: rgba(28, 25, 23, 0.18); }
+/* The closing orbital orb is a near-black three.js scene: on paper it is
+ * invisible but still reserves its 320px, leaving a void above the CTA. Keep
+ * it rendered (the canvas needs a size) but out of the layout in light mode. */
+html[data-theme="light"] .od-landing .cta { position: relative; }
+html[data-theme="light"] .od-landing .cta-orb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
 /* Dark glass widgets (hero visual, demo box) stay dark by design — they read
  * as embedded terminals on the light page. */
 
