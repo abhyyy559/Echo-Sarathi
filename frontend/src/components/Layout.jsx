@@ -43,14 +43,6 @@ function IconCalls() {
   );
 }
 
-function IconPhone() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" />
-    </svg>
-  );
-}
-
 function IconGuide() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -65,17 +57,6 @@ function IconPlayground() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="9" y="2" width="6" height="12" rx="3" />
       <path d="M5 10a7 7 0 0 0 14 0M12 17v4" />
-    </svg>
-  );
-}
-
-function IconTestCall() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 3h4l.6 3-2 1.2a10.5 10.5 0 0 0 5.2 5.2L18 10.4 21 11v4a2 2 0 0 1-2 2A14 14 0 0 1 5 3a2 2 0 0 1 2-2h2z" opacity="0" />
-      <path d="M10 2v6l-2.5 1.5a11 11 0 0 0 5 5L14 12l6 2v4a2 2 0 0 1-2 2A16 16 0 0 1 4 6a2 2 0 0 1 2-2h4z" opacity="0" />
-      <path d="m6 15 4-6 3 4 2-2.5 3 4.5" />
-      <rect x="3" y="4" width="18" height="16" rx="2.5" />
     </svg>
   );
 }
@@ -124,9 +105,7 @@ const NAV_ITEMS = [
   { to: '/agents', icon: <IconAgents />, label: 'Agents' },
   { to: '/campaigns', icon: <IconCampaigns />, label: 'Campaigns' },
   { to: '/calls', icon: <IconCalls />, label: 'Call History' },
-  { to: '/test-call', icon: <IconTestCall />, label: 'Test Call' },
   { to: '/playground', icon: <IconPlayground />, label: 'Playground' },
-  { to: '/phone-numbers', icon: <IconPhone />, label: 'Phone Numbers', soon: true },
   { to: '/team', icon: <IconTeam />, label: 'Team' },
   { to: '/credits', icon: <IconCredits />, label: 'Billing' },
   { to: '/guide', icon: <IconGuide />, label: 'Guide' },
@@ -151,14 +130,12 @@ function titleFor(pathname) {
   if (pathname.startsWith('/calls')) return ['Call history', 'Every call this organization has placed or simulated'];
   if (pathname.match(/^\/campaigns\/\d+\/?$/)) return ['Campaign dashboard', 'Live progress, contacts and calls for one campaign'];
   if (pathname.startsWith('/campaigns')) return ['Campaigns', 'Batch outbound calling against pinned agent versions'];
-  if (pathname.startsWith('/playground')) return ['Playground', 'Talk or type with any saved agent version — zero minutes used'];
-  if (pathname.startsWith('/test-call')) return ['Test call', 'Place a single sandbox call to your own number'];
+  if (pathname.startsWith('/playground')) return ['Playground', 'Talk or type for free, or dial a real phone to test the carrier leg'];
   if (pathname.startsWith('/dev')) return ['Developer tools', 'Service health, provider keys, API catalog'];
   if (pathname.startsWith('/credits')) return ['Billing & credits', 'Plan, invoices and the prepaid overage wallet'];
   if (pathname.match(/^\/invoices\/\d+\/?$/)) return ['Invoice', 'GST tax invoice for a plan or top-up payment'];
   if (pathname.startsWith('/team')) return ['Team', 'Members, roles and seats'];
   if (pathname.startsWith('/admin')) return ['Platform admin', 'Every organization, contracts and credit adjustments'];
-  if (pathname.startsWith('/phone-numbers')) return ['Phone numbers', 'Provision and manage DIDs'];
   if (pathname.startsWith('/guide')) return ['Guide', 'From empty account to first campaign'];
   return ['Echo Sarathi', 'AI voice calling console'];
 }

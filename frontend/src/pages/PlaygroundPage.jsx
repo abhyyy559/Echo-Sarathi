@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { agentsApi, api, callExportUrl, playgroundApi } from '../api.js';
 import LatencyPanel from '../components/LatencyPanel.jsx';
@@ -22,6 +22,7 @@ const PHASES = {
 const MODES = {
   VOICE: 'voice',
   TEXT: 'text',
+  PHONE: 'phone',
 };
 
 const MIC_SPEAK_THRESHOLD = 0.12;
@@ -60,10 +61,15 @@ export function readMicDiagnostic(pub) {
 
 export default function PlaygroundPage() {
   const params = useParams();
+  const [searchParams] = useSearchParams();
   const routeVersionId = params.agentVersionId ? Number(params.agentVersionId) : null;
 
   const [phase, setPhase] = useState(PHASES.SETUP);
-  const [mode, setMode] = useState(MODES.VOICE); // voice (mic) | text
+  // Old /test-call links redirect to /playground?mode=phone; land directly on
+  // the phone session instead of making the operator toggle again.
+  const [mode, setMode] = useState(
+    searchParams.get('mode') === MODES.PHONE ? MODES.PHONE : MODES.VOICE
+  ); // voice (mic) | text | phone (real call)
 
   // ---- setup ----
   const [agents, setAgents] = useState(null);
@@ -925,6 +931,16 @@ export default function PlaygroundPage() {
               >
                 Text mode
               </button>
+              <button
+                type="button"
+                className={mode === MODES.PHONE ? 'on' : ''}
+                onClick={() => {
+                  setMode(MODES.PHONE);
+                  setConnectError(null);
+                }}
+              >
+                Phone call
+              </button>
             </div>
 
             {!routeVersionId && (
@@ -984,15 +1000,30 @@ export default function PlaygroundPage() {
                 {infoError && <p className="hint hint-error" style={{ marginTop: 8 }}>{infoError}</p>}
               </div>
             )}
-            <details className="card" open style={{ marginTop: 12 }}>
+            {/* Expanded for browser sessions; collapsed in phone mode so the
+                dial control stays above the fold. */}
+            <details className="card" open={mode !== MODES.PHONE} style={{ marginTop: 12 }}>
               <summary>Who are we calling? (optional lead card)</summary>
               <LeadCardForm value={contactCard} onChange={setContactCard} defaults={ABSENT_STUDENT_DEFAULTS} />
             </details>
 
-            {selectedVersionId && (
-              <div style={{ marginTop: 12 }}>
-                <TestCallPanel versionId={selectedVersionId} contactCard={contactCard} />
-              </div>
+            {selectedVersionId && mode === MODES.PHONE && (
+              <>
+                <div style={{ marginTop: 20 }}>
+                  <p style={{ fontSize: 13.5, lineHeight: 1.6 }}>
+                    Dials a real phone through Vobiz with the same agent version and lead card as above — use it to
+                    verify the carrier leg end to end. Answering the phone is the only way to talk; nothing arrives in
+                    this browser.
+                  </p>
+                  <p className="hint">
+                    Only call numbers you are authorized to call. The call is recorded and shows up in Call History
+                    like any other.
+                  </p>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <TestCallPanel versionId={selectedVersionId} contactCard={contactCard} />
+                </div>
+              </>
             )}
 
             {selectedVersionId && mode === MODES.VOICE && (
@@ -1018,7 +1049,7 @@ export default function PlaygroundPage() {
               </div>
             )}
 
-            {selectedVersionId && (
+            {selectedVersionId && mode !== MODES.PHONE && (
               <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
                 {mode === MODES.VOICE && (
                   <>

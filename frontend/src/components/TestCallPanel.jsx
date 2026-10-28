@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
 /**
@@ -86,6 +87,7 @@ export default function TestCallPanel({ versionId, contactCard }) {
             onChange={(e) => setTo(e.target.value)}
             placeholder="+91 98765 43210"
             inputMode="tel"
+            style={{ width: '100%' }}
           />
           <small className="dp-sub" style={{ display: 'block', marginTop: 4 }}>
             Leave blank to dial the first configured sandbox number, if there is one.
@@ -105,11 +107,16 @@ export default function TestCallPanel({ versionId, contactCard }) {
             {status.provider_call_id && (
               <div className="dp-cap" style={{ marginTop: 2 }}>provider: {status.provider_call_id}</div>
             )}
+            {(callId ?? status.id) != null && (
+              <Link to={`/calls/${callId ?? status.id}`} className="dp-cap" style={{ display: 'block', marginTop: 4 }}>
+                View call detail →
+              </Link>
+            )}
           </div>
         )}
         {!status && !error && (
           <div className="dp-cap" style={{ marginTop: 6 }}>
-            Dials through Vobiz. Watch the live console below for answer, media and hangup events.
+            Dials through Vobiz. Answer the phone to talk — status updates here as the call rings, connects and ends.
           </div>
         )}
       </div>
