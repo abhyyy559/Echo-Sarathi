@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Mapping, Protocol
+from urllib.parse import urlsplit
 
 from app.config import Settings
 
@@ -174,7 +175,29 @@ class VobizClient:
 
     def _answer_webhook(self, call_id: int) -> str:
         base = self.settings.public_base_url.rstrip("/")
+        # The carrier fetches this URL itself, so a laptop-local address can
+        # never work. Vobiz answers 400 "answer_url parameter is not valid",
+        # which reads like a credentials problem; say what it really is.
+        if urlsplit(base).hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+            raise RuntimeError(
+                f"PUBLIC_BASE_URL is {base} — Vobiz cannot reach a loopback answer "
+                "webhook. Start a tunnel and point PUBLIC_BASE_URL at it."
+            )
         return f"{base}/vobiz/answer?call_id={call_id}"
+
+    @staticmethod
+    def _error_reason(resp: Any) -> str:
+        """Vobiz puts the human-readable cause in {error} (or {message})."""
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001 - a non-JSON error still has .text
+            return ""
+        if isinstance(body, Mapping):
+            for key in ("error", "message", "error_message"):
+                value = body.get(key)
+                if value:
+                    return str(value)[:300]
+        return ""
 
     @staticmethod
     def _call_id_from_response(response: Any) -> str:
@@ -218,12 +241,20 @@ class VobizClient:
             )
             try:
                 resp.raise_for_status()
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "vobiz call-create failed status=%s body=%s",
                     resp.status_code, resp.text[:500],
                 )
-                raise
+                reason = self._error_reason(resp) or resp.text[:200] or "no response body"
+                if "answer_url" in reason:
+                    reason += (
+                        " — the carrier could not validate the answer webhook; "
+                        "check that PUBLIC_BASE_URL is publicly reachable (restart the tunnel)"
+                    )
+                raise RuntimeError(
+                    f"vobiz refused the call ({resp.status_code}): {reason}"
+                ) from exc
             try:
                 body = resp.json()
             except Exception:  # noqa: BLE001 â€” non-JSON success is still success
