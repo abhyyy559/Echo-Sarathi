@@ -6,8 +6,19 @@
 # and triggers a deploy. Secrets are read from .deploy.env (account/DB) and the
 # repo-root .env (provider keys); nothing is printed except presence booleans.
 
+#
+# A second environment for another branch shares the production database:
+#   deploy-render.ps1 -AppOrigin https://echo-sarathi-loki.vercel.app `
+#       -ServiceName echosarathi-api-loki -Branch loki -Secondary
+# -Secondary turns off the dialer and background jobs (the primary service
+# already runs them against the same database) and leaves the primary's
+# RENDER_SERVICE_ID / RENDER_SERVICE_URL in .deploy.env untouched.
+
 param(
     [Parameter(Mandatory = $true)][string]$AppOrigin,
+    [string]$ServiceName = "",
+    [string]$Branch = "master",
+    [switch]$Secondary,
     [switch]$SkipDeploy
 )
 
@@ -22,10 +33,10 @@ Require-Values -Map $cfg -Keys @(
 )
 
 $apiKey = $cfg["RENDER_API_KEY"]
-$serviceName = if ($cfg["RENDER_SERVICE_NAME"]) { $cfg["RENDER_SERVICE_NAME"] } else { "echosarathi-api" }
+$serviceName = if ($ServiceName) { $ServiceName } elseif ($cfg["RENDER_SERVICE_NAME"]) { $cfg["RENDER_SERVICE_NAME"] } else { "echosarathi-api" }
 $region = if ($cfg["RENDER_REGION"]) { $cfg["RENDER_REGION"] } else { "singapore" }
 $repoUrl = "https://github.com/abhyyy559/Echo-Sarathi"
-$branch = "master"
+$branch = $Branch
 
 # --- environment -----------------------------------------------------------
 Write-Section "Render: environment variables"
@@ -97,7 +108,8 @@ foreach ($key in @(
 )) {
     Add-EnvVar $key (Get-ProviderValue -Maps @($local, $cfg) -Key $key)
 }
-Add-EnvVar "BILLING_LIFECYCLE_INTERVAL_HOURS" "6"
+Add-EnvVar "BILLING_LIFECYCLE_INTERVAL_HOURS" $(if ($Secondary) { "0" } else { "6" })
+if ($Secondary) { Add-EnvVar "USAGE_REFRESH_INTERVAL_HOURS" "0" }
 Add-EnvVar "DEMO_EMAIL" $cfg["DEMO_EMAIL"]
 Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 
@@ -107,7 +119,7 @@ Add-EnvVar "CONSENT_ENFORCEMENT" "true"
 # whole service environment, and an unset gate would let the test-call route
 # dial any number the operator types (see the 2026 misdial).
 Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" "false"
-Add-EnvVar "DIALER_ENABLED" "true"
+Add-EnvVar "DIALER_ENABLED" $(if ($Secondary) { "false" } else { "true" })
 Add-EnvVar "DEFAULT_CPS_LIMIT" "1"
 # One live call at a time. A second leg dialled while the single cold-starting
 # worker is still busy rings with nobody answering, and the campaign is being
@@ -128,7 +140,7 @@ foreach ($window in @(
     Add-EnvVar $window.Key $value
 }
 Add-EnvVar "RECORDING_RETENTION_DAYS" "90"
-Add-EnvVar "RETENTION_JOB_ENABLED" "true"
+Add-EnvVar "RETENTION_JOB_ENABLED" $(if ($Secondary) { "false" } else { "true" })
 Add-EnvVar "DOMAIN_CONFIGS_DIR" "../domain-configs"
 
 # PUBLIC_BASE_URL is intentionally omitted: config.py falls back to Render's
@@ -199,7 +211,7 @@ if ($null -eq $service) {
 }
 $serviceId = [string]$service.id
 if ([string]::IsNullOrWhiteSpace($serviceId)) { throw "Render did not return a service id." }
-Write-DotEnvValue -Path $script:DeployEnvPath -Key "RENDER_SERVICE_ID" -Value $serviceId
+if (-not $Secondary) { Write-DotEnvValue -Path $script:DeployEnvPath -Key "RENDER_SERVICE_ID" -Value $serviceId }
 
 # Existing services keep their own env vars, so push the full set again.
 # (A newly created service already received them in the create payload.)
@@ -235,7 +247,7 @@ if ([string]::IsNullOrWhiteSpace($serviceUrl)) {
     $serviceUrl = "https://$serviceName.onrender.com"
 }
 $serviceUrl = $serviceUrl.TrimEnd("/")
-Write-DotEnvValue -Path $script:DeployEnvPath -Key "RENDER_SERVICE_URL" -Value $serviceUrl
+if (-not $Secondary) { Write-DotEnvValue -Path $script:DeployEnvPath -Key "RENDER_SERVICE_URL" -Value $serviceUrl }
 
 Write-Section "Render: ready"
 Write-Host "  url: $serviceUrl"
