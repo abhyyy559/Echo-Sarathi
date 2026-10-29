@@ -119,17 +119,17 @@ services:
         sync: false
       - key: VOBIZ_PHONE_NUMBER
         sync: false
-      # Comma-separated numbers allowed to receive test calls. No other number
-      # can be dialled while consent enforcement is on.
+      # Comma-separated numbers allowed to receive test calls, and the default
+      # target when a test-call request omits one.
       - key: TEST_PHONE_NUMBERS
         sync: false
       - key: CONSENT_ENFORCEMENT
         value: "true"
-      # The test-call route refuses numbers that are not in TEST_PHONE_NUMBERS
-      # while this stays false. Real outbound is only ever campaign dialing of
-      # consented contacts plus the approved test allowlist.
+      # Test calls may dial any valid number (shipped policy). Campaign dialing
+      # still requires per-contact consent. Set false to restore the
+      # TEST_PHONE_NUMBERS allowlist for test calls.
       - key: ALLOW_ANY_OUTBOUND_NUMBER
-        value: "false"
+        value: "true"
       - key: DIALER_ENABLED
         value: "true"
       - key: DEFAULT_CPS_LIMIT

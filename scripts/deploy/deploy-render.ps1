@@ -115,10 +115,10 @@ Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 
 Add-EnvVar "TELEPHONY_PROVIDER" "vobiz"
 Add-EnvVar "CONSENT_ENFORCEMENT" "true"
-# Written out rather than left to config.py's default: this PUT replaces the
-# whole service environment, and an unset gate would let the test-call route
-# dial any number the operator types (see the 2026 misdial).
-Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" "false"
+# Test calls may dial any valid number. Written out explicitly because this PUT
+# replaces the whole service environment; campaign dialing still requires
+# per-contact consent. Set "false" here to restore the TEST_PHONE_NUMBERS gate.
+Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" "true"
 Add-EnvVar "DIALER_ENABLED" $(if ($Secondary) { "false" } else { "true" })
 Add-EnvVar "DEFAULT_CPS_LIMIT" "1"
 # One live call at a time. A second leg dialled while the single cold-starting

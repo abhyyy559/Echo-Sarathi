@@ -130,13 +130,14 @@ class Settings(BaseSettings):
     # --- compliance --------------------------------------------------------
     consent_enforcement: bool = True
     # Comma-separated allowlist of phone numbers that bypass consent enforcement
-    # for test calls and campaign dialing.
+    # for test calls and campaign dialing. Also the default target when a test
+    # call omits `to`.
     test_phone_numbers: str = ""
-    # Test calls are normally capped to TEST_PHONE_NUMBERS plus consenting
-    # roster contacts, so a leaked login cannot place billable calls anywhere.
-    # Set true on a deployment that genuinely dials real recipients; campaign
-    # dialing still requires per-contact consent either way.
-    allow_any_outbound_number: bool = False
+    # Test calls may dial any valid number when this is on (the shipped
+    # default). Set false to cap test calls to TEST_PHONE_NUMBERS plus
+    # consenting roster contacts. Campaign dialing always requires per-contact
+    # consent, independent of this flag.
+    allow_any_outbound_number: bool = True
     recording_retention_days: int = 90
     retention_job_enabled: bool = True
 

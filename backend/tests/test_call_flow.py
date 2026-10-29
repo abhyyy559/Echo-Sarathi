@@ -168,9 +168,8 @@ def test_any_number_allowed_when_override_is_on(
 ):
     """ALLOW_ANY_OUTBOUND_NUMBER=true lifts the TEST_PHONE_NUMBERS gate.
 
-    The sandbox allowlist exists so a leaked login cannot place billable calls
-    anywhere; a production deployment that really dials recipients opts out of
-    it explicitly instead of silently allowing every number.
+    Test calls may reach any valid number; campaign dialing still requires
+    per-contact consent.
     """
     app.state.settings.allow_any_outbound_number = True
     token, user = register(client)
@@ -192,8 +191,9 @@ def test_any_number_allowed_when_override_is_on(
         assert contact.phone == target
 
 
-def test_unknown_number_still_gated_by_default(client, session_factory):
-    """The default stays deny-by-default: no allowlist entry, no call."""
+def test_unknown_number_gated_when_override_is_off(app, client, session_factory):
+    """With the override off, no allowlist entry means no call."""
+    app.state.settings.allow_any_outbound_number = False
     token, user = register(client)
     with session_factory() as db:
         dc_id, version_id = _seed_domain_and_agent(db, user["org_id"])

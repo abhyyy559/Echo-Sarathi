@@ -144,9 +144,10 @@ workflow, not the Vobiz REST/XML bridge this repo implements.
   If running the worker outside Docker, use Python 3.11+.
 - For the phone path: an ngrok or cloudflared account, a phone that can
   receive calls, and Vobiz credit.
-- The destination phone number must be in `TEST_PHONE_NUMBERS` **or** be a
-  consenting contact in the user's org. `CONSENT_ENFORCEMENT` defaults to
-  `true`, so an arbitrary number will be rejected with HTTP 422.
+- Test calls may dial any valid number while `ALLOW_ANY_OUTBOUND_NUMBER=true`
+  (the shipped default). With it `false`, the destination must be in
+  `TEST_PHONE_NUMBERS` **or** be a consenting contact in the user's org, and
+  anything else is rejected with HTTP 422.
 
 ---
 
@@ -247,11 +248,11 @@ detection, and tool filler as the phone path, without Vobiz.
 
 ## 5. Phone demo
 
-> **Compliance gate:** per `docs/AGENTS.md`, do not place real outbound calls
-> to third parties. For this demo, dial only your own phone or a number in
-> `TEST_PHONE_NUMBERS` / a consenting roster contact. If DLT registration and
-> the consent flow have not been signed off, use the browser playground
-> instead. This is a demo guardrail, not a suggestion.
+> **Compliance gate:** per `docs/AGENTS.md`, do not place real outbound
+> campaign calls to third parties. For this demo, dial only numbers you are
+> authorised to call (your own phone or a consenting roster contact). If DLT
+> registration and the consent flow have not been signed off, use the browser
+> playground instead.
 
 ### 5.1 Expose the backend
 
@@ -284,17 +285,21 @@ Cloudflared also works for the backend webhook/WebSocket. Do not put the
 LiveKit server behind a tunnel for this path; the phone audio is bridged by the
 backend and LiveKit is server-side.
 
-### 5.2 Add the destination number
+### 5.2 Destination number
 
-Add the phone you will call to `TEST_PHONE_NUMBERS` (comma-separated):
+With the shipped `ALLOW_ANY_OUTBOUND_NUMBER=true`, the Test Call screen accepts
+any valid number. Campaign dialing still only calls contacts with
+`consent=true`.
+
+To restrict test calls again, set `ALLOW_ANY_OUTBOUND_NUMBER=false` and add the
+phones you will call to `TEST_PHONE_NUMBERS` (comma-separated):
 
 ```dotenv
 TEST_PHONE_NUMBERS=+9193XXXXXXXX,+9180XXXXXXXX
 ```
 
-Alternatively, use a contact that already has `consent=true` in the demo org.
-If you see HTTP 422 saying the number is not in `TEST_PHONE_NUMBERS`, this is
-the cause. Do not disable consent enforcement for the demo.
+With the gate on, an unknown number returns HTTP 422 — that is the allowlist
+working, not a bug.
 
 ### 5.3 Vobiz settings
 
@@ -422,7 +427,7 @@ opening delay measured on 2026-10-22.
 | Garbled phone audio | Wrong TTS sample rate | Keep `SARVAM_TTS_SAMPLE_RATE=8000` for phone; the Vobiz bridge converts 8 kHz PCM to mu-law |
 | "Model not found" | Wrong/decommissioned Groq model | Keep `GROQ_MODEL=qwen/qwen3.8-27b`; do not use `llama-3.1-8b-instant` |
 | Call drops immediately | Vobiz credit exhausted or call-create rejected | Check Vobiz balance; inspect backend logs for the Vobiz 4xx body |
-| HTTP 422 "not in TEST_PHONE_NUMBERS" | Consent enforcement | Add the number to `TEST_PHONE_NUMBERS` (plural) or use a consenting contact; the singular `TEST_PHONE_NUMBER` is not read |
+| HTTP 422 "not in TEST_PHONE_NUMBERS" | Allowlist gate is on (`ALLOW_ANY_OUTBOUND_NUMBER=false`) | Add the number to `TEST_PHONE_NUMBERS` (plural), set `ALLOW_ANY_OUTBOUND_NUMBER=true`, or use a consenting contact; the singular `TEST_PHONE_NUMBER` is not read |
 | Backend uses the "wrong" model | Root `.env` wins over `backend/.env` | Edit the root `.env`; do not maintain a second model config |
 | Worker cannot reach LiveKit | Local worker is using `ws://livekit:7880` | Use the compose worker, or set `LIVEKIT_URL_INTERNAL=ws://localhost:7880` and stop the compose worker |
 | Two agents answer / jobs are flaky | Compose worker plus a second local worker | Stop one; use only the compose worker for the demo |
@@ -475,8 +480,9 @@ TTS | ttfb=...
 > `http://localhost:3000` with `demo@example.com / demo1234`. For a browser
 > demo, use Playground. For a phone demo, run `ngrok http 8000`, put the
 > `https://` URL in both `PUBLIC_BASE_URL` and `PUBLIC_WS_BASE_URL` in the root
-> `.env`, add your phone to `TEST_PHONE_NUMBERS`, recreate the backend, and use
-> the Test Call page or `scripts\test_call.ps1 -To +91...`. Vobiz is configured
+> `.env`, recreate the backend, and use the Test Call page or
+> `scripts\test_call.ps1 -To +91...` (any valid number while
+> `ALLOW_ANY_OUTBOUND_NUMBER=true`). Vobiz is configured
 > with `VOBIZ_AUTH_ID`/`VOBIZ_AUTH_TOKEN`/`VOBIZ_PHONE_NUMBER`; there is no SIP
 > trunk or `make_call.py`. The worker is already part of compose-do not start a
 > second one. The verified phone call worked, but first-greeting startup was

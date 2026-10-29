@@ -259,8 +259,9 @@ isn't advertised).
 
 Those two values are compiled into the public JavaScript, so the demo account
 is public by design — that is what a self-serve demo means. It is an `owner` of
-the seeded demo org only, and outbound calling stays bounded by
-`CONSENT_ENFORCEMENT=true` and the `TEST_PHONE_NUMBERS` allowlist. If you need a
+the seeded demo org only, and campaign outbound calling stays bounded by
+per-contact consent (`CONSENT_ENFORCEMENT=true`). Test calls can dial any
+number while `ALLOW_ANY_OUTBOUND_NUMBER=true` (see section 8). If you need a
 deployment where the demo is *not* public, unset both variables and hand the
 credentials to reviewers out of band.
 
@@ -370,7 +371,7 @@ accounts on purpose.
 | The domain's `/api/health` reports `db:false` but Render's own URL is healthy | Something else is answering `/api/*` on Vercel — the root `vercel.json` must rewrite those paths to Render, with no `backend` service declared |
 | Playground connects but the agent is silent | Provider keys missing on the **worker**, not just the backend — re-run `deploy-livekit.ps1` |
 | Call rings then silence | Vobiz media WS URL, `INTERNAL_API_TOKEN` matching on both sides |
-| Test call returns 422 | The number is not in `TEST_PHONE_NUMBERS` |
+| Test call returns 422 | `ALLOW_ANY_OUTBOUND_NUMBER=false` and the number is not in `TEST_PHONE_NUMBERS` |
 
 ### Reset the demo password
 

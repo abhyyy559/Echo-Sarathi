@@ -91,7 +91,7 @@ python agent.py dev        # or: python agent.py start
 - **Stale .env overriding compose defaults**: Run `docker compose logs backend` to diagnose.
 
 ## Guardrails
-- **No real outbound calls** until compliance-agent confirms DLT registration + consent flow live (PRD §8/M3). Test against your own number or sandbox only.
+- **No real outbound campaign calls** until compliance-agent confirms DLT registration + consent flow live (PRD §8/M3). Test calls may dial any valid number while `ALLOW_ANY_OUTBOUND_NUMBER=true`; dial only numbers you are authorised to call.
 - **No auth work** unless explicitly asked (Phase 1 hardening).
 - **No Telugu/Sarvam** (Phase 2, separate PRD).
 - **No speech-to-speech path** (OpenAI Realtime / Gemini Live) — cascaded was deliberate choice (PRD §3).

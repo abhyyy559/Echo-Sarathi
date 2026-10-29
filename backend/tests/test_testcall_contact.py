@@ -125,7 +125,9 @@ def test_test_call_explicit_unknown_number_rejected_without_allowlist(
 
     token, _ = register(client)
     ids = _make_agent_and_version(client, token)
-    fresh = create_app(make_settings(test_phone_numbers=""))
+    fresh = create_app(
+        make_settings(test_phone_numbers="", allow_any_outbound_number=False)
+    )
     fresh.state.session_factory = session_factory
     with TestClient(fresh) as bare:
         resp = bare.post(
