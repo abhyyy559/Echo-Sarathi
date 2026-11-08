@@ -116,3 +116,9 @@ frontend/dist/
 .hive2/
 
 .vercel
+voice_agent.db
+*.db-shm
+*.db-wal
+*.sqlite-journal
+*.sqlite3
+
