@@ -125,6 +125,7 @@ export default function Layout() {
   const user = getStoredUser();
   const [title, subtitle] = titleFor(location.pathname);
   const [wallet, setWallet] = useState(null);
+  const [navOpen, setNavOpen] = useState(false);
 
   // Balance chip in the topbar. Refetched on navigation so a campaign that
   // just burned minutes shows the new balance the moment the operator lands
@@ -143,6 +144,19 @@ export default function Layout() {
     };
   }, [location.pathname]);
 
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') setNavOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navOpen]);
+
   function logout() {
     clearSession();
     navigate('/login', { replace: true });
@@ -150,7 +164,15 @@ export default function Layout() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {navOpen && (
+        <button
+          type="button"
+          className="es-shell-scrim"
+          aria-label="Close navigation"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+      <aside className={`sidebar${navOpen ? ' es-sidebar-open' : ''}`} id="es-shell-sidebar">
         <div className="sidebar-brand">
           <div className="brand-mark">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -198,9 +220,25 @@ export default function Layout() {
       </aside>
       <div className="main-area">
         <header className="topbar">
-          <div>
-            <h1>{title}</h1>
-            <div className="topbar-sub">{subtitle}</div>
+          <div className="topbar-heading">
+            <button
+              type="button"
+              className="es-shell-menu"
+              aria-expanded={navOpen}
+              aria-controls="es-shell-sidebar"
+              aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+              onClick={() => setNavOpen((open) => !open)}
+            >
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                {navOpen
+                  ? <path d="m5 5 10 10M15 5 5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  : <path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />}
+              </svg>
+            </button>
+            <div>
+              <h1>{title}</h1>
+              <div className="topbar-sub">{subtitle}</div>
+            </div>
           </div>
           <div className="topbar-right">
             <ThemeToggle />

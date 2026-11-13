@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
+import '../workspace-pages.css';
 
 const PAGE_SIZE = 50;
 const LATENCY_OVER_MS = 1500;
@@ -77,11 +78,11 @@ export default function CallsIndexPage() {
   }, [calls, statusFilter, searchQuery]);
 
   return (
-    <div>
+    <div className="es-workspace es-workspace-calls">
       <div className="page-head">
         <div>
           <h2 className="page-title">Call history</h2>
-          <p className="page-sub">Every conversation — phone and playground — with latency per call.</p>
+          <p className="page-sub">Review phone and Playground calls. Open a record for captured fields, transcript evidence and follow-up flags.</p>
         </div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={load} disabled={loading}>
           {loading ? 'Refreshing…' : 'Refresh'}
@@ -97,44 +98,52 @@ export default function CallsIndexPage() {
         </div>
       )}
 
-      <div className="filters">
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">All statuses</option>
-          <option value="completed">completed</option>
-          <option value="no-answer">no-answer</option>
-          <option value="busy">busy</option>
-          <option value="failed">failed</option>
-          <option value="in-progress">in-progress</option>
-        </select>
-        <input
-          type="text"
-          placeholder="Search agent or contact…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        {calls && (
-          <span style={{ alignSelf: 'center', color: 'var(--dim)', fontSize: '12.5px' }}>
-            {filtered.length} results
-          </span>
-        )}
-      </div>
+      <section className="es-workspace-filter-panel" aria-label="Filter call history">
+        <div className="filters">
+          <div className="field">
+            <label htmlFor="calls-status">Call status</label>
+            <select id="calls-status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">All statuses</option>
+              <option value="completed">Completed</option>
+              <option value="no-answer">No answer</option>
+              <option value="busy">Busy</option>
+              <option value="failed">Failed</option>
+              <option value="in-progress">In progress</option>
+            </select>
+          </div>
+          <div className="field es-workspace-search">
+            <label htmlFor="calls-search">Agent or contact name</label>
+            <input
+              id="calls-search"
+              type="text"
+              placeholder="Search by name…"
+              aria-describedby="calls-filter-scope"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          {calls && <span className="es-workspace-result-count" role="status">{filtered.length} results</span>}
+        </div>
+        <p id="calls-filter-scope" className="hint">Filters apply to the loaded records, up to 500 calls. Phone and Playground calls appear together.</p>
+      </section>
 
-      <div className="card" style={{ overflowX: 'auto' }}>
-        <table className="tbl">
+      <div className="card es-workspace-table-scroll" role="region" aria-label="Call records" tabIndex={0}>
+        <table className="tbl" aria-busy={loading}>
           <thead>
             <tr>
-              <th></th>
-              <th>#</th>
-              <th>Status</th>
-              <th>Agent</th>
-              <th>Contact</th>
-              <th>Started</th>
-              <th>Duration</th>
-              <th>E2E avg</th>
-              <th></th>
+              <th scope="col">Type</th>
+              <th scope="col">Call</th>
+              <th scope="col">Status</th>
+              <th scope="col">Agent</th>
+              <th scope="col">Contact</th>
+              <th scope="col">Started</th>
+              <th scope="col">Duration</th>
+              <th scope="col">Avg. E2E latency</th>
+              <th scope="col">Review</th>
             </tr>
           </thead>
           <tbody>
+            {loading && <tr><td colSpan={9} className="table-state" role="status">Loading call records…</td></tr>}
             {!loading && !error && filtered.length === 0 && (
               <tr>
                 <td colSpan={9} className="table-state">
@@ -164,8 +173,8 @@ export default function CallsIndexPage() {
               const latencyClass = latencyMs != null && latencyMs > LATENCY_OVER_MS ? ' over' : '';
               return (
                 <tr key={call.id} className="clickable" onClick={() => navigate(`/calls/${call.id}`)}>
-                  <td><KindIcon kind={call.kind} /></td>
-                  <td className="mono">#{call.id}</td>
+                  <td><span className="es-workspace-call-kind"><KindIcon kind={call.kind} /><span>{call.kind === 'playground' || call.kind === 'web' ? 'Playground' : 'Phone'}</span></span></td>
+                  <td className="mono"><Link to={`/calls/${call.id}`} aria-label={`Review call ${call.id}`}>#{call.id}</Link></td>
                   <td><StatusBadge status={call.status} /></td>
                   <td>{call.agent_name || <span className="text-muted">—</span>}</td>
                   <td>
