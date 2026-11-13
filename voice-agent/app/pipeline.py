@@ -2036,7 +2036,9 @@ class TurnTelemetry:
                     return
             try:
                 await self._session.say(
-                    "Sorry, I didn't quite catch that. Could you say it once more?"
+                    "Sorry అండి, సరిగ్గా వినిపించలేదు. మళ్లీ చెప్తారా?"
+                    if self._language == "te"
+                    else "Sorry, I didn't quite catch that. Could you say it once more?"
                 )
             except Exception:
                 logger.warning("Recovery utterance failed", exc_info=True)

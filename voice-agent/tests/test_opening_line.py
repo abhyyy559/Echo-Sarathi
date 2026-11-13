@@ -168,7 +168,9 @@ def test_opening_line_telugu_agent_speaks_no_english_sentences() -> None:
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(config, _tokens(contact), contact)
 
-    assert "నమస్కారం" in out
+    assert out.startswith("Demo School నుండి AI అసిస్టెంట్ మాట్లాడుతున్నాను.")
+    assert "Hi Suresh Kumar గారూ." in out
+    assert "నమస్కారం" not in out
     assert "Suresh Kumar" in out and "Aarav Kumar" in out
     # The Telugu connective phrases are Telugu, and no English "calling about"
     # syntax leaks in when the redundant clause is dropped.
@@ -211,10 +213,10 @@ def test_opening_line_telugu_disclosure_that_names_the_ai_drops_the_intro() -> N
 
     assert "an AI assistant" not in out
     assert "This is" not in out
-    assert "నేను ఒక AI అసిస్టెంట్ మాట్లాడుతున్నాను" not in out
+    assert "నేను ఒక AI assistant మాట్లాడుతున్నా" not in out
     # The authored disclosure and the localized greeting/question still stand.
     assert "AI అసిస్టెంట్ మాట్లాడుతున్నాను" in out
-    assert "నమస్కారం Suresh Kumar గారూ." in out
+    assert "Hi Suresh Kumar గారూ." in out
     assert "[" not in out and "]" not in out
 
 
@@ -230,8 +232,9 @@ def test_opening_line_telugu_unwritten_agent_name_uses_localized_phrase() -> Non
     contact = {"student_name": "Aarav Kumar", "parent_name": "Suresh Kumar"}
     out = build_opening_line(config, _tokens(contact, "CMR College"), contact)
 
-    assert "ఒక AI అసిస్టెంట్" in out
-    assert "నేను ఒక AI అసిస్టెంట్ మాట్లాడుతున్నాను" in out
+    assert out.startswith("ఈ కాల్ రికార్డ్ అవుతుంది.")
+    assert "నేను ఒక AI assistant మాట్లాడుతున్నా" in out
+    assert "Aarav Kumar గురించి call చేస్తున్నా." in out
     assert "an AI assistant" not in out
     assert "CMR College నుండి" in out
     assert "[" not in out and "]" not in out

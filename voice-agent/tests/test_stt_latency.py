@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 import app.pipeline as pipeline_module
@@ -160,6 +162,41 @@ class _FakeSession:
 class _FakeMetricsEvent:
     def __init__(self, metrics: Any) -> None:
         self.metrics = metrics
+
+
+@pytest.mark.parametrize("language", ["te", "en", "hi"])
+def test_stalled_turn_recovery_uses_tenglish_only_for_telugu(
+    language: str, monkeypatch: pytest.MonkeyPatch, fake_backend: FakeBackendClient
+) -> None:
+    real_sleep = asyncio.sleep
+
+    async def advance_clock(_seconds: float) -> None:
+        await real_sleep(0)
+
+    async def run() -> str:
+        spoken: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        session = _FakeSession()
+
+        async def say(text: str) -> None:
+            spoken.set_result(text)
+
+        monkeypatch.setattr(session, "say", say, raising=False)
+        monkeypatch.setattr(asyncio, "sleep", advance_clock)
+        telemetry = TurnTelemetry(
+            session=session, backend=fake_backend, call_id="c1", language=language
+        )
+        telemetry.attach()
+        session.handlers["user_input_transcribed"](
+            SimpleNamespace(transcript="Hello?", is_final=True)
+        )
+        return await asyncio.wait_for(spoken, timeout=2)
+
+    expected = (
+        "Sorry అండి, సరిగ్గా వినిపించలేదు. మళ్లీ చెప్తారా?"
+        if language == "te"
+        else "Sorry, I didn't quite catch that. Could you say it once more?"
+    )
+    assert asyncio.run(run()) == expected
 
 
 def test_stt_final_is_eou_only_and_transcription_delay_logged(
