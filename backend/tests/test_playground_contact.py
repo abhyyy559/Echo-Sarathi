@@ -138,8 +138,8 @@ def test_empty_contact_opening_asks_who_is_speaking() -> None:
     assert "May I know who I'm speaking with?" in opening
 
 
-def test_telugu_version_opening_stays_in_telugu() -> None:
-    """A Telugu disclosure followed by English is what callers actually heard."""
+def test_telugu_version_opening_uses_tenglish_after_verbatim_disclosure() -> None:
+    """Generated greeting mixes naturally; authored disclosure stays untouched."""
     config = _config(
         disclosure_script="నమస్కారం, ఇది [Institution Name] నుండి ఆటోమేటెడ్ కాల్.",
         voice_settings={"language": "te"},
@@ -150,9 +150,10 @@ def test_telugu_version_opening_stays_in_telugu() -> None:
         institution="CMR College",
         agent_name="Sahithi",
     )
-    assert "Hi " not in opening
+    assert opening.startswith("నమస్కారం, ఇది CMR College నుండి ఆటోమేటెడ్ కాల్.")
+    assert "Hi Lakshmi గారు, నేను Sahithi." in opening
+    assert "Lakshmi గారు మాట్లాడుతున్నారా?" in opening
     assert "Am I speaking with" not in opening
-    assert "Lakshmi" in opening
     assert opening.count("Lakshmi") == 2
     assert "Aarav" not in opening
 
