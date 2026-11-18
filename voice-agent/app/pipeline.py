@@ -942,6 +942,26 @@ def _groq_client_kwargs(model: str) -> dict[str, Any]:
     return kwargs
 
 
+def stable_voice_for_language(
+    voices_by_language: Mapping[str, str], language: str
+) -> str:
+    """Pick the TTS voice for a language, preferring a shared multilingual id.
+
+    Tenglish callers switch language mid-sentence. A per-language voice map
+    that points Telugu and English at different ids changes "who" the caller
+    hears mid-call; ``shared`` pins one voice across both.
+    """
+    shared = voices_by_language.get("shared")
+    if shared:
+        return str(shared)
+    return str(
+        voices_by_language.get(language)
+        or voices_by_language.get((language or "").split("-")[0])
+        or voices_by_language.get("en")
+        or ""
+    )
+
+
 def build_providers(
     settings: Settings,
     voice_settings: Optional[Mapping[str, Any]] = None,
