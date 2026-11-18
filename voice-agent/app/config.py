@@ -146,6 +146,13 @@ class Settings:
     sarvam_api_key: Optional[str] = None
     sarvam_llm_model: str = "sarvam-105b-conversations"
     sarvam_base_url: str = "https://api.sarvam.ai/v1"
+    # Pluggable provider selection (BYOK). Env vars remain the source of truth;
+    # these fields make the selection explicit in Settings and available to
+    # callers that already hold a Settings snapshot.
+    stt_provider: str = ""
+    tts_provider: str = ""
+    llm_provider: str = ""
+    telephony_provider: str = ""
 
     @property
     def llm_primary_chain(self) -> tuple[tuple[str, str, str, str], ...]:
@@ -284,6 +291,10 @@ class Settings:
             sarvam_api_key=_get("SARVAM_API_KEY") or _get("SARVAM_TTS_API"),
             sarvam_llm_model=_get("SARVAM_LLM_MODEL") or "sarvam-105b-conversations",
             sarvam_base_url=_get("SARVAM_LLM_BASE_URL") or "https://api.sarvam.ai/v1",
+            stt_provider=_get("STT_PROVIDER") or "",
+            tts_provider=_get("TTS_PROVIDER") or "",
+            llm_provider=_get("LLM_PROVIDER") or "",
+            telephony_provider=_get("TELEPHONY_PROVIDER") or "",
             cerebras_api_key=_get("CEREBRAS_API_KEY"),
             openrouter_api_key=_get("OPENROUTER_API_KEY"),
             deepseek_api_key=_get("DEEPSEEK_API_KEY"),
