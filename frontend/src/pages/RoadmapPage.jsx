@@ -1,55 +1,257 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import PublicLayout from '../components/PublicLayout.jsx';
+import '../od-roadmap-v2.css';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
-const AVAILABLE = [
-  { title: 'Configure a versioned agent', description: 'Set the context, questions, disclosure, and extraction fields for a structured conversation. Start with an existing preset or use the agent builder.', to: '/agents', link: 'Explore agents' },
-  { title: 'Test in the Playground', description: 'Review an agent through browser voice or text testing before preparing a campaign. Phone testing is a separate mode and requires authorization for a real outbound call.', to: '/playground', link: 'Open Playground' },
-  { title: 'Prepare and operate campaigns', description: 'Import and review contacts, record consent, choose who to include, and use launch or pause controls. Calling windows, credit checks, and deployment capacity still apply.', to: '/campaigns', link: 'Open campaigns' },
-  { title: 'Review calls and export results', description: 'Read available transcripts and extracted fields, inspect human-review flags, and export CSV or Excel. Missing data stays distinct from a confirmed answer.', to: '/calls', link: 'Open call history' },
+/* Roadmap — redesigned Oct 2026.
+ * Three status lanes (Live / Building / Planned), a vertical journey
+ * timeline, and the per-turn loop. All content visible without interaction;
+ * reveal-on-scroll is progressive enhancement only.
+ * Public page: no auth, no backend calls.
+ */
+const LIVE = [
+  { t: 'English voice calls', d: 'Full-quality conversations with sub-second replies, barge-in, and structured field extraction on every call.' },
+  { t: 'Playground testing', d: 'Try any agent in the browser first — live console, per-turn latency, and provider attribution before spending a rupee.' },
+  { t: 'Campaign calling', d: 'Upload contacts, launch inside the 9 AM – 9 PM IST window, pause anytime. Busy numbers retry politely later.' },
+  { t: 'Transcripts & Excel export', d: 'Every word with speakers and timestamps, fields with confidence scores, one row per person out to Excel.' },
+];
+
+const BUILDING = [
+  { t: 'Telugu', d: 'In training — ships only after it passes our accent benchmarks, not before.', meta: 'Accent benchmarks in progress' },
+  { t: 'Telugu + English code-switching', d: 'Mixed sentences handled naturally (“fee pay cheyyandi please”).', meta: 'Follows Telugu' },
 ];
 
 const PLANNED = [
-  { title: 'Telugu conversations', description: 'A language direction beyond the English baseline. Preset or configuration availability alone does not establish production voice quality.', condition: 'Requires end-to-end language validation.' },
-  { title: 'Telugu–English code-switching', description: 'Mixed-language conversations need their own recognition, pronunciation, and extraction checks. Do not assume support from single-language testing.', condition: 'Requires mixed-language conversation testing.' },
-  { title: 'More Indian languages', description: 'Hindi, Tamil, Kannada, and other languages remain future scope. The order and availability are not committed on this page.', condition: 'Scope and delivery dates are not committed.' },
+  { t: 'Hindi, Tamil, Kannada & beyond', d: 'More Indian languages in community-driven order. Tell us which your callers speak.', meta: 'Vote: hello@echosarathi.ai' },
 ];
 
-export default function RoadmapPage() {
+const STEPS = [
+  { t: 'Create a campaign', you: 'Name your campaign — “August follow-up” is enough.', sarathi: 'Sets up a safe workspace where every call is tracked and reversible.', tip: 'Campaigns can be paused anytime; queued people are never disturbed twice.' },
+  { t: 'Upload contacts', you: 'Drop in a CSV or Excel with names and phone numbers.', sarathi: 'Parses it locally, checks every number’s format, flags bad rows red before import.', tip: 'Extra columns like contact_name become words the agent can say naturally.' },
+  { t: 'Configure the agent', you: 'Pick questions to ask and the fields you want captured.', sarathi: 'Turns that list into a natural conversation plan — not a rigid script.', tip: 'Every save creates a new version; old calls keep the version that made them.' },
+  { t: 'Launch', you: 'Press launch inside the calling window (9 AM – 9 PM IST).', sarathi: 'Dials contacts one by one, respects busy numbers, retries politely later.', tip: 'Launch is disabled outside the window — nobody gets a midnight call.' },
+  { t: 'AI holds the conversation', you: 'Watch live tiles as calls connect, answer or miss.', sarathi: 'Listens, takes turns, handles interruptions — like a trained human caller.', tip: 'Median response time target is under 900 ms so pauses feel natural.' },
+  { t: 'Transcribe', you: 'Nothing — this happens automatically.', sarathi: 'Writes down every word with speakers and timestamps, second by second.', tip: 'Transcripts power the extraction step and stay attached to each contact.' },
+  { t: 'Extract structured results', you: 'Define what counts as an answer: reason, callback, yes/no.', sarathi: 'Fills those fields with confidence scores — low-confidence items get flagged.', tip: 'Flagged calls surface for human review; you only check what needs checking.' },
+  { t: 'Review & export', you: 'Open results, filter what matters, export to Excel.', sarathi: 'Produces one row per person: transcript link, fields, outcome, duration.', tip: 'Exports include everything — ready for your existing systems.' },
+];
+
+const LOOP = [
+  ['Phone line', 'The call connects'],
+  ['Speech recognition', 'Every word, live'],
+  ['Conversation engine', 'Decides the reply'],
+  ['Voice generation', 'Speaks naturally'],
+];
+
+function StatusDot({ kind, label }) {
   return (
-    <PublicLayout>
-      <section className="es-public-page-intro es-public-roadmap-intro" aria-labelledby="es-public-roadmap-heading">
-        <div><p className="es-public-context">Product roadmap</p><h1 id="es-public-roadmap-heading">What you can use.<br />What comes next.</h1><p className="es-public-lead">The current calling workflow, separate from future language work. Plan around what is available to your workspace, not a promise on a timeline.</p><div className="es-public-actions"><Link className="es-public-button" to="/login">Open workspace</Link><a className="es-public-button es-public-button-secondary" href="#es-public-planned">View planned work</a></div></div>
-        <aside className="es-public-roadmap-note" aria-label="How to read this roadmap"><span className="es-public-badge">Scope, not a release guarantee</span><p>English is the current baseline. Account access, phone capacity, and payment availability are separate from feature scope.</p><p>Planned items are not included as delivered features in a paid plan. No release dates are promised here.</p><Link className="es-public-text-link" to="/pricing">Read pricing &amp; availability</Link></aside>
-      </section>
-
-      <section className="es-public-section es-public-roadmap-section" aria-labelledby="es-public-available-title">
-        <div className="es-public-section-intro"><span className="es-public-badge">Current workflow</span><h2 id="es-public-available-title">From configuration<br />to review.</h2><p>These surfaces are implemented in the workspace. Access and service readiness depend on your organization’s setup; this is not a claim of an unrestricted public launch.</p></div>
-        <div className="es-public-roadmap-list">
-          {AVAILABLE.map((item) => <article key={item.title}><h3>{item.title}</h3><p>{item.description}</p><Link className="es-public-text-link" to={item.to}>{item.link}</Link></article>)}
-        </div>
-      </section>
-
-      <section className="es-public-section es-public-roadmap-section es-public-planned" id="es-public-planned" tabIndex={-1} aria-labelledby="es-public-planned-title">
-        <div className="es-public-section-intro"><span className="es-public-badge es-public-badge-neutral">Planned, not generally available</span><h2 id="es-public-planned-title">More languages.<br />The same need for clarity.</h2><p>A new language needs more than a translated prompt. Recognition, conversation, voice, and the resulting fields all need to work together.</p></div>
-        <div className="es-public-roadmap-list">
-          {PLANNED.map((item) => <article key={item.title}><h3>{item.title}</h3><p>{item.description}</p><p className="es-public-roadmap-condition">{item.condition}</p></article>)}
-        </div>
-      </section>
-
-      <section className="es-public-section es-public-readiness" aria-labelledby="es-public-readiness-title">
-        <div className="es-public-section-heading"><div><p className="es-public-context">Before a new capability becomes routine.</p><h2 id="es-public-readiness-title">Test the whole conversation.</h2></div><p>These are review criteria for future releases, not benchmarks we claim to have passed.</p></div>
-        <ol className="es-public-steps">
-          <li><span className="es-public-step-number" aria-hidden="true">1</span><h3>Check what is heard</h3><p>Review recognition across representative speakers, background conditions, and language changes. Keep uncertain words visible in the evidence.</p></li>
-          <li><span className="es-public-step-number" aria-hidden="true">2</span><h3>Check what is said</h3><p>Evaluate pronunciation, turn-taking, disclosure, and the agent’s handling of unclear requests. A translated script is only a starting point.</p></li>
-          <li><span className="es-public-step-number" aria-hidden="true">3</span><h3>Check what is recorded</h3><p>Compare extracted answers against the conversation, including missing values and escalation needs. Confirm that the result supports human review.</p></li>
-        </ol>
-      </section>
-
-      <section className="es-public-closing" aria-labelledby="es-public-roadmap-closing">
-        <div><h2 id="es-public-roadmap-closing">Explore the workflow<br />that is here today.</h2><p>See a labelled example, or sign in to your existing workspace.</p></div>
-        <div><Link className="es-public-button" to="/login">Open workspace</Link><Link className="es-public-text-link" to="/landing#demo">View the illustrative example</Link></div>
-      </section>
-    </PublicLayout>
+    <span className={`rm2-status rm2-${kind}`}>
+      <span className="rm2-dot" aria-hidden="true" />
+      {label}
+    </span>
   );
 }
+
+function Lane({ id, title, sub, kind, label, items }) {
+  return (
+    <section className="rm2-lane reveal" aria-labelledby={id}>
+      <div className="rm2-lane-head">
+        <h2 id={id}>{title}</h2>
+        <StatusDot kind={kind} label={label} />
+      </div>
+      <p className="rm2-lane-sub">{sub}</p>
+      <div className="rm2-cards">
+        {items.map((it) => (
+          <article className="rm2-card" key={it.t}>
+            <h3>{it.t}</h3>
+            <p>{it.d}</p>
+            {it.meta && <p className="rm2-meta">{it.meta}</p>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export default function RoadmapPage() {
+  const [navScrolled, setNavScrolled] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    const onScroll = () => setNavScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !('IntersectionObserver' in window)) {
+      root?.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+      return undefined;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      }),
+      { threshold: 0.12 },
+    );
+    root.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+
+  return (
+    <div className="rm2" ref={rootRef}>
+      <nav id="mainNav" className={navScrolled ? 'scrolled' : ''}>
+        <div className="nav-inner">
+          <div className="nav-left">
+            <Link to="/" className="logo" style={{ display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}>
+              <svg className="logo-mark" width="38" height="22" viewBox="0 0 46 26" fill="none" aria-hidden="true"><circle className="lm-src" cx="6" cy="13" r="2.2" /><path className="lm-a l1" d="M10.02 7.27 A7 7 0 0 1 10.02 18.73" /><path className="lm-a l2" d="M12.88 3.17 A12 12 0 0 1 12.88 22.83" /><circle className="lm-echo" cx="40" cy="13" r="2.2" /><path className="lm-b r1" d="M35.98 7.27 A7 7 0 0 0 35.98 18.73" /><path className="lm-b r2" d="M33.12 3.17 A12 12 0 0 0 33.12 22.83" /></svg>
+              <span className="logo-text">Echo Sarathi</span>
+            </Link>
+            <Link to="/#product" className="nav-link">Product</Link>
+            <Link to="/#usecases" className="nav-link">Use Cases</Link>
+            <Link to="/#demo" className="nav-link">Demo</Link>
+          </div>
+          <div className="nav-right">
+            <Link to="/roadmap" className="nav-link" aria-current="page">Roadmap</Link>
+            <ThemeToggle />            <Link to="/login" className="nav-cta">Start free</Link>
+            <div className={`hamburger${mobileOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-label="Menu"
+              onClick={() => setMobileOpen((v) => !v)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setMobileOpen((v) => !v); }}>
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </div>
+      </nav>
+      <div className={`mobile-drawer${mobileOpen ? ' open' : ''}`} onClick={() => setMobileOpen(false)}>
+        <Link to="/#product">Product</Link>
+        <Link to="/#usecases">Use Cases</Link>
+        <Link to="/#demo">Demo</Link>
+        <Link to="/roadmap">Roadmap</Link>
+        <Link to="/login" className="drawer-cta">Start free</Link>
+      </div>
+
+      <main className="rm2-page">
+        <header className="rm2-hero reveal">
+          <span className="rm2-kick">Roadmap · updated October 2026</span>
+          <h1>Built in the open.</h1>
+          <p className="rm2-sub">
+            What works today, what&apos;s in training, and what&apos;s next — no vapor.
+            We ship each language only when it passes our quality bar, not before.
+          </p>
+          <div className="rm2-counts" role="list" aria-label="Roadmap status summary">
+            <span role="listitem"><b>4</b> live now</span>
+            <span role="listitem"><b>2</b> in training</span>
+            <span role="listitem"><b>1</b> planned</span>
+          </div>
+          <div className="rm2-hero-cta">
+            <Link to="/login" className="rm2-btn-primary">Start free</Link>
+            <Link to="/pricing" className="rm2-btn-ghost">See pricing</Link>
+          </div>
+        </header>
+
+        <Lane
+          id="lane-live"
+          title="Live now"
+          sub="Working today, on real calls, billed by the second."
+          kind="live"
+          label="Live"
+          items={LIVE}
+        />
+        <Lane
+          id="lane-building"
+          title="In training"
+          sub="Being built and benchmarked right now."
+          kind="building"
+          label="Building"
+          items={BUILDING}
+        />
+        <Lane
+          id="lane-planned"
+          title="Planned"
+          sub="Committed direction, community decides the order."
+          kind="planned"
+          label="Planned"
+          items={PLANNED}
+        />
+
+        <section className="rm2-journey reveal" aria-labelledby="journey-h">
+          <h2 id="journey-h">From a spreadsheet to structured answers — in eight steps.</h2>
+          <p className="rm2-lane-sub">What you do, what Sarathi does, and one practical tip per step.</p>
+          <ol className="rm2-timeline">
+            {STEPS.map((st, i) => (
+              <li className="rm2-step" key={st.t}>
+                <span className="rm2-node" aria-hidden="true">{i + 1}</span>
+                <div className="rm2-step-body">
+                  <h3>{st.t}</h3>
+                  <dl className="rm2-cols">
+                    <div className="rm2-col rm2-you">
+                      <dt>You do</dt>
+                      <dd>{st.you}</dd>
+                    </div>
+                    <div className="rm2-col rm2-sarathi">
+                      <dt>Sarathi does</dt>
+                      <dd>{st.sarathi}</dd>
+                    </div>
+                    <div className="rm2-col rm2-tip">
+                      <dt>Good to know</dt>
+                      <dd>{st.tip}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="rm2-loop reveal" aria-labelledby="loop-h">
+          <h2 id="loop-h">Every turn, in under a second.</h2>
+          <p className="rm2-lane-sub">
+            This loop runs many times per call. Speed here is why Sarathi doesn&apos;t sound like a robot —
+            and callers can interrupt mid-sentence and be heard.
+          </p>
+          <div className="rm2-pipe">
+            {LOOP.map(([t, d], i) => (
+              <React.Fragment key={t}>
+                {i > 0 && <div className="rm2-flow" aria-hidden="true" />}
+                <div className="rm2-pnode">
+                  <span className="rm2-pnum" aria-hidden="true">{i + 1}</span>
+                  <b>{t}</b>
+                  <small>{d}</small>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="rm2-targets">
+            <span><b>900 ms</b> median reply</span>
+            <span><b>1.5 s</b> slowest five percent</span>
+            <span><b>₹3.00</b> per minute</span>
+          </div>
+        </section>
+
+        <section className="rm2-cta reveal" aria-labelledby="cta-h">
+          <h2 id="cta-h">Start free. Scale when it works.</h2>
+          <p>Create an agent, run your first calls on the 10 welcome minutes, and top up with credits only when you take it live.</p>
+          <div className="rm2-hero-cta">
+            <Link to="/login" className="rm2-btn-primary">Start free</Link>
+            <Link to="/#demo" className="rm2-btn-ghost">See the demo</Link>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <div className="f-in">
+          <span>&copy; {new Date().getFullYear()} Echo Sarathi Labs</span>
+          <div className="f-links">
+            <Link to="/">Home</Link>
+            <Link to="/pricing">Pricing</Link>
+            <Link to="/login">Sign in</Link>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+

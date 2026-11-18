@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiTargetLabel, authApi, setSession } from '../api.js';
-import '../account-pages.css';
 
 const RAW_GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
@@ -185,139 +184,166 @@ export default function Login() {
   }, []);
 
   return (
-    <main className="es-account es-account-auth es-account-login">
-      <header className="es-account-public-head">
-        <Link className="es-account-brand" to="/">Echo Sarathi<span>Voice workspace</span></Link>
-        <nav aria-label="Account navigation">
-          <Link to="/pricing">Pricing</Link>
-          <Link to="/">Back to home</Link>
-        </nav>
-      </header>
+    <div className="login-split">
+      {/* ---- Left side: form ---- */}
+      <div className="form-side">
+        <div className="logo-row">
+          <svg className="logo-mark" width="42" height="42" viewBox="0 0 42 42" fill="none" aria-hidden="true">
+            <rect x="1" y="1" width="40" height="40" rx="11" className="logo-tile" strokeWidth="1"/>
+            <path d="M14 26V16" className="lm-a l1" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M18 26V14" className="lm-a l2" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M22 26V18" className="lm-b l1" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M26 26V14" className="lm-echo" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M30 26V16" className="lm-a r1" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M34 26V19" className="lm-b r2" strokeWidth="2.2" strokeLinecap="round"/>
+          </svg>
+          <b>Echo Sarathi</b>
+        </div>
 
-      <div className="es-account-auth-grid">
-        <section className="es-account-auth-card" aria-labelledby="login-title">
-          <div className="es-account-eyebrow">Your workspace</div>
-          <h1 id="login-title">{isRegister ? 'Create your account' : 'Welcome back'}</h1>
-          <p className="es-account-intro">
-            {isRegister ? 'Set up an organization when registration is enabled.' : 'Sign in to manage agents, campaigns and call results.'}
-          </p>
+        <h1>Welcome back</h1>
+        <p className="sub">Sign in to your voice console.</p>
 
-          <div className="es-account-mode" role="group" aria-label="Account access">
-            <button
-              type="button"
-              className={!isRegister ? 'on' : ''}
-              aria-pressed={!isRegister}
-              onClick={() => switchMode('login')}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              className={isRegister ? 'on' : ''}
-              aria-pressed={isRegister}
-              onClick={() => switchMode('register')}
-            >
-              Create account
-            </button>
+        <div className="mode-tabs">
+          <button
+            type="button"
+            className={!isRegister ? 'on' : ''}
+            onClick={() => switchMode('login')}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            className={isRegister ? 'on' : ''}
+            onClick={() => switchMode('register')}
+          >
+            Create account
+          </button>
+        </div>
+
+        {GOOGLE_CLIENT_ID && <div className="google-auth" ref={googleBtnRef} />}
+        {GOOGLE_CLIENT_ID_INVALID && import.meta.env.DEV && (
+          <div className="demo-hint">
+            Google sign-in is disabled: <b>VITE_GOOGLE_CLIENT_ID</b> holds a placeholder. Put a
+            real client id from Google Cloud Console in <b>frontend/.env.local</b> and restart the
+            dev server. Email sign-in still works.
           </div>
+        )}
+        {googleReady && (
+          <div className="auth-divider">
+            <span>or use your email</span>
+          </div>
+        )}
 
-          {isRegister && (
-            <p className="es-account-note" id="registration-note">
-              Account creation is subject to availability. If registration is closed, use the invitation link provided by your workspace administrator.
-            </p>
-          )}
-          {GOOGLE_CLIENT_ID && <div className="es-account-google" ref={googleBtnRef} />}
-          {GOOGLE_CLIENT_ID_INVALID && import.meta.env.DEV && (
-            <div className="es-account-note">
-              Google sign-in is disabled: <b>VITE_GOOGLE_CLIENT_ID</b> holds a placeholder. Put a
-              real client id from Google Cloud Console in <b>frontend/.env.local</b> and restart the
-              dev server. Email sign-in still works.
-            </div>
-          )}
-          {googleReady && <div className="es-account-divider">or continue with email</div>}
+        <form onSubmit={submit}>
+        {isRegister && (
+          <div className="field">
+            <label htmlFor="login-org">
+              Organization name <span className="req-star">*</span>
+            </label>
+            <input
+              id="login-org"
+              type="text"
+              autoComplete="organization"
+              autoFocus
+              value={form.orgName}
+              placeholder="e.g. Sunrise Academy"
+              onChange={(e) => setForm({ ...form, orgName: e.target.value })}
+            />
+          </div>
+        )}
 
-          <form onSubmit={submit} aria-busy={busy} aria-describedby={isRegister ? 'registration-note login-error' : 'login-error'}>
-            {isRegister && (
-              <div className="field">
-                <label htmlFor="login-org">Organization name <span className="req-star" aria-hidden="true">*</span></label>
-                <input
-                  id="login-org"
-                  type="text"
-                  autoComplete="organization"
-                  autoFocus
-                  aria-required="true"
-                  value={form.orgName}
-                  placeholder="Your organization"
-                  onChange={(e) => setForm({ ...form, orgName: e.target.value })}
-                />
-              </div>
-            )}
-            <div className="field">
-              <label htmlFor="login-email">Email <span className="req-star" aria-hidden="true">*</span></label>
-              <input
-                id="login-email"
-                type="email"
-                autoComplete="email"
-                aria-required="true"
-                value={form.email}
-                placeholder="you@company.com"
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="login-password">Password <span className="req-star" aria-hidden="true">*</span></label>
-              <input
-                id="login-password"
-                type="password"
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
-                aria-required="true"
-                aria-describedby={isRegister ? 'login-password-hint' : undefined}
-                value={form.password}
-                placeholder={isRegister ? 'Minimum 8 characters' : 'Your password'}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-              />
-              {isRegister && <p className="hint" id="login-password-hint">Use at least 8 characters.</p>}
-            </div>
-            {!isRegister && <div className="field-foot"><Link to="/forgot-password">Forgot password?</Link></div>}
-            <div id="login-error" role="alert" className={`err-msg${error ? ' show' : ''}`}>{error}</div>
+        <div className="field">
+          <label htmlFor="login-email">
+            Email <span className="req-star">*</span>
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            autoComplete="email"
+            value={form.email}
+            placeholder="you@school.edu"
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+          />
+        </div>
 
-            {!isRegister && showDemoHint && (
-              <button type="button" className="es-account-demo" onClick={fillDemo}>
-                <strong>Use the configured demo account</strong>
-                <span>{DEMO_EMAIL} · Fill sign-in details</span>
-              </button>
-            )}
-            <div className="form-actions">
-              <button
-                type="submit"
-                className="cta-btn"
-                disabled={
-                  busy ||
-                  !form.email.trim() ||
-                  !form.password ||
-                  (isRegister && !form.orgName.trim())
-                }
-              >
-                <span className={`spin${busy ? '' : ''}`} style={busy ? { display: 'inline-block' } : {}} aria-hidden="true" />
-                {busy ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in to workspace'}
-              </button>
-            </div>
-          </form>
-          <p className="es-account-auth-foot">Have an invitation? Open the link in your invitation email to join the right workspace.</p>
-        </section>
+        <div className="field">
+          <label htmlFor="login-password">
+            Password <span className="req-star">*</span>
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            autoComplete={isRegister ? 'new-password' : 'current-password'}
+            value={form.password}
+            placeholder={isRegister ? 'Minimum 8 characters' : 'Your password'}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+          />
+        </div>
 
-        <aside className="es-account-story">
-          <div className="es-account-eyebrow">From conversation to context</div>
-          <h2>Business calls.<br />Clear outcomes.</h2>
-          <p>One workspace to configure your agents, prepare outreach and review what each conversation learned.</p>
-          <ol className="es-account-steps">
-            <li><span>01</span><div><h3>Configure an agent</h3><p>Define the questions and information you need to collect.</p></div></li>
-            <li><span>02</span><div><h3>Test before outreach</h3><p>Explore a saved version in the browser Playground.</p></div></li>
-            <li><span>03</span><div><h3>Review the results</h3><p>Read transcripts and extracted fields, including what needs human review.</p></div></li>
-          </ol>
-          <Link to="/playground" className="es-account-text-link">Open Playground →</Link>
-        </aside>
+        {!isRegister && (
+          <div className="field-foot">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </div>
+        )}
+
+        <div className={`err-msg${error ? ' show' : ''}`}>{error}</div>
+
+        {!isRegister && showDemoHint && (
+          <button type="button" className="demo-hint demo-hint-btn" onClick={fillDemo}>
+            Demo — use <b>{DEMO_EMAIL}</b> / <b>{DEMO_PASSWORD}</b>
+            <span className="demo-hint-do">click to fill</span>
+          </button>
+        )}
+
+        <div className="form-actions">
+          <button
+            type="submit"
+            className="cta-btn"
+            disabled={
+              busy ||
+              !form.email.trim() ||
+              !form.password ||
+              (isRegister && !form.orgName.trim())
+            }
+          >
+            <span className={`spin${busy ? '' : ''}`} style={busy ? { display: 'inline-block' } : {}} />
+            {busy ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in to console'}
+          </button>
+        </div>
+        </form>
+
+        <p className="legal">By continuing you agree to the Terms of Service and Privacy Policy.</p>
+
+        <div className="auth-back">
+          <Link className="btn btn-ghost btn-sm" to="/">
+            ← Back to home
+          </Link>
+        </div>
       </div>
-    </main>
+
+      {/* ---- Right side: brand panel ---- */}
+      <div className="login-brand-side">
+        <div className="bwave">
+          {waveBars.map((bar, i) => (
+            <i
+              key={i}
+              style={{
+                '--h': `${bar.height}%`,
+                animationDelay: `${bar.delay}s`,
+              }}
+            />
+          ))}
+        </div>
+        <h2>
+          Build AI voice agents that <em>talk to your customers</em>.
+        </h2>
+        <p>
+          Create an agent once, test it in the browser, then launch outbound campaigns that call real people — and return every conversation as clean, structured results.
+        </p>
+        <p className="lang-line">
+          English today · <b>తెలుగు next</b> · code-switching on the roadmap
+        </p>
+      </div>
+    </div>
   );
 }

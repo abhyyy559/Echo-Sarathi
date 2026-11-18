@@ -8,7 +8,6 @@ import ExtractionSchemaEditor, {
 } from '../components/ExtractionSchemaEditor.jsx';
 import VoiceSettingsForm, { normalizeVoiceSettings } from '../components/VoiceSettingsForm.jsx';
 import ContextFieldsEditor from '../components/ContextFieldsEditor.jsx';
-import '../workspace-pages.css';
 
 const STEPS = [
   { key: 'basics', title: 'Basics' },
@@ -485,9 +484,9 @@ export default function AgentBuilderPage() {
   const err = (key) => fieldErrors[key] || null;
 
   return (
-    <div className="es-workspace es-workspace-builder">
+    <>
       <Link to="/agents" className="back-link">
-        Back to agents
+        ← Agents
       </Link>
 
       <div className="page-head detail-head">
@@ -526,55 +525,37 @@ export default function AgentBuilderPage() {
         </div>
       )}
 
-      {/* Compact navigation stays reachable on narrow screens. */}
-      <nav className="steps" aria-label="Builder steps">
+      {/* ---- step pills ---- */}
+      <div className="steps">
         {STEPS.map((s, i) => (
-          <button
-            type="button"
+          <span
             key={s.key}
-            aria-current={i === step ? 'step' : undefined}
-            aria-controls={`builder-${s.key}`}
-            className={`step-pill${i === step ? ' on' : ''}`}
+            className={`step-pill${i === step ? ' on' : ''}${i < step ? ' done' : ''}`}
             onClick={() => goToStep(i)}
           >
-            <span className="es-workspace-step-number">{i + 1}</span>{s.title}
-          </button>
+            {i < step ? '✓ Step ' : 'Step '}{i + 1}
+          </span>
         ))}
-      </nav>
+      </div>
 
+      {/* ---- 3-column builder ---- */}
       <div className="builder">
-        <aside className="rail card pad" aria-label="Builder navigation">
-          <h3 className="card-title">Agent setup</h3>
-          <p className="hint">Six steps. One saved version.</p>
+        {/* ---- left rail ---- */}
+        <aside className="rail card pad">
           {STEPS.map((s, i) => (
-            <button
-              type="button"
+            <div
               key={s.key}
-              aria-current={i === step ? 'step' : undefined}
-              aria-controls={`builder-${s.key}`}
-              className={`rstep${i === step ? ' on' : ''}`}
+              className={`rstep${i === step ? ' on' : ''}${i < step ? ' done' : ''}`}
               onClick={() => goToStep(i)}
             >
-              <span className="dot">{i + 1}</span>
+              <span className="dot">{i < step ? '✓' : i + 1}</span>
               {s.title}
-            </button>
+            </div>
           ))}
         </aside>
 
-        <div className="es-workspace-builder-main">
-          <div className="es-workspace-step-heading">
-            <p className="hint">Step {step + 1} of {STEPS.length}</p>
-            <h3>{STEPS[step].title}</h3>
-            <p className="hint">Required fields are checked when you save a version. Moving between steps does not validate or save the configuration.</p>
-          </div>
-          {Object.keys(fieldErrors).length > 0 && (
-            <div className="banner banner-error" role="alert">
-              <strong>Review these fields before saving</strong>
-              <ul className="error-list">
-                {Object.entries(fieldErrors).map(([key, message]) => <li key={key}>{message}</li>)}
-              </ul>
-            </div>
-          )}
+        {/* ---- center ---- */}
+        <div>
           {/* ---- Step 0: Basics ---- */}
           <section className={`pane${step === 0 ? ' on' : ''}`}>
             <div className="card pad">
@@ -779,19 +760,16 @@ export default function AgentBuilderPage() {
           </div>
         </div>
 
-        {/* ---- right: scripted preview ---- */}
-        <aside className="card testrail" aria-labelledby="builder-preview-title">
-          <h3 id="builder-preview-title">Scripted text preview</h3>
-          <p className="hint">Sample replies only. This does not use your agent configuration or extract real fields.</p>
-          <div ref={testMsgsRef} className="es-workspace-preview-messages" role="log" aria-label="Scripted preview messages" aria-live="polite">
+        {/* ---- right: test rail ---- */}
+        <aside className="card testrail">
+          <b style={{ fontSize: 13 }}>Quick test · text mode</b>
+          <div ref={testMsgsRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
             {testMsgs.map((m, i) => (
               <div key={i} className={`tmsg ${m.role === 'user' ? 'u' : 'a'}`}>{m.text}</div>
             ))}
           </div>
-          <label htmlFor="builder-preview-input">Caller message</label>
-          <div className="es-workspace-preview-compose">
+          <div style={{ display: 'flex', gap: 8 }}>
             <input
-              id="builder-preview-input"
               type="text"
               value={testInput}
               onChange={(e) => setTestInput(e.target.value)}
@@ -800,10 +778,10 @@ export default function AgentBuilderPage() {
             />
             <button type="button" className="btn btn-sm btn-primary" onClick={sendTest}>Send</button>
           </div>
-          <p className="hint">Nothing is dialed here. Save a version, then use the Playground for an actual agent test.</p>
+          <p className="hint">Nothing is dialed here — this previews replies before you save.</p>
         </aside>
       </div>
-    </div>
+    </>
   );
 }
 

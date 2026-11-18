@@ -4,7 +4,6 @@ import { API_BASE, downloadCallExport } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import { resolveCallActivity } from '../utils/callActivity.js';
 import { cleanTranscriptText } from '../utils/transcript.js';
-import '../workspace-pages.css';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'no_answer', 'busy', 'canceled', 'cancelled', 'invalid']);
 
@@ -145,8 +144,8 @@ export default function CallDetailPage() {
     .join(' · ');
 
   return (
-    <div className="call-detail es-workspace es-workspace-call-detail">
-      <div className="es-workspace-call-toolbar">
+    <div className="call-detail">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button className="btn btn-ghost" onClick={() => navigate(-1)}>
           ← Back
         </button>
@@ -167,22 +166,8 @@ export default function CallDetailPage() {
         </div>
       </div>
 
-      <div className="page-head es-workspace-call-heading">
-        <div>
-          <h2 className="page-title">Call #{call.id ?? id}</h2>
-          <p className="page-sub">Review captured information alongside the conversation that produced it.</p>
-        </div>
-        <a href="#call-transcript" className="btn btn-secondary">Read transcript</a>
-      </div>
-      {error && <div className="banner banner-error" role="alert">{error}</div>}
-      {exportError && <div className="banner banner-error" role="alert">{exportError}</div>}
-      {call.flagged_for_human && (
-        <div className="banner gold es-workspace-review-flag" role="status">
-          <strong>Human follow-up needed</strong>
-          <span>This call was flagged for review. Check the captured fields and transcript before acting.</span>
-        </div>
-      )}
-      {call.outcome && <p className="es-workspace-outcome"><strong>Recorded outcome</strong><span>{String(call.outcome)}</span></p>}
+      {error && <div className="banner banner-error">{error}</div>}
+      {exportError && <div className="banner banner-error">{exportError}</div>}
 
       <p className="meta-line">
         <span>
@@ -209,41 +194,11 @@ export default function CallDetailPage() {
         ) : null}
       </p>
 
-      <section className="card pad es-workspace-extracted" aria-labelledby="call-fields-title">
-        <div className="es-workspace-section-heading">
-          <h3 id="call-fields-title">Captured fields</h3>
-          <p className="hint">Values reported for this call. Confidence is shown only when provided; a missing value is not a confirmed answer.</p>
-        </div>
-        {extracted.length === 0 ? (
-          <p className="hint">
-            No structured fields were extracted during this call.
-            {live ? ' The agent collects fields during calls; check the transcript for what it has asked so far.' : ' The agent collects fields during calls; check the transcript for what it asked.'}
-          </p>
-        ) : (
-          <dl className="es-workspace-extracted-grid">
-            {extracted.map((f, i) => {
-              const chipCls = confChipClass(f.confidence);
-              const pct =
-                f.confidence != null
-                  ? Math.round(Number(f.confidence) <= 1 ? Number(f.confidence) * 100 : Number(f.confidence))
-                  : null;
-              return (
-                <div key={f.field_name != null ? `${f.field_name}-${i}` : i} className="frow2">
-                  <dt className="k">{f.field_name}</dt>
-                  <dd>
-                    <span>{f.field_value != null ? String(f.field_value) : '—'}</span>
-                    {pct != null && (
-                      <span className={`confchip ${chipCls}`}>Confidence {pct}%</span>
-                    )}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        )}
-      </section>
+      {call.flagged_for_human && (
+        <div className="banner gold">⚑ Escalated — needs human follow-up.</div>
+      )}
 
-      <section className="card pad es-workspace-call-activity" aria-labelledby="call-activity-title">
+      <section className="card pad" aria-labelledby="call-activity-title">
         <div
           role="status"
           aria-live="polite"
@@ -286,7 +241,7 @@ export default function CallDetailPage() {
       <div className="detail">
         {/* Left column */}
         <div>
-          <div className="card" id="call-transcript">
+          <div className="card">
             <div className="card-h">
               <h3>Transcript</h3>
               <span>auto-punctuated · speaker-labeled</span>
@@ -390,9 +345,47 @@ export default function CallDetailPage() {
         {/* Right column */}
         <div>
           <div className="card pad">
+            <h3 style={{ fontFamily: 'var(--font-d)', fontSize: 15 }}>Extracted information</h3>
+            <div style={{ marginTop: 10 }}>
+              {extracted.length === 0 ? (
+                <p className="hint">
+                  No structured fields were extracted during this call.
+                  {live ? ' The agent collects fields during calls; check the transcript for what it has asked so far.' : ' The agent collects fields during calls; check the transcript for what it asked.'}
+                </p>
+              ) : (
+                extracted.map((f, i) => {
+                  const chipCls = confChipClass(f.confidence);
+                  const pct =
+                    f.confidence != null
+                      ? Math.round(Number(f.confidence) <= 1 ? Number(f.confidence) * 100 : Number(f.confidence))
+                      : null;
+                  return (
+                    <div key={f.field_name != null ? `${f.field_name}-${i}` : i} className="frow2">
+                      <span className="k">{f.field_name}</span>
+                      <span>
+                        {f.field_value != null ? String(f.field_value) : '—'}
+                        {pct != null && (
+                          <span className={`confchip ${chipCls}`}>{pct}%</span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="card pad" style={{ marginTop: 18 }}>
             <h3 style={{ fontFamily: 'var(--font-d)', fontSize: 15 }}>AI summary</h3>
             {call.summary ? (
-              <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.7, marginTop: 10 }}>{call.summary}</p>
+              <>
+                <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.7, marginTop: 10 }}>{call.summary}</p>
+                {call.outcome && (
+                  <div style={{ marginTop: 14 }}>
+                    <span className="outcome-tag">Outcome · {String(call.outcome)}</span>
+                  </div>
+                )}
+              </>
             ) : (
               <p className="hint">No summary yet{live ? ' — appears when the call completes.' : '.'}</p>
             )}

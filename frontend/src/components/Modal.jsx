@@ -1,33 +1,13 @@
-import React, { useEffect, useRef } from 'react';
-import { containDialogFocus } from '../utils/dialogFocus.js';
+import React, { useEffect } from 'react';
 
 export default function Modal({ title, children, onClose, footer, wide }) {
-  const dialogRef = useRef(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
   useEffect(() => {
-    const dialog = dialogRef.current;
-    const previouslyFocused = document.activeElement;
-    dialog?.focus();
-
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCloseRef.current?.();
-        return;
-      }
-      containDialogFocus(event, dialog);
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose && onClose();
     };
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
-        previouslyFocused.focus();
-      }
-    };
-  }, []);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   return (
     <div
@@ -36,14 +16,7 @@ export default function Modal({ title, children, onClose, footer, wide }) {
         if (e.target === e.currentTarget && onClose) onClose();
       }}
     >
-      <div
-        className={`modal${wide ? ' modal-wide' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        ref={dialogRef}
-      >
+      <div className={`modal${wide ? ' modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-header">
           <h3>{title}</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close dialog">

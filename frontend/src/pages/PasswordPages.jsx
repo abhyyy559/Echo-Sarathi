@@ -1,40 +1,43 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { authApi, setSession } from '../api.js';
-import '../account-pages.css';
 
 /* Forgot / reset / accept-invite — the three emailed token flows. They share
  * one centred card so the whole auth surface feels like the login screen. */
 
 function BrandMark() {
   return (
-    <Link className="es-account-brand" to="/">Echo Sarathi<span>Voice workspace</span></Link>
+    <div className="logo-row auth-logo-row">
+      <div className="mark">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2 12h2l3-8 4 16 4-12 3 6h4" />
+        </svg>
+      </div>
+      <b>Echo Sarathi</b>
+    </div>
   );
 }
 
 function AuthShell({ title, sub, children }) {
   return (
-    <main className="es-account es-account-auth es-account-password">
-      <header className="es-account-public-head">
+    <div className="auth-screen">
+      <div className="auth-card">
         <BrandMark />
-        <nav aria-label="Account navigation"><Link to="/">Back to home</Link></nav>
-      </header>
-      <section className="es-account-auth-card" aria-labelledby="account-title">
-        <div className="es-account-eyebrow">Account access</div>
-        <h1 id="account-title">{title}</h1>
-        <p className="es-account-intro">{sub}</p>
+        <h1 className="auth-title">{title}</h1>
+        <p className="auth-sub">{sub}</p>
         {children}
-        <div className="es-account-auth-foot">
-          <Link className="es-account-text-link" to="/login">← Back to sign in</Link>
+        <div className="auth-back">
+          <Link className="btn btn-ghost btn-sm" to="/login">
+            ← Back to sign in
+          </Link>
         </div>
-      </section>
-      <p className="es-account-password-foot">Use the email link for the account or workspace you want to access.</p>
-    </main>
+      </div>
+    </div>
   );
 }
 
 function ErrorBox({ message }) {
-  return <div id="account-form-error" role="alert" className={`err-msg${message ? ' show' : ''}`}>{message}</div>;
+  return <div className={`err-msg${message ? ' show' : ''}`}>{message}</div>;
 }
 
 export function ForgotPasswordPage() {
@@ -63,8 +66,8 @@ export function ForgotPasswordPage() {
         title="Check your inbox"
         sub={`If ${email.trim()} has an account, a reset link is on its way. The link is valid for 30 minutes.`}
       >
-        <div className="banner banner-info" role="status">
-          <strong>Next, open your email.</strong> Check your spam folder if the message has not arrived. You can return to sign in to request another link.
+        <div className="banner banner-info" style={{ marginTop: 8 }}>
+          Nothing arrived? Check spam, or write to hello@echosarathi.ai.
         </div>
       </AuthShell>
     );
@@ -75,17 +78,16 @@ export function ForgotPasswordPage() {
       title="Reset your password"
       sub="Enter the email you sign in with and we'll send a one-time link."
     >
-      <form onSubmit={submit} aria-busy={busy} aria-describedby="account-form-error">
+      <form onSubmit={submit}>
         <div className="field">
           <label htmlFor="forgot-email">
-            Email <span className="req-star" aria-hidden="true">*</span>
+            Email <span className="req-star">*</span>
           </label>
           <input
             id="forgot-email"
             type="email"
             autoComplete="email"
             autoFocus
-            aria-required="true"
             value={email}
             placeholder="you@company.com"
             onChange={(e) => setEmail(e.target.value)}
@@ -93,7 +95,7 @@ export function ForgotPasswordPage() {
         </div>
         <ErrorBox message={error} />
         <button type="submit" className="cta-btn" disabled={busy || !email.trim()}>
-          <span className="spin" style={busy ? { display: 'inline-block' } : {}} aria-hidden="true" />
+          <span className="spin" style={busy ? { display: 'inline-block' } : {}} />
           {busy ? 'Sending…' : 'Send reset link'}
         </button>
       </form>
@@ -125,34 +127,29 @@ function PasswordForm({ token, onSuccess, submitLabel }) {
   }
 
   return (
-    <form onSubmit={submit} aria-busy={busy} aria-describedby="account-form-error account-link-help">
+    <form onSubmit={submit}>
       <div className="field">
         <label htmlFor="new-password">
-          New password <span className="req-star" aria-hidden="true">*</span>
+          New password <span className="req-star">*</span>
         </label>
         <input
           id="new-password"
           type="password"
           autoComplete="new-password"
           autoFocus
-          aria-required="true"
-          aria-describedby="password-requirements"
           value={password}
           placeholder="Minimum 8 characters"
           onChange={(e) => setPassword(e.target.value)}
         />
-        <p className="hint" id="password-requirements">Use at least 8 characters, then enter the same password below.</p>
       </div>
       <div className="field">
         <label htmlFor="confirm-password">
-          Confirm password <span className="req-star" aria-hidden="true">*</span>
+          Confirm password <span className="req-star">*</span>
         </label>
         <input
           id="confirm-password"
           type="password"
           autoComplete="new-password"
-          aria-required="true"
-          aria-describedby="account-form-error"
           value={confirm}
           placeholder="Type it again"
           onChange={(e) => setConfirm(e.target.value)}
@@ -164,15 +161,14 @@ function PasswordForm({ token, onSuccess, submitLabel }) {
         className="cta-btn"
         disabled={busy || !token || password.length < 8 || !confirm}
       >
-        <span className="spin" style={busy ? { display: 'inline-block' } : {}} aria-hidden="true" />
+        <span className="spin" style={busy ? { display: 'inline-block' } : {}} />
         {busy ? 'Please wait…' : submitLabel}
       </button>
       {!token && (
-        <p className="banner banner-error" role="alert">
-          <strong>Email link required.</strong> The token is missing. Open the complete link from your reset or invitation email.
+        <p className="hint hint-error" style={{ marginTop: 14 }}>
+          This page needs the link from your email — the token is missing.
         </p>
       )}
-      <p className="hint" id="account-link-help">Link expired or already used? Request a new password reset, or ask your workspace administrator to resend the invitation.</p>
     </form>
   );
 }

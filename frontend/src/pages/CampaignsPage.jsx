@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import { statusLabel, statusClass } from '../components/StatusBadge.jsx';
 import Modal from '../components/Modal.jsx';
 import { agentOptionLabel } from '../utils/agentPurpose.js';
-import '../workspace-pages.css';
 
 function fmtDateTime(value) {
   if (!value) return '—';
@@ -88,19 +87,15 @@ export default function CampaignsPage() {
   }
 
   return (
-    <div className="es-workspace es-workspace-campaigns">
+    <div>
       <div className="page-head">
         <div>
           <h2 className="page-title">Campaigns</h2>
-          <p className="page-sub">Prepare a contact roster, choose a saved agent version and review each run.</p>
+          <p className="page-sub">Upload contacts, pick an agent, launch. Calls run 9 AM – 9 PM IST.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowNew(true)}>
-          New campaign
+          + New Campaign
         </button>
-      </div>
-      <div className="es-workspace-operating-note">
-        <strong>Calling window: 9 AM–9 PM IST</strong>
-        <span>Review contacts and their consent basis before launching. Open a campaign for its roster and outcomes.</span>
       </div>
 
       {error && (
@@ -116,16 +111,16 @@ export default function CampaignsPage() {
         <div className="banner banner-error">{createError}</div>
       )}
 
-      <div className="card es-workspace-table-scroll" role="region" aria-label="Campaign list" tabIndex={0}>
-        <table className="tbl" aria-busy={loading}>
+      <div className="card" style={{ overflowX: 'auto' }}>
+        <table className="tbl">
           <thead>
             <tr>
-              <th scope="col">Campaign</th>
-              <th scope="col">Pinned agent</th>
-              <th scope="col">Status</th>
-              <th scope="col" style={{ minWidth: 180 }}>Contacts completed</th>
-              <th scope="col">Created</th>
-              <th scope="col">Actions</th>
+              <th>Campaign</th>
+              <th>Agent</th>
+              <th>Status</th>
+              <th style={{ minWidth: 180 }}>Progress</th>
+              <th>Created</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -160,14 +155,7 @@ export default function CampaignsPage() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <Link
-                        className="es-workspace-record-link"
-                        to={`/campaigns/${c.id}`}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {c.name || `Campaign ${c.id}`}
-                      </Link>
-                      <span className="es-workspace-cell-note">Campaign #{c.id}</span>
+                      <b>{c.name || `Campaign ${c.id}`}</b>
                     </td>
                     <td style={{ color: 'var(--muted)' }}>
                       {c.agent_name
@@ -210,7 +198,7 @@ export default function CampaignsPage() {
                         </button>
                       )}
                       <button
-                        className="btn sm btn-danger-outline"
+                        className="btn sm danger-outline"
                         style={{ marginLeft: 6 }}
                         title="Permanently delete this campaign and its contacts, calls, and transcripts"
                         onClick={() => {

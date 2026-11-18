@@ -7,21 +7,13 @@ import React from 'react';
  */
 export default function DataTable({ columns, rows, rowKey, onRowClick, loading, empty, emptyAction }) {
   const isEmpty = !rows || rows.length === 0;
-
-  function onRowKeyDown(event, row) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onRowClick(row);
-    }
-  }
-
   return (
     <div className="table-wrap">
-      <table className="data-table" aria-busy={loading && isEmpty ? 'true' : undefined}>
+      <table className="data-table">
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c.key} scope="col" style={c.width ? { width: c.width } : undefined}>
+              <th key={c.key} style={c.width ? { width: c.width } : undefined}>
                 {c.label}
               </th>
             ))}
@@ -30,7 +22,7 @@ export default function DataTable({ columns, rows, rowKey, onRowClick, loading, 
         <tbody>
           {loading && isEmpty ? (
             <tr>
-              <td colSpan={columns.length} className="table-state" role="status">
+              <td colSpan={columns.length} className="table-state">
                 <span className="spinner spinner-inline" /> Loading…
               </td>
             </tr>
@@ -46,9 +38,7 @@ export default function DataTable({ columns, rows, rowKey, onRowClick, loading, 
               <tr
                 key={rowKey ? rowKey(row) : row.id}
                 className={onRowClick ? 'clickable' : undefined}
-                tabIndex={onRowClick ? 0 : undefined}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                onKeyDown={onRowClick ? (event) => onRowKeyDown(event, row) : undefined}
               >
                 {columns.map((c) => (
                   <td key={c.key} className={c.className || undefined}>

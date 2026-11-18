@@ -1,17 +1,101 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import PublicLayout, { PublicFaq } from '../components/PublicLayout.jsx';
+import '../od-pricing.css';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
-// Keep catalogue amounts aligned with plans.py; this page never starts checkout.
+/* Public pricing — plans with included minutes plus a prepaid overage wallet.
+ *
+ * Rates mirror backend/app/services/plans.py (PLANS) and the pack table in
+ * backend/app/services/billing.py. Change both sides together or checkout and
+ * this page drift. All prices are GST-inclusive.
+ */
 const PLANS = [
-  { id: 'free', name: 'Free', price: 0, minutes: 0, rate: 3.0, seats: 1, agents: 3, concurrent: 2, retention: '30 days', tag: 'Explore with an eligible trial account.' },
-  { id: 'starter', name: 'Starter', price: 2990, minutes: 1000, rate: 3.0, seats: 3, agents: 3, concurrent: 2, retention: '90 days', tag: 'A pilot or a single team’s follow-ups.' },
-  { id: 'growth', name: 'Growth', price: 8700, minutes: 3000, rate: 2.9, seats: 10, agents: 10, concurrent: 5, retention: '180 days', tag: 'A department’s regular calling workflow.' },
-  { id: 'scale', name: 'Scale', price: 28000, minutes: 10000, rate: 2.8, seats: 30, agents: 30, concurrent: 15, retention: '365 days', tag: 'Larger allowances across teams and agents.' },
+  {
+    id: 'free',
+    name: 'Free',
+    price: 0,
+    minutes: 0,
+    rate: 3.0,
+    seats: 1,
+    agents: 3,
+    concurrent: 2,
+    retention: '30 days',
+    tag: 'Kick the tyres with 10 trial minutes in the wallet. No card required.',
+    feats: [
+      '10 free trial minutes',
+      '1 seat · 3 agents · 2 concurrent calls',
+      'Playground tests always free',
+      '30-day transcript retention',
+    ],
+    cta: 'Start free',
+  },
+  {
+    id: 'starter',
+    name: 'Starter',
+    price: 2990,
+    minutes: 1000,
+    rate: 3.0,
+    seats: 3,
+    agents: 3,
+    concurrent: 2,
+    retention: '90 days',
+    tag: 'A single team running daily follow-ups and first pilots.',
+    feats: [
+      '1,000 included minutes / month',
+      '3 seats · 3 agents · 2 concurrent',
+      'Overage at ₹3.00 / minute',
+      '90-day transcript retention',
+      'GST invoices + email support',
+    ],
+    cta: 'Choose Starter',
+  },
+  {
+    id: 'growth',
+    name: 'Growth',
+    price: 8700,
+    minutes: 3000,
+    rate: 2.9,
+    seats: 10,
+    agents: 10,
+    concurrent: 5,
+    retention: '180 days',
+    tag: 'Daily calling for a department, with headroom for retries.',
+    feats: [
+      '3,000 included minutes / month',
+      '10 seats · 10 agents · 5 concurrent',
+      'Overage at ₹2.90 / minute',
+      '180-day transcript retention',
+      'Priority email support',
+    ],
+    cta: 'Choose Growth',
+  },
+  {
+    id: 'scale',
+    name: 'Scale',
+    price: 28000,
+    minutes: 10000,
+    rate: 2.8,
+    seats: 30,
+    agents: 30,
+    concurrent: 15,
+    retention: '365 days',
+    tag: 'High-volume campaigns across several agents and teams.',
+    feats: [
+      '10,000 included minutes / month',
+      '30 seats · 30 agents · 15 concurrent',
+      'Overage at ₹2.80 / minute',
+      '365-day transcript retention',
+      'Onboarding + priority support',
+    ],
+    cta: 'Choose Scale',
+  },
 ];
-const PAID_PLANS = PLANS.filter((plan) => plan.id !== 'free');
-const fmt = (n) => Number(n).toLocaleString('en-IN');
 
+const PAID_PLANS = PLANS.filter((plan) => plan.id !== 'free');
+
+/* Cheapest self-serve way to cover N connected minutes: every plan's list
+ * price plus overage at its own rate. The minimum is monotone in minutes, so a
+ * simple scan is enough — no dynamic programming needed here. */
 function quote(minutes) {
   let best = null;
   for (const plan of PAID_PLANS) {
@@ -22,112 +106,195 @@ function quote(minutes) {
   return best;
 }
 
-const FAQS = [
-  { question: 'Are the displayed prices inclusive of GST?', answer: <p>Yes. The listed monthly prices and overage rates include 18% GST. The estimate uses those listed amounts; it does not add tax again.</p> },
-  { question: 'How do the plan allowance and wallet work together?', answer: <p>Included minutes are used first. Once the allowance is exhausted, phone usage draws from your prepaid wallet at the plan’s overage rate. The Free plan has no monthly allowance, so usage draws from its trial or prepaid wallet balance.</p> },
-  { question: 'Do unused minutes or wallet credit roll over?', answer: <p>Unused included minutes do not roll over to the next monthly period. Wallet credit is separate prepaid value, does not expire, and is not reset with the monthly allowance.</p> },
-  { question: 'What is included in the trial?', answer: <p>The catalogue provides 10 trial minutes in the wallet for eligible new accounts, with no card required for the trial. This is a one-time trial, not 10 minutes every month. Public signup is not open; an existing account or invitation is required.</p> },
-  { question: 'Are Playground tests the same as phone calls?', answer: <p>No. Browser voice and text testing in the <Link to="/playground">Playground</Link> is separate from billable phone testing. A phone-mode test places an actual call, requires authorization, and uses the applicable phone allowance or wallet balance.</p> },
-  { question: 'Can I buy a plan from this page?', answer: <p>This page explains the catalogue and estimates usage; it does not create a subscription or charge you. <Link to="/login">Sign in</Link> to review the options available to your organization in Billing &amp; credits. Account eligibility and payment availability still apply.</p> },
-];
+const fmt = (n) => Number(n).toLocaleString('en-IN');
 
 export default function PricingPage() {
+  const [navScrolled, setNavScrolled] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [minutes, setMinutes] = useState(3000);
+  const rootRef = React.useRef(null);
+
+  useEffect(() => {
+    const onScroll = () => setNavScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !('IntersectionObserver' in window)) {
+      root?.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+      return undefined;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      }),
+      { threshold: 0.12 },
+    );
+    root.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+
   const estimate = quote(minutes);
 
   return (
-    <PublicLayout>
-      <section className="es-public-page-intro" aria-labelledby="es-public-pricing-heading">
-        <p className="es-public-context">Pricing</p>
-        <h1 id="es-public-pricing-heading">A plan for your calls.<br />Room for the follow-up.</h1>
-        <div className="es-public-intro-row">
-          <p className="es-public-lead">Choose a monthly allowance. Keep prepaid wallet credit for overage. See the two separately, before you commit.</p>
-          <div><Link className="es-public-button" to="/login">Open workspace</Link><p className="es-public-access-note">Existing account or invitation required.</p></div>
+    <div className="od-pricing" ref={rootRef}>
+      <nav id="mainNav" className={navScrolled ? 'scrolled' : ''}>
+        <div className="nav-inner">
+          <div className="nav-left">
+            <Link to="/" className="logo" style={{ display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}>
+              <svg className="logo-mark" width="38" height="22" viewBox="0 0 46 26" fill="none" aria-hidden="true"><circle className="lm-src" cx="6" cy="13" r="2.2" /><path className="lm-a l1" d="M10.02 7.27 A7 7 0 0 1 10.02 18.73" /><path className="lm-a l2" d="M12.88 3.17 A12 12 0 0 1 12.88 22.83" /><circle className="lm-echo" cx="40" cy="13" r="2.2" /><path className="lm-b r1" d="M35.98 7.27 A7 7 0 0 0 35.98 18.73" /><path className="lm-b r2" d="M33.12 3.17 A12 12 0 0 0 33.12 22.83" /></svg>
+              <span className="logo-text">Echo Sarathi</span>
+            </Link>
+            <Link to="/#product" className="nav-link">Product</Link>
+            <Link to="/#usecases" className="nav-link">Use Cases</Link>
+            <Link to="/#demo" className="nav-link">Demo</Link>
+          </div>
+          <div className="nav-right">
+            <Link to="/playground" className="nav-link">Playground</Link>
+            <Link to="/roadmap" className="nav-link">Roadmap</Link>
+            <ThemeToggle />
+            <Link to="/login" className="nav-cta">Start free</Link>
+            <div className={`hamburger${mobileOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-label="Menu"
+              onClick={() => setMobileOpen((v) => !v)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setMobileOpen((v) => !v); }}>
+              <span></span><span></span><span></span>
+            </div>
+          </div>
         </div>
-      </section>
+      </nav>
+      <div className={`mobile-drawer${mobileOpen ? ' open' : ''}`} onClick={() => setMobileOpen(false)}>
+        <Link to="/#product">Product</Link>
+        <Link to="/#usecases">Use Cases</Link>
+        <Link to="/#demo">Demo</Link>
+        <Link to="/playground">Playground</Link>
+        <Link to="/roadmap">Roadmap</Link>
+        <Link to="/login" className="drawer-cta">Start free</Link>
+      </div>
 
-      <section className="es-public-plan-section" aria-labelledby="es-public-plans-title">
-        <div className="es-public-inline-heading"><h2 id="es-public-plans-title">Compare monthly plans</h2><p>All listed prices include 18% GST.</p></div>
-        <p className="es-public-table-help" id="es-public-plan-help">Scroll the comparison horizontally on smaller screens. Plan limits describe the catalogue, not guaranteed calling capacity.</p>
-        <div className="es-public-table-scroll" role="region" aria-labelledby="es-public-plans-title" aria-describedby="es-public-plan-help" tabIndex={0}>
-          <table className="es-public-plan-table">
-            <caption className="es-public-sr-only">Monthly fees, included minutes, overage rates, and account limits for Free, Starter, Growth, and Scale.</caption>
-            <thead><tr><th scope="col">Monthly plan</th>{PLANS.map((plan) => <th scope="col" key={plan.id}><span>{plan.name}</span><p>{plan.tag}</p></th>)}</tr></thead>
-            <tbody>
-              <tr className="es-public-price-row"><th scope="row">Monthly price</th>{PLANS.map((plan) => <td key={plan.id}>₹{fmt(plan.price)}<span>/ month</span></td>)}</tr>
-              <tr><th scope="row">Included minutes <span>Each month</span></th>{PLANS.map((plan) => <td key={plan.id}>{fmt(plan.minutes)}{plan.id === 'free' && <span>10 trial minutes in wallet*</span>}</td>)}</tr>
-              <tr><th scope="row">Overage <span>Per minute</span></th>{PLANS.map((plan) => <td key={plan.id}>₹{plan.rate.toFixed(2)}</td>)}</tr>
-              <tr><th scope="row">Team seats</th>{PLANS.map((plan) => <td key={plan.id}>{plan.seats}</td>)}</tr>
-              <tr><th scope="row">Agents</th>{PLANS.map((plan) => <td key={plan.id}>{plan.agents}</td>)}</tr>
-            </tbody>
-          </table>
+      <main className="page">
+        <span className="kick reveal">Plans &amp; minutes</span>
+        <h1 className="reveal">Built for real conversations.<br />Priced per minute.</h1>
+        <p className="sub reveal">
+          Pick a monthly plan with included connected minutes. Run out mid-month
+          and the prepaid wallet covers overage at your plan's rate — metered to
+          the second, billed only when the call connects.
+        </p>
+
+        <div className="trial-strip reveal">
+          <span><b>10 minutes free</b> on signup — a real pilot, not a demo</span>
+          <span>·</span>
+          <span>No card required</span>
+          <span>·</span>
+          <span>Playground time always free</span>
         </div>
-        <div className="es-public-plan-notes"><p>*One-time trial for eligible new accounts. Free has no recurring minute allowance. No card required for trial credit.</p><p>Account access remains invitation-based. Review the options available in your workspace before purchasing.</p></div>
-        <div className="es-public-enterprise"><div><h3>Enterprise</h3><p>30,000+ minutes, priced on a custom contract. Availability, limits, and support terms need a separate agreement; this is not a self-serve plan.</p></div><Link className="es-public-text-link" to="/login">Sign in to your workspace</Link></div>
-      </section>
 
-      <section className="es-public-section es-public-estimator" aria-labelledby="es-public-estimator-title">
-        <div className="es-public-estimator-input">
-          <p className="es-public-context">Make the numbers concrete.</p>
-          <h2 id="es-public-estimator-title">Estimate a month<br />of calling.</h2>
-          <p id="es-public-estimate-scope">Compares Starter, Growth, and Scale using list price plus overage. It excludes Free, trial credit, and custom contracts. This is an estimate, not a checkout quote or a capacity promise.</p>
-          <div className="es-public-range-heading"><label htmlFor="es-public-minutes">Monthly phone minutes</label><output htmlFor="es-public-minutes">{fmt(minutes)}</output></div>
+        <div className="grid packs">
+          {PLANS.map((plan, i) => {
+            const featured = plan.id === 'growth';
+            return (
+              <div key={plan.id} className={`pcard reveal${featured ? ' featured' : ''}`} style={{ transitionDelay: `${i * 0.07}s` }}>
+                {featured && <span className="rec"><i></i>Most popular</span>}
+                <div className="tier">
+                  <i style={featured ? { background: 'var(--pearl)' } : undefined}></i>
+                  {plan.name}
+                </div>
+                <div className="pline">
+                  <span className="amt">{plan.price === 0 ? '₹0' : `₹${fmt(plan.price)}`}</span>
+                  <span className="unit">{plan.price === 0 ? 'to start' : '/ month'}</span>
+                </div>
+                <p className="ptag">
+                  {plan.minutes > 0
+                    ? `${fmt(plan.minutes)} included minutes · ₹${plan.rate.toFixed(2)}/min overage. `
+                    : 'Trial minutes in the wallet, then ₹3.00/min. '}
+                  {plan.tag}
+                </p>
+                <ul className="feats">
+                  {plan.feats.map((feat) => (
+                    <li key={feat}>
+                      <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                      <span>{feat}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link to="/login" className={`cta${featured ? ' cta-solid' : ''}`}>
+                  {plan.cta}
+                </Link>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="ent-strip reveal">
+          <div>
+            <div className="ent-k">Enterprise</div>
+            <p>
+              30,000+ minutes, custom seats and concurrency, SLA and security
+              review support, annual invoicing with a purchase order.
+            </p>
+          </div>
+          <a className="cta" href="mailto:hello@echosarathi.ai?subject=Enterprise%20plan">
+            Talk to sales
+          </a>
+        </div>
+
+        <div className="est reveal" style={{ maxWidth: 580, margin: '44px auto 0', textAlign: 'left' }}>
+          <span className="est-h">Estimate your monthly bill</span>
           <input
-            id="es-public-minutes"
-            className="es-public-range"
             type="range"
             min="100"
             max="20000"
             step="100"
             value={minutes}
-            aria-valuetext={`${fmt(minutes)} minutes per month`}
-            aria-describedby="es-public-estimate-scope"
-            onChange={(event) => setMinutes(Number(event.target.value))}
+            onChange={(e) => setMinutes(Number(e.target.value))}
+            aria-label="Estimated connected minutes per month"
           />
-          <div className="es-public-range-limits" aria-hidden="true"><span>100 minutes</span><span>20,000 minutes</span></div>
-          <div className="es-public-minute-options" role="group" aria-label="Example monthly usage">
-            {[1000, 3000, 10000].map((value) => <button key={value} type="button" aria-pressed={minutes === value} onClick={() => setMinutes(value)}>{fmt(value)} minutes</button>)}
+          <div className="est-row">
+            <span className="est-min"><b>{fmt(minutes)}</b> minutes / mo</span>
+            <span className="est-cost"><span>₹{fmt(estimate.cost)}</span> <small>/ month est.</small></span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--dim)', marginTop: 10, lineHeight: 1.6 }}>
+            {estimate.plan.name} plan — {fmt(estimate.plan.minutes)} included minutes
+            {estimate.overage > 0
+              ? ` + ${fmt(estimate.overage)} overage minutes at ₹${estimate.plan.rate.toFixed(2)}/min.`
+              : ', no overage needed.'}{' '}
+            Only connected calls consume minutes; unanswered calls are free.
           </div>
         </div>
-        <div className="es-public-estimate-result" aria-live="polite" aria-atomic="true">
-          <p>Lowest-cost paid plan for these minutes</p>
-          <h3>{estimate.plan.name}</h3>
-          <p className="es-public-estimate-amount">₹{fmt(estimate.cost)} <span>/ month estimated</span></p>
-          <dl>
-            <div><dt>Monthly plan</dt><dd>₹{fmt(estimate.plan.price)}</dd></div>
-            <div><dt>Included minutes</dt><dd>{fmt(estimate.plan.minutes)}</dd></div>
-            <div><dt>Overage minutes</dt><dd>{fmt(estimate.overage)}</dd></div>
-            <div><dt>Overage at ₹{estimate.plan.rate.toFixed(2)}/min</dt><dd>₹{fmt(estimate.overage * estimate.plan.rate)}</dd></div>
-          </dl>
-          <p>Includes 18% GST. Overage uses prepaid wallet credit at the selected plan’s rate.</p>
+
+        <div className="note reveal">
+          <span><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>No card for the free minutes</span>
+          <span><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>Only connected calls are billed</span>
+          <span><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>Playground time is always free</span>
         </div>
-      </section>
 
-      <section className="es-public-section es-public-billing-notes" aria-labelledby="es-public-billing-notes-title">
-        <div className="es-public-section-intro"><h2 id="es-public-billing-notes-title">Know what you<br />are budgeting for.</h2><p>The allowance, the wallet, and operational limits each do a different job.</p></div>
-        <div className="es-public-billing-explanations">
-          <article><h3>Monthly allowance</h3><p>Included minutes belong to the active plan period. They are consumed before the wallet and do not roll over into the next month.</p></article>
-          <article><h3>Prepaid wallet</h3><p>The wallet holds rupee credit, not an extra monthly allowance. The number of overage minutes it covers depends on your current plan’s rate.</p></article>
-          <article><h3>Usage and availability</h3><p>The catalogue is based on connected phone usage. Review actual metering and charges in your workspace; this public estimate is not a production billing audit. Phone access and payment availability must be confirmed separately.</p></article>
-          <details className="es-public-catalogue-details">
-            <summary>Catalogue capacity and retention reference</summary>
-            <div className="es-public-answer">
-              <p><strong>These are catalogue values, not verified operational guarantees.</strong> Deployment limits can reduce simultaneous calls below a plan’s listed limit. Confirm active capacity and retention behavior before relying on them; upgrading a plan does not prove that capacity is available.</p>
-              <div className="es-public-table-scroll" role="region" aria-label="Catalogue capacity and retention values" tabIndex={0}>
-                <table className="es-public-reference-table"><caption className="es-public-sr-only">Catalogue reference only, not delivered capacity or a retention guarantee.</caption><thead><tr><th scope="col">Plan</th><th scope="col">Call limit</th><th scope="col">Retention</th></tr></thead><tbody>{PLANS.map((plan) => <tr key={plan.id}><th scope="row">{plan.name}</th><td>{plan.concurrent}</td><td>{plan.retention}</td></tr>)}</tbody></table>
-              </div>
-              <p>Enterprise limits are subject to its agreement, not this comparison.</p>
-            </div>
-          </details>
+        <div className="mini-cta reveal">
+          <h2>Start free. Upgrade when the calls work.</h2>
+          <p>
+            Create an agent, use the 10 welcome minutes, and move onto a plan
+            only when you take it live. Prices are monthly and include 18% GST;
+            unused included minutes don't roll over, wallet credit never expires.
+          </p>
+          <div className="btns">
+            <Link to="/login" className="btn-p">Start free</Link>
+            <Link to="/#demo" className="btn-g">See the demo</Link>
+          </div>
         </div>
-      </section>
+      </main>
 
-      <PublicFaq id="es-public-pricing-faq" items={FAQS} />
-
-      <section className="es-public-closing" aria-labelledby="es-public-pricing-closing">
-        <div><h2 id="es-public-pricing-closing">Start with a conversation<br />you can review.</h2><p>Explore the workflow before planning your first campaign.</p></div>
-        <div><Link className="es-public-button" to="/login">Open workspace</Link><Link className="es-public-text-link" to="/landing#workflow">See how it works</Link></div>
-      </section>
-    </PublicLayout>
+      <footer>
+        <div className="f-in">
+          <span>&copy; {new Date().getFullYear()} Echo Sarathi Labs</span>
+          <div className="f-links">
+            <Link to="/">Home</Link>
+            <Link to="/roadmap">Roadmap</Link>
+            <Link to="/playground">Playground</Link>
+            <Link to="/login">Sign in</Link>
+            <a href="mailto:hello@echosarathi.ai">hello@echosarathi.ai</a>
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }

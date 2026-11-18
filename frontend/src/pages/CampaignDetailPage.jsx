@@ -7,7 +7,6 @@ import Modal from '../components/Modal.jsx';
 import DataTable from '../components/DataTable.jsx';
 import ContactImport from '../components/ContactImport.jsx';
 import { agentOptionLabel } from '../utils/agentPurpose.js';
-import '../workspace-pages.css';
 
 const PAGE_SIZE = 50;
 const CONTACT_STATUS_FILTERS = [
@@ -591,9 +590,9 @@ export default function CampaignDetailPage() {
     (String(agentPick) === String(campaign?.agent_version_id ?? '') ? campaign?.agent_role : '');
 
   return (
-    <div className="es-workspace es-workspace-campaign-detail">
-      <Link to="/campaigns" className="back-link">
-        Back to campaigns
+    <div>
+      <Link to="/" className="back-link">
+        ← Campaigns
       </Link>
 
       <div className="page-head detail-head">
@@ -683,25 +682,17 @@ export default function CampaignDetailPage() {
         <div className="banner banner-info">{launchBlockedReason}</div>
       )}
 
-      <div className="es-workspace-operating-note">
-        <strong>Calling window: 9 AM–9 PM IST</strong>
-        <span>{running ? 'Pause the campaign before changing its pinned agent.' : 'Only included contacts are queued for the next run. Review consent before launching.'}</span>
+      <div className="tabs">
+        <button className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')}>
+          Contacts
+        </button>
+        <button className={`tab${tab === 'dashboard' ? ' active' : ''}`} onClick={() => setTab('dashboard')}>
+          Dashboard
+        </button>
       </div>
-      <nav className="tabs" aria-label="Campaign sections">
-        <button type="button" aria-pressed={tab === 'contacts'} aria-controls="campaign-contacts" className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')}>
-          Contacts &amp; import
-        </button>
-        <button type="button" aria-pressed={tab === 'dashboard'} aria-controls="campaign-dashboard" className={`tab${tab === 'dashboard' ? ' active' : ''}`} onClick={() => setTab('dashboard')}>
-          Progress &amp; outcomes
-        </button>
-      </nav>
 
       {tab === 'contacts' && (
-        <section id="campaign-contacts" className="stack" aria-label="Contacts and import">
-          <div className="es-workspace-section-heading">
-            <h3>Prepare the contact roster</h3>
-            <p className="hint">Import contacts, review their details, then include the people to call in this run.</p>
-          </div>
+        <div className="stack">
           <ContactImport campaignId={id} onImported={onImported} />
 
           {importResult && (
@@ -828,31 +819,31 @@ export default function CampaignDetailPage() {
               </div>
             </div>
           </div>
-        </section>
+        </div>
       )}
 
       {tab === 'dashboard' && (
-        <section id="campaign-dashboard" className="stack" aria-label="Progress and outcomes">
-          {dashError && !dash && <div className="banner banner-error" role="alert">{dashError}</div>}
+        <div className="stack">
+          {dashError && !dash && <div className="banner banner-error">{dashError}</div>}
           {!dash ? (
-            <div className="loading-page" role="status">
-              <span className="spinner" aria-hidden="true" /> Loading progress and outcomes…
+            <div className="loading-page">
+              <span className="spinner" /> Loading dashboard…
             </div>
           ) : (
             <>
-              <section className="card pad" aria-labelledby="campaign-progress-title">
-                <h3 id="campaign-progress-title" className="card-title">Run progress</h3>
-                <p className="hint">Counts refresh while the campaign is running. Completed calls are not a measure of successful outcomes.</p>
-                {Object.keys(dash.counts || {}).length === 0 && <p className="hint">Progress counts are not available yet.</p>}
-                <dl className="es-workspace-progress-counts">
-                  {Object.entries(dash.counts || {}).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{statusLabel(key)}</dt>
-                      <dd>{value ?? '—'}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
+              <div className="banner brand">Tiles update live as the dialer works through the queue.</div>
+
+              <div className="tiles">
+                {Object.entries(dash.counts || {}).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className={`card tile${key === 'calling' ? ' t-cyan' : ''}${key === 'completed' ? ' t-green' : ''}`}
+                  >
+                    <div className="n">{value ?? 0}</div>
+                    <div className="l">{statusLabel(key)}</div>
+                  </div>
+                ))}
+              </div>
 
               <div className="card">
                 <div className="table-toolbar">
@@ -902,24 +893,17 @@ export default function CampaignDetailPage() {
                 )}
               </div>
 
-              <section className="card es-workspace-outcomes" aria-labelledby="campaign-outcomes-title">
-                <div className="card-h">
-                  <div>
-                    <h3 id="campaign-outcomes-title">Recent call outcomes</h3>
-                    <p className="hint">Review the recorded result, then open the call for fields and transcript evidence.</p>
-                  </div>
-                </div>
-                <div className="es-workspace-table-scroll" role="region" aria-label="Campaign call outcomes" tabIndex={0}>
+              <div className="card" style={{ overflowX: 'auto' }}>
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th scope="col">Contact</th>
-                      <th scope="col">Phone</th>
-                      <th scope="col">Agent</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Last outcome</th>
-                      <th scope="col">Duration</th>
-                      <th scope="col">Review</th>
+                      <th>Contact</th>
+                      <th>Phone</th>
+                      <th>Agent</th>
+                      <th>Status</th>
+                      <th>Last outcome</th>
+                      <th>Duration</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -947,10 +931,9 @@ export default function CampaignDetailPage() {
                   </tbody>
                 </table>
               </div>
-              </section>
             </>
           )}
-        </section>
+        </div>
       )}
 
       {copyModal && (

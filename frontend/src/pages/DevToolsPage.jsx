@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { API_BASE, analyticsApi, devApi, getToken } from '../api.js';
 import usePoll from '../hooks/usePoll.js';
 import HealthDot, { boolToState } from '../components/HealthDot.jsx';
-import '../account-pages.css';
 
 // ---------------------------------------------------------------------------
 // DEV ONLY (login-protected). Hidden only when the build sets
@@ -370,7 +369,7 @@ export default function DevToolsPage() {
   // Previously this gated on import.meta.env.PROD, which compiled the page
   // out of exactly the environment where it is needed.
   if (import.meta.env.VITE_DISABLE_DEVTOOLS === 'true') {
-    return <div className="es-account es-account-dev"><section className="es-account-restricted"><div className="es-account-eyebrow">Developer tools</div><h2>Diagnostics are disabled</h2><p>This build has developer tools turned off.</p><Link to="/" className="btn btn-secondary">Back to overview</Link></section></div>;
+    return <div className="empty-state">Dev tools are disabled in production builds.</div>;
   }
   return <DevToolsInner />;
 }
@@ -540,27 +539,15 @@ function DevToolsInner() {
   const providers = (health && health.providers) || {};
 
   return (
-    <div className="devtools es-account es-account-dev">
-      <header className="page-head">
-        <div>
-          <div className="es-account-eyebrow">Workspace / Diagnostics</div>
-          <h2 className="page-title">Developer tools</h2>
-          <p className="page-sub">Inspect service configuration, provider usage and API responses.</p>
-        </div>
-        <Link className="btn btn-secondary" to="/playground">Open Playground</Link>
-      </header>
-      <div className="es-account-note" role="note">
-        <strong>Authenticated diagnostics.</strong> Available unless disabled for this build. Endpoint actions use your current session and some create or change data.
+    <div className="devtools">
+      <div className="dev-banner" role="note">
+        <strong>DEV ONLY</strong> — this page disappears in production builds.
       </div>
-      <nav className="es-account-section-nav" aria-label="Diagnostics sections">
-        <a href="#dev-health">Service health</a><a href="#dev-quotas">Provider quotas</a><a href="#dev-environment">Environment</a><a href="#dev-endpoints">API catalog</a><a href="#dev-latency">Latency glossary</a>
-      </nav>
 
       {/* ---- Service health ---- */}
-      <section className="card" id="dev-health">
-        <div className="es-account-eyebrow">01 / Connectivity</div>
+      <section className="card">
         <h3 className="card-title">Service health</h3>
-        <p className="hint">Polled every 10 seconds. Provider-key presence does not by itself confirm a working call path.</p>
+        <p className="hint">Polled every 10 seconds. Green = configured/reachable, red = missing or down.</p>
         {healthError && !health && (
           <div className="banner banner-error">
             {healthError} — is the backend running at your configured API URL?
@@ -596,8 +583,7 @@ function DevToolsInner() {
       </section>
 
       {/* ---- Provider quotas ---- */}
-      <section className="card" id="dev-quotas">
-        <div className="es-account-eyebrow">02 / Usage &amp; capacity</div>
+      <section className="card">
         <div className="table-toolbar">
           <h3 className="card-title">Provider quotas</h3>
           <button
@@ -644,11 +630,10 @@ function DevToolsInner() {
           </div>
         ))}
 
-        <div className="es-account-table-scroll" role="region" aria-label="Provider usage and quotas" tabIndex={0}>
         <table className="tbl" style={{ marginTop: 10 }}>
           <thead>
             <tr>
-              <th scope="col">Provider</th>
+              <th>Provider</th>
               <th>Key</th>
               <th>Model</th>
               <th>Remaining</th>
@@ -709,11 +694,10 @@ function DevToolsInner() {
           Keys are masked and never leave the backend. Rows turn amber below 25% remaining and red below 10%. Only
           providers that publish a quota API appear here.
         </p>
-        </div>
       </section>
 
       {/* ---- Provider setup checklist ---- */}
-      <section className="card" id="dev-environment">
+      <section className="card">
         <h3 className="card-title">Provider &amp; environment checklist</h3>
         <p className="hint">From GET /api/dev/status. Each red item names the env var to set in backend/.env.</p>
         {statusError && !status && <div className="banner banner-error">{statusError}</div>}
@@ -776,7 +760,7 @@ function DevToolsInner() {
       </section>
 
       {/* ---- Endpoint catalog ---- */}
-      <section className="card flush" id="dev-endpoints">
+      <section className="card flush">
         <div className="table-toolbar">
           <h3 className="card-title">API endpoint catalog</h3>
           <span className="hint">
@@ -825,7 +809,7 @@ function DevToolsInner() {
       </section>
 
       {/* ---- Latency glossary ---- */}
-      <section className="card" id="dev-latency">
+      <section className="card">
         <h3 className="card-title">Latency glossary</h3>
         <p className="hint">
           Every conversation turn records these four numbers; the Playground and Call Review pages chart them against

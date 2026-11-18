@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentsApi } from '../api.js';
-import '../workspace-pages.css';
 
 function fmtDate(value) {
   if (!value) return '';
@@ -66,14 +65,17 @@ export default function AgentsPage() {
   const hasAgents = !loading && agents && agents.length > 0;
 
   return (
-    <div className="es-workspace es-workspace-agents">
+    <div>
       <div className="page-head">
         <div>
           <h2 className="page-title">Agents</h2>
-          <p className="page-sub">Configure who calls, what they ask and which fields they capture. Test a saved version before using it in a campaign.</p>
+          <p className="page-sub">
+            Your AI callers. Each agent keeps its conversation flow, extraction fields and voice settings as numbered,
+            immutable versions.
+          </p>
         </div>
         <button type="button" className="btn primary" onClick={() => navigate('/agents/new')}>
-          New agent
+          + New Agent
         </button>
       </div>
 
@@ -95,11 +97,10 @@ export default function AgentsPage() {
       {!loading && agents && agents.length === 0 && (
         <div className="card">
           <div className="empty-state">
-            <h3>Create your first caller</h3>
-            <p>Start with an identity, add your question flow and choose the information each call should capture.</p>
+            No agents yet. Create your first agent to start building a call flow.
             <div className="form-actions">
               <button type="button" className="btn primary" onClick={() => navigate('/agents/new')}>
-                Create your first agent
+                + Create your first agent
               </button>
             </div>
           </div>
@@ -117,21 +118,19 @@ export default function AgentsPage() {
               .map((part) => part[0].toUpperCase())
               .join('');
             return (
-              <div key={a.id} className="card acard" role="group" aria-label={a.name || 'Untitled agent'}>
+              <div key={a.id} className="card acard">
                 <div className="top">
-                  <span className={`avatar ${a.status || 'draft'}`} aria-hidden="true">{initials || '?'}</span>
+                  <span className={`avatar ${a.status || 'draft'}`}>{initials || '?'}</span>
                   <div className="who">
                     <h3>{a.name || 'Untitled agent'}</h3>
-                    <span className="es-workspace-cell-note">Agent #{a.id}</span>
+                    <span className="role">{a.description || 'No role set yet.'}</span>
                   </div>
-                  {info && <span className="vchip">Version {info.version}</span>}
+                  {info && <span className="vchip">v{info.version}</span>}
                 </div>
-                <p className="es-workspace-agent-role">{a.description || 'No role set yet. Add one in the builder.'}</p>
                 <div className="meta">
-                  <span><span className={`sdot ${a.status || 'draft'}`} aria-hidden="true"></span>{a.status || 'draft'}</span>
-                  <span>Updated {info && info.created_at ? fmtDate(info.created_at) : fmtDate(a.updated_at)}</span>
+                  <span className={`sdot ${a.status || 'draft'}`}></span>
+                  Updated {info && info.created_at ? fmtDate(info.created_at) : fmtDate(a.updated_at)} · {a.status || 'draft'}
                 </div>
-                {a.current_version_id == null && <p className="hint">Save a version to enable testing.</p>}
                 <div className="acts">
                   <button
                     type="button"

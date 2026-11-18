@@ -4,7 +4,6 @@ import App from './App.jsx';
 import './styles.css';
 import './saas.css';
 import './theme-light.css'; // loaded last: light-mode overrides win
-import './launch.css'; // approved launch palette + shell refinements
 import { initTheme } from './theme.js';
 
 initTheme();

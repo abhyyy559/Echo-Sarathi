@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { analyticsApi, billingApi } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
-import '../workspace-pages.css';
 
 const LATENCY_TARGET_MS = 900;
 
@@ -61,85 +60,88 @@ export default function OverviewPage() {
   const maxDayCount = Math.max(1, ...calls7d.map((d) => d.count));
 
   return (
-    <div className="es-workspace es-workspace-overview">
+    <div>
       <div className="page-head">
         <div>
           <h2 className="page-title">Overview</h2>
-          <p className="page-sub">Review recent conversations, captured fields and workspace usage.</p>
+          <p className="page-sub">
+            Health of your voice operations, updated live.
+          </p>
         </div>
         <div className="head-actions">
-          <Link to="/playground" className="btn primary">Test an agent</Link>
+          <Link to="/playground" className="btn primary">
+            Test an agent
+          </Link>
         </div>
       </div>
 
       {error && (
-        <div className="banner banner-error" role="alert">
+        <div className="banner banner-error">
           {error}{' '}
-          <button type="button" className="btn btn-secondary btn-sm" onClick={load}>Retry</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={load}>
+            Retry
+          </button>
         </div>
       )}
+
       {loading && !summary && (
-        <div className="loading-page" role="status">
-          <span className="spinner" aria-hidden="true" /> Loading analytics…
+        <div className="loading-page">
+          <span className="spinner" /> Loading analytics…
         </div>
       )}
 
       {summary && (
-        <div className="es-workspace-overview-grid">
-          <div className="es-workspace-stack">
-            <section className="card" aria-labelledby="overview-recent-title">
-              <div className="card-h">
-                <div>
-                  <h3 id="overview-recent-title">Recent calls</h3>
-                  <p className="hint">Open a call to review its fields and transcript.</p>
-                </div>
-                <Link to="/calls">View call history</Link>
+        <>
+          <div className="grid g5">
+            <div className="card stat">
+              <div className="lbl">Total calls</div>
+              <div className="num">{summary.total_calls != null ? summary.total_calls.toLocaleString() : '—'}</div>
+              <div className="foot">{summary.completed_calls != null ? `${summary.completed_calls.toLocaleString()} completed` : '— completed'}</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Success rate</div>
+              <div className="num">{summary.success_rate_pct != null ? `${summary.success_rate_pct}%` : '—'}</div>
+              <div className="foot">answered &amp; completed</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Median latency</div>
+              <div className="num">{medianLatency != null ? `${medianLatency.toLocaleString()} ms` : '—'}</div>
+              <div className="foot">
+                <span className={`badge${latencyOnTarget || medianLatency == null ? ' ok' : ' warn'}`}>
+                  {medianLatency == null
+                    ? 'target ≤900ms'
+                    : latencyOnTarget
+                      ? '✓ on target ≤900ms'
+                      : '▲ over target'}
+                </span>
               </div>
-              <div className="es-workspace-table-scroll" role="region" aria-label="Recent calls" tabIndex={0}>
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th scope="col">Call</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Agent</th>
-                      <th scope="col">Started / duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentCalls.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="table-state">
-                          <strong>No calls recorded yet.</strong>
-                          <p>Configure an <Link to="/agents">agent</Link>, then test it in the <Link to="/playground">Playground</Link>.</p>
-                        </td>
-                      </tr>
-                    )}
-                    {recentCalls.map((call) => (
-                      <tr key={call.id} onClick={() => navigate(`/calls/${call.id}`)}>
-                        <td className="mono"><Link to={`/calls/${call.id}`} aria-label={`Review call ${call.id}`}>#{call.id}</Link></td>
-                        <td><StatusBadge status={call.status} /></td>
-                        <td>{call.agent_name || '—'}</td>
-                        <td className="mono">
-                          {fmtDateTime(call.started_at)}
-                          {call.duration_seconds != null && (
-                            <span className="es-workspace-cell-note">{fmtDuration(call.duration_seconds)}</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Fields captured</div>
+              <div className="num">{summary.total_extracted_fields != null ? summary.total_extracted_fields.toLocaleString() : '—'}</div>
+              <div className="foot">structured data points</div>
+            </div>
+            <div className="card stat">
+              <div className="lbl">Credits spent</div>
+              <div className="num">
+                {billing ? `₹${Number(billing.spent_this_month_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
               </div>
-            </section>
+              <div className="foot">
+                {billing
+                  ? `${billing.minutes_used_this_month} min · ₹${Number(billing.balance_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })} left`
+                  : '— min this month'}
+              </div>
+            </div>
+          </div>
 
-            <section className="card" aria-labelledby="overview-volume-title">
+          <div className="grid g2" style={{ marginTop: 18 }}>
+            <div className="card">
               <div className="card-h">
-                <h3 id="overview-volume-title">Call volume</h3>
-                <span>Last 7 days, all agents</span>
+                <h3>Calls — last 7 days</h3>
+                <span>all agents</span>
               </div>
-              <div className="es-workspace-chart-body">
-                {calls7d.length === 0 && <p className="hint">Daily call counts are not available yet.</p>}
-                <div className="chart" role="list" aria-label="Daily call counts">
+              <div style={{ padding: '20px 22px' }}>
+                <div className="chart">
                   {calls7d.map((day) => {
                     const h = day.count === 0 ? 0 : Math.max(4, Math.round((day.count / maxDayCount) * 100));
                     const date = new Date(`${day.date}T00:00:00`);
@@ -147,53 +149,62 @@ export default function OverviewPage() {
                       ? day.date.slice(5)
                       : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
                     return (
-                      <div key={day.date} className="bar" role="listitem" aria-label={`${day.count} calls · ${label}`} data-v={day.count} title={`${day.count} calls · ${label}`}>
-                        <span className="es-workspace-bar-count" aria-hidden="true">{day.count}</span>
-                        <i style={{ height: `${h}%` }} aria-hidden="true" />
-                        <em aria-hidden="true">{label}</em>
+                      <div key={day.date} className="bar" data-v={day.count} title={`${day.count} calls · ${label}`}>
+                        <i style={{ height: `${h}%` }} />
+                        <em>{label}</em>
                       </div>
                     );
                   })}
                 </div>
               </div>
-              <p className="es-workspace-section-note">Bars show recorded calls per day, not successful outcomes.</p>
-            </section>
-          </div>
-
-          <aside className="es-workspace-stack" aria-label="Usage and performance">
-            <section className="card pad">
-              <h3 className="card-title">Usage &amp; performance</h3>
-              <dl className="es-workspace-facts">
-                <div><dt>Total calls</dt><dd>{summary.total_calls != null ? summary.total_calls.toLocaleString() : '—'}<small>{summary.completed_calls != null ? `${summary.completed_calls.toLocaleString()} completed` : 'Completed count unavailable'}</small></dd></div>
-                <div><dt>Success rate<small>Answered &amp; completed</small></dt><dd>{summary.success_rate_pct != null ? `${summary.success_rate_pct}%` : '—'}</dd></div>
-                <div>
-                  <dt>{summary.median_e2e_ms != null ? 'Median latency' : 'Average latency'}</dt>
-                  <dd>{medianLatency != null ? `${medianLatency.toLocaleString()} ms` : '—'}
-                    <small className={medianLatency == null ? '' : latencyOnTarget ? 'es-workspace-on-target' : 'es-workspace-warning'}>
-                      {medianLatency == null ? 'Measurement unavailable' : latencyOnTarget ? 'Within 900 ms target' : 'Over 900 ms target'}
-                    </small>
-                  </dd>
-                </div>
-                <div><dt>Fields captured<small>Structured data points</small></dt><dd>{summary.total_extracted_fields != null ? summary.total_extracted_fields.toLocaleString() : '—'}</dd></div>
-              </dl>
-              <p className="hint">Latency targets: median ≤900 ms, p95 ≤1500 ms.</p>
-            </section>
-            <section className="card pad">
-              <h3 className="card-title">Credits this month</h3>
-              <dl className="es-workspace-facts">
-                <div><dt>Spent</dt><dd>{billing?.spent_this_month_rupees != null ? `₹${Number(billing.spent_this_month_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}</dd></div>
-                <div><dt>Minutes used</dt><dd>{billing?.minutes_used_this_month ?? '—'}</dd></div>
-                <div><dt>Wallet balance</dt><dd>{billing?.balance_rupees != null ? `₹${Number(billing.balance_rupees).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}</dd></div>
-              </dl>
-              <Link to="/credits">View billing &amp; credits</Link>
-            </section>
-            <div className="es-workspace-next-action">
-              <h3>Prepare your next campaign</h3>
-              <p className="hint">Choose a saved agent version and review contacts before launching.</p>
-              <Link to="/campaigns">View campaigns</Link>
+              <div style={{ padding: '0 22px 16px', fontSize: 12, color: 'var(--dim)' }}>
+                Latency targets — median ≤900ms · p95 ≤1500ms. Bars show total calls per day.
+              </div>
             </div>
-          </aside>
-        </div>
+
+            <div className="card">
+              <div className="card-h">
+                <h3>Recent calls</h3>
+                <Link to="/calls" style={{ color: 'var(--brand)', fontSize: 13 }}>View all →</Link>
+              </div>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Agent</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentCalls.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="table-state">
+                        No calls yet — run one from the{' '}
+                        <Link to="/playground">Playground</Link>.
+                      </td>
+                    </tr>
+                  )}
+                  {recentCalls.map((call) => (
+                    <tr key={call.id} onClick={() => navigate(`/calls/${call.id}`)}>
+                      <td className="mono">#{call.id}</td>
+                      <td>
+                        <StatusBadge status={call.status} />
+                      </td>
+                      <td>{call.agent_name || '—'}</td>
+                      <td className="mono">
+                        {fmtDateTime(call.started_at)}
+                        {call.duration_seconds != null && (
+                          <> · {fmtDuration(call.duration_seconds)}</>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
