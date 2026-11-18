@@ -817,3 +817,12 @@ Append a short "completed" section to `C:\Users\home\global-memory\handoffs\echo
 - **Spec coverage:** merge (T1), CI (T2), adapter contracts + registry (T3–T4), durable writes (T5), same-voice Tenglish (T6), pricing/docs (T7), cleanup (T8), verification (T9). Caller memory, voicemail, knowledge retrieval, generator, actions, webhooks and queue replacement are explicitly out of scope per the spec.
 - **Placeholder scan:** the only placeholder is the intentional two-line scaffold in Task 4 Step 2, replaced in Step 3 with exact registration code. No TBDs remain.
 - **Type consistency:** `ProviderRole`, `ProviderSpec`, `select_provider`, `register_provider`, `STTProvider`/`TTSProvider`, `WriteSpool`, `stable_voice_for_language` are defined once (Tasks 3, 5, 6) and used with the same names and signatures in later tasks.
+
+## Execution deviations (2026-11-18)
+
+- Task 1 Step 7: sibling folders were **not renamed** — they are registered git worktrees, and renaming would break `git worktree list`. `README.ARCHIVED.md` pointer files were added instead.
+- Task 1 Step 6: baseline needed two test-only environment fixes (audioop deprecation filter; dependency-version-tolerant turn-detector/hush assertions) plus installing missing declared dependencies (`livekit`, worker requirements, `npm ci`). Backend 409 / worker 230 / frontend 43 tests green after that.
+- Task 2: `alembic check` was replaced by `alembic heads` — `check` requires a migrated database, which CI does not have.
+- Task 4: `bundle.tts_provider` is still set by the existing language/key logic; the registry records the selection reason (`tts_provider_selection`) instead of overriding a proven Tenglish path.
+- Task 7: remaining Redis mentions in `PROJECT_MASTER.md` are in explicitly historical future-consideration sections, now covered by a "historical document" banner.
+- Task 8: the 850-line `TurnTelemetry` class was **not physically moved** — its helpers are deeply shared with session wiring and no behavioural tests cover that boundary. Stable re-export modules (`telemetry.py`, `turns.py`, `degradation.py`) were added and `twilio_protocol.py` deleted. Full physical extraction is deferred to a dedicated refactor with characterization tests.
