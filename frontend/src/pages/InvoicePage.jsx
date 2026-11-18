@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { billingApi } from '../api.js';
+import '../account-pages.css';
 
 /* One GST invoice. Everything on the sheet is frozen at issue time — the
  * billing profile can change later without rewriting history. */
@@ -45,8 +46,9 @@ export default function InvoicePage() {
 
   if (error) {
     return (
-      <div>
-        <div className="banner banner-error">
+      <div className="es-account es-account-invoice">
+        <h2 className="page-title">Invoice unavailable</h2>
+        <div className="banner banner-error" role="alert">
           {error}{' '}
           <Link to="/credits" className="btn btn-secondary btn-sm" style={{ marginLeft: 8 }}>
             Back to billing
@@ -58,7 +60,7 @@ export default function InvoicePage() {
 
   if (!invoice) {
     return (
-      <div className="loading-page">
+      <div className="es-account es-account-invoice loading-page" role="status">
         <span className="spinner" /> Loading invoice…
       </div>
     );
@@ -68,20 +70,23 @@ export default function InvoicePage() {
   const rate = Number(invoice.gst_rate_percent || 18);
 
   return (
-    <div className="invoice-page">
+    <div className="invoice-page es-account es-account-invoice">
       <div className="invoice-print-bar">
-        <Link to="/credits" className="btn btn-ghost btn-sm">
-          ← Billing &amp; credits
-        </Link>
+        <div>
+          <Link to="/credits" className="es-account-text-link">← Billing &amp; credits</Link>
+          <h2 className="page-title">Invoice</h2>
+          <p className="page-sub">Billing details as recorded when this invoice was issued.</p>
+        </div>
         <button type="button" className="btn primary" onClick={() => window.print()}>
           Print / save as PDF
         </button>
       </div>
 
-      <div className="invoice-sheet">
+      <article className="invoice-sheet" aria-label={`Invoice ${invoice.number}`}>
         <header className="inv-head">
           <div>
-            <div className="inv-seller">{seller.name || 'Echo Sarathi'}</div>
+            <div className="inv-label">Issued by</div>
+            <div className="inv-seller">{seller.name || 'Seller name not provided'}</div>
             {seller.address && <div className="inv-muted inv-address">{seller.address}</div>}
             <div className="inv-muted">
               {seller.state ? `${seller.state} · ` : ''}
@@ -161,17 +166,10 @@ export default function InvoicePage() {
         </div>
 
         <footer className="inv-foot">
-          <p>
-            Prices are GST-inclusive; the taxable value and GST component are shown
-            separately above. This is a computer-generated tax invoice and needs no
-            signature.
-          </p>
-          <p>
-            Questions about this invoice? Write to <b>hello@echosarathi.ai</b> quoting{' '}
-            <b>{invoice.number}</b>.
-          </p>
+          <p>Amounts are shown in INR. The taxable value and GST component are itemized above as recorded in the billing system.</p>
+          <p>Keep invoice <b>{invoice.number}</b> and the payment reference for your records. Updating your billing profile applies to future invoices.</p>
         </footer>
-      </div>
+      </article>
     </div>
   );
 }

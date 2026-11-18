@@ -5,6 +5,7 @@ import ContextFieldsEditor from '../components/ContextFieldsEditor.jsx';
 import QuestionFlowEditor from '../components/QuestionFlowEditor.jsx';
 import ExtractionSchemaEditor from '../components/ExtractionSchemaEditor.jsx';
 import VoiceSettingsForm from '../components/VoiceSettingsForm.jsx';
+import '../workspace-pages.css';
 import {
   buildVersionPayload,
   validateVersionPayload,
@@ -186,9 +187,9 @@ export default function AgentDetailPage() {
   const latestVersionNumber = versions.length ? versions[versions.length - 1].version : null;
 
   return (
-    <div>
+    <div className="es-workspace es-workspace-agent-detail">
       <Link to="/agents" className="back-link">
-        ← Agents
+        Back to agents
       </Link>
 
       <div className="page-head detail-head">
@@ -229,23 +230,31 @@ export default function AgentDetailPage() {
         Editing always creates a new version — history stays intact and old calls keep the version that made them.
       </div>
 
-      <div className="detail">
+      <div className="detail es-workspace-agent-columns">
         {/* ------------------------------ LEFT: tabbed config editor ------- */}
         <div className="card">
-          <div className="tabs" role="tablist" aria-label="Agent configuration sections">
+          <div className="card-h">
+            <div>
+              <h3>Configure the next version</h3>
+              <p className="hint">{dirty ? 'Unsaved configuration changes' : 'Start from the current saved configuration'}</p>
+            </div>
+          </div>
+          <nav className="tabs" aria-label="Agent configuration sections">
             {TABS.map((t) => (
               <button
                 key={t.key}
+                id={`agent-section-${t.key}`}
                 type="button"
-                role="tab"
-                aria-selected={activeTab === t.key}
+                aria-pressed={activeTab === t.key}
+                aria-controls={`agent-panel-${t.key}`}
                 className={`tab${activeTab === t.key ? ' on' : ''}`}
                 onClick={() => setActiveTab(t.key)}
               >
                 {t.label}
+                {Object.keys(fieldErrors).some((key) => tabForErrorKey(key) === t.key) && <span className="es-workspace-tab-error">Needs attention</span>}
               </button>
             ))}
-          </div>
+          </nav>
 
           <div className={`tabbody${activeTab === 'context' ? ' on' : ''}`}>
             <h3 className="card-title">Context</h3>

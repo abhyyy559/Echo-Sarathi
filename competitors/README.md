@@ -1,142 +1,109 @@
-# Competitor landscape — AI voice calling in India
+# Voice-AI competitor research — corrected evidence base
 
-Researched 2026-10-28. Prices are as published on each vendor's site or a
-reputable review site; anything quote-only is marked **not public**.
+Reviewed 2026-10-28 for Echo Sarathi's proposed SaaS frontend launch. This revision supersedes the earlier comparison: several conclusions and price comparisons in that version were unsupported.
 
-Our reference point: **₹3.00/min all-in** at a blended cost of **₹2.30/min**
-(`docs/BUSINESS_MODEL.md`), plans Starter ₹2,990 / Growth ₹8,700 / Scale
-₹28,000, concurrency 2 / 5 / 15.
+## Executive conclusion
 
----
+**Outpero and Bolna are direct India-first rivals.** Vapi, Retell, Bland and ElevenAgents set the product/enterprise benchmark. Exotel, Ozonetel, Knowlarity and Acefone compete through telephony/contact-centre distribution.
 
-## 1. Who actually competes with us
+Do not position Echo Sarathi as the only product with campaigns, structured outcomes, templates, INR credits, tenant identity or compliance controls. Competitors already advertise many of these. The defensible opportunity is a simpler, reliable, demonstrably useful call-to-report workflow for Indian teams, with education as an initial proof case rather than a restriction on the business.
 
-There are two different markets that both look like "competitors":
+## Research scope and confidence
 
-| Group | Examples | What they sell | Why they matter to us |
+The main agent attempted all ten websites using Browser Use. Seven vendors' public pages were readable. Ozonetel and Knowlarity timed out; Acefone returned a Cloudflare block. Outpero's public documentation and app sign-in page were also inspected.
+
+The browser connector could read rendered text/DOM but had no attached viewport. Screenshot and pointer actions failed with `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`; selecting the page to bring it forward did not repair that. No authenticated dashboard, signup, payment, microphone, live call, or audio quality test was performed. No access controls were bypassed.
+
+- **Observed:** public text, links, form structure and limited asset/font signals.
+- **Advertised:** features, scale, security, latency, testimonials and pricing the vendor publishes; not independent performance proof.
+- **Unknown:** gated workflow quality, actual contracts, tax eligibility, rounding not disclosed, backend stack, legal compliance and real reliability.
+- **Hypothesis:** a proposed advantage to test, not a proven competitor omission.
+
+Public-site experience below means information architecture and content clarity. Visual quality, responsiveness, accessibility behavior and audio quality remain unverified. Source URLs and limitations are recorded in each profile.
+
+## Profiles and coverage
+
+| Vendor | Tier and reason | Inspected material | Profile |
 |---|---|---|---|
-| **Legacy Indian CPaaS** | Exotel, Ozonetel, Knowlarity, Acefone | Telephony + IVR + contact centre, AI bolted on | They own the enterprise budget and the phone numbers |
-| **AI-native voice platforms** | Bolna, Vapi, Retell, Bland, ElevenLabs | Agent runtime + model orchestration, you bring the use case | They set the per-minute price anchor |
+| Outpero | Direct: India, credits, multi-industry calling | Home, pricing, campaigns, docs, app login | [Outpero](outpero/README.md) |
+| Bolna | Direct: Indic languages, self-serve and enterprise | Home and pricing | [Bolna](bolna/README.md) |
+| Vapi | Adjacent/aspirational: developer platform and operability | Home and pricing calculator content | [Vapi](vapi/README.md) |
+| Retell | Adjacent/aspirational: no-code contact-centre workflow | Home, product sections, public pricing FAQ | [Retell](retell/README.md) |
+| Bland | Aspirational: regulated operations and managed stack | Home and pricing | [Bland](bland/README.md) |
+| ElevenAgents | Aspirational: voice/omnichannel platform | Home, agents, agents-specific pricing | [ElevenAgents](elevenlabs-agents/README.md) |
+| Exotel | Adjacent: enterprise CX and telephony distribution | Home and pricing hub | [Exotel](exotel/README.md) |
+| Ozonetel | Adjacent, provisionally: contact-centre buyer | Browser timed out; indexed vendor excerpts only | [Ozonetel](ozonetel/README.md) |
+| Acefone | Adjacent, provisionally: telephony and AI product | Browser blocked; indexed AI-product excerpt only | [Acefone](acefone/README.md) |
+| Knowlarity | Adjacent, provisionally: telephony buyer | Browser timed out; indexed home/voice-price excerpts | [Knowlarity](knowlarity/README.md) |
 
-Nobody in either group sells **the job a college actually needs done**:
-import the roster, call every parent, verify who is speaking, extract the
-reason, escalate the unanswered ones, and hand back a report. That is our wedge.
+These tiers describe offer and market overlap, not independently established company size. There is insufficient evidence to rank product quality numerically. No claim to cover every competitor in the market.
 
-## 2. Price per minute (the headline)
+## Pricing: compare like with like
 
-| Vendor | Published rate | ≈ ₹/min | Included | Notes |
-|---|---|---:|---|---|
-| **Us** | ₹3.00 | **3.00** | STT + LLM + TTS + telephony + platform | 18% GST included |
-| Bolna | $0.06 | 5.52 | bundled models, telephony + fee added | volume tiers to ~₹4.15; Pilot ~₹4 |
-| Vapi | $0.05 | 4.40 | platform only | STT/LLM/TTS/telephony billed at cost |
-| Retell | $0.07–0.31 | 6.16–27.3 | range depends on components | 20 concurrent on PAYG |
-| Bland | $0.12–0.14 | 10.6–12.3 | LLM + STT + TTS | "no token charges" |
-| Acefone (AI estimates) | — | 0.80–3.00 | varies | their own blog's India range |
-| Knowlarity | 70p / 30 s | 1.40 | **telephony only** | AI/IVR is separate |
-| Exotel / Ozonetel | **not public** | — | quote only | enterprise sales-led |
-
-USD converted at ~₹88. The important line: the only Indian AI-native vendor with
-public pricing sells at **₹5.52**, and the cheapest global platform fee alone is
-**₹4.40 before a single model token**. ₹3.00 all-in is a real, defensible
-undercut — roughly **46% below Bolna**.
-
-## 3. Where the whole market is weak
-
-These are the gaps we build into, in order of how much they matter:
-
-1. **Price opacity.** Exotel, Ozonetel and Acefone publish no AI per-minute
-   price. A college principal cannot find out what a campaign costs without a
-   sales call. We publish ₹3/min and show the wallet balance live.
-2. **No vertical workflow.** Every competitor ships an *agent builder* and
-   leaves the campaign design to the customer. Nobody ships "attendance calling
-   for a college" with roster import, parent verification and a per-student
-   outcome report.
-3. **Compliance is the customer's problem.** DLT registration, consent capture,
-   calling hours and opt-out are add-ons or documentation. We enforce them in
-   the product and refuse to dial outside them.
-4. **Seat-based pricing.** Acefone charges per user ($19.99–29.99) and bundles
-   minutes to seats. A 2-person college office pays for seats it never uses.
-   We charge for minutes, not people.
-5. **Credits in USD.** Bolna, Vapi, Retell and Bland bill in dollars on a card.
-   An Indian institution wants an INR invoice with GST and a PO. We do that.
-6. **Structured extraction is missing.** Competitors give transcripts and
-   sentiment. A college needs "reason absent = fever, parent informed = yes,
-   call back after 6pm" as columns in a spreadsheet.
-7. **Vernacular quality without a voice identity.** Bolna advertises 10+ Indian
-   languages. Almost nobody lets a tenant keep its own agent name, voice and
-   greeting per campus. We do (see `project-tenant-branding`).
-8. **Concurrency is invisible.** Plans quote numbers, the product never shows
-   how many lines are busy. Our dashboard shows live in-flight calls against the
-   plan cap.
-
-## 4. Where they are stronger (be honest)
-
-- **Enterprise trust:** Exotel and Ozonetel have 2,000+ deployments, SOC-style
-  security pages, and 25B+ interactions/year credibility. We have neither yet.
-- **Inbound contact centre:** queues, agent desktop, supervisor barge-in, WFM,
-  CRM connectors. We only do outbound campaigns and a test surface.
-- **Global telephony:** local numbers in dozens of countries. We are India-only
-  via Vobiz.
-- **Studio UX:** Bolna's Agent Studio and Vapi's dashboard are more mature than
-  our builder. Ours is functional, not polished.
-- **Support depth:** 24×7 and dedicated account managers at enterprise tiers.
-
-## 5. Our positioning, in one line
-
-> **The attendance-and-outreach agent for Indian institutions: ₹3 a minute,
-> all-in, with the roster in and the report out — not another agent builder.**
-
-Three proof points to lead with: **₹3/min** (vs ₹5.52), **launch in minutes**
-(vs a sales call), **structured report** (vs a transcript).
-
-## 6. Pricing ladder to defend the wedge
-
-| Move | Why |
-|---|---|
-| Keep ₹3.00 list, ₹2.90/₹2.80 at volume | Undercuts Bolna by ~46% while holding ~23% gross margin |
-| Free 10 trial minutes, no card | Competitors give $5 credits that expire in USD |
-| INR invoices + GST, PO accepted | Removes the #1 blocker for institutions |
-| Charge per minute, never per seat | Direct contrast to Acefone |
-| Do **not** go below ₹2.30 cost to win a logo | A ₹1.99 plan loses money on every call |
-
-If we need a sharper number for education pilots, give **free minutes**, not a
-lower rate. The cost floor is ₹2.30; the TTS line (₹1.05) is the only lever big
-enough to move it, and that is a provider negotiation, not a pricing decision.
-
-## 7. What to build next, ranked by gap value
-
-1. **Vertical campaign templates** (college attendance, fee reminder, admission
-   follow-up) with pre-written prompts and extraction schemas.
-2. **Outcome report export** — one row per student, columns from extraction, PDF
-   for the principal.
-3. **Live campaign console** — in-flight calls, concurrency vs plan, per-call
-   outcome as it lands.
-4. **Public pricing page parity** — every number a salesperson would quote is on
-   the site (we already do this; keep it).
-5. **Inbound** — same agent answers callbacks. This is the biggest functional
-   gap to Exotel/Ozonetel and the natural next vertical feature.
-
-## 8. Files
-
-| File | Vendor | Type |
+| Vendor | Public price evidence | Important exclusions or scope |
 |---|---|---|
-| [exotel.md](exotel.md) | Exotel | Enterprise CPaaS + AI agents |
-| [ozonetel.md](ozonetel.md) | Ozonetel | Enterprise cloud contact centre |
-| [knowlarity.md](knowlarity.md) | Knowlarity | CPaaS (Gupshup) |
-| [acefone.md](acefone.md) | Acefone | SMB cloud telephony + AI |
-| [bolna.md](bolna.md) | Bolna | AI-native, Indian languages — **closest rival** |
-| [vapi.md](vapi.md) | Vapi | Global developer platform |
-| [retell.md](retell.md) | Retell AI | Global pay-as-you-go |
-| [bland.md](bland.md) | Bland AI | Global self-serve |
-| [elevenlabs-agents.md](elevenlabs-agents.md) | ElevenLabs | Voice-first agent platform |
+| Echo Sarathi | Code/docs: ₹3/min list/overage; paid plans have allowances | GST-inclusive; actual cost, billing duration and deployed capacity need validation |
+| Outpero | Standard ₹5, premium ₹6.80, negotiated from ₹3.50/min | GST extra; number ₹649/month including one channel; each extra channel ₹649/month |
+| Bolna | $0.06/min, vendor displays ₹5.52; fixed-volume tiers lower | Bundled models only; telephony/platform fee extra; Pilot has distinct rates and 30-second pulses |
+| Vapi | $0.05/min hosting | Model/transport usage extra; optional success packages; Core $29/mo, Pro $999/mo minimum |
+| Retell | Homepage FAQ: $0.07–$0.31/min configured | Component-dependent; get an India-specific configured quote |
+| Bland | Start $0.14/min; Build $0.12/min plus $299/month | LLM/STT/TTS included; pricing FAQ says carrier separately; transfer charges can apply |
+| ElevenAgents | Free 15 min; paid tiers; PAYG/additional $0.08/min shown | LLM and carrier extra; taxes excluded; distinguish first-month promotions from regular prices |
+| Exotel | No numeric AI-minute quote in inspected hub | Sales quote/product tab detail not exercised |
+| Ozonetel/Acefone/Knowlarity | Current comparable AI-minute price unverified | Site failure is not proof that prices are unpublished |
 
-Watchlist (not profiled yet): Sarv, Fibr.ai, CallHippo, MyOperator, TeleCMI,
-PolyAI, Parloa.
+No blanket USD-to-INR conversion is used. Bolna's own ₹5.52 display uses a different implied exchange rate from the old report's ₹88/USD assumption: $0.06 × ₹88 is ₹5.28, not ₹5.52. Currency, GST, carrier, rental, pulse, included usage, support and concurrency must be normalized before a savings claim.
 
-## Sources
+### Our economics: correction before pricing decisions
 
-- Exotel pricing hub and AI voice agent product page (visited 2026-10-28)
-- Bolna pricing page (visited 2026-10-28)
-- Vapi, Retell, Bland, ElevenLabs pricing pages (fetched 2026-10-28)
-- Knowlarity pricing page (search extract), Acefone pricing via Capterra
-- Ozonetel: no public pricing; quote-only
+Current business-model estimates say ₹2.30 cost per connected minute and prices include 18% GST. If ₹2.30 is the comparable net cost:
+
+- ₹3 / 1.18 = ₹2.5424 net revenue.
+- Contribution ≈ ₹0.2424/min, or 9.5% of net revenue, **before payment fees, support and other overhead**.
+- Cash price needed just to cover ₹2.30 net cost plus 18% GST ≈ ₹2.714/min, before those other expenses.
+- Free minutes have a real cost; they are not a costless substitute for discounts.
+
+The earlier 23% margin and ₹2.30 retail floor were misleading. Actual provider invoices, input-tax credits, duration measurement, plan utilization and fixed overhead must be established. No price changes are authorized by this research.
+
+## Corrections to the old report
+
+1. Outpero, Retell and others explicitly market campaigns and captured fields. “Everyone only returns transcripts” is false.
+2. Outpero's pricing is already INR credit-based; it also has education pages, branded employees and scheduling/consent claims.
+3. Bolna's 25 concurrency and 30-second pulses are explicitly attached to the Pilot plan, not its entire platform.
+4. Vapi Core currently lists 10 concurrent calls; 4 belongs to usage-only. Bland Build's $299 monthly fee was omitted.
+5. ElevenAgents has a dedicated pricing page. TTS-only pricing does not represent agent pricing; paid seats are not required at every tier.
+6. Exotel offers a public “Try For Free” entry in addition to sales demos. Do not claim every visitor must take a sales call.
+7. Missing evidence is not proof that a vendor lacks GST invoices, purchase orders, exports, branding, Indian languages, or compliance controls.
+8. Our CSV/XLSX exports exist; an institutional PDF report and a live capacity gauge must not be described as shipped without verifying them.
+9. Our catalogue concurrency limits are not evidence of delivered production capacity. Deployment files cap campaign concurrency at one per organization.
+10. Calling-hours and consent checks are not DLT/DPDP certification, and the deployment file specifies Singapore rather than India-only hosting.
+
+## Gap-to-delivery map
+
+| Opportunity | Competitor evidence | Our current evidence | Frontend launch response | Validation |
+|---|---|---|---|---|
+| Outcome-first explanation | Outpero shows conversation → fields → action | Agents, campaigns, call details and CSV/XLSX exist | Show a clearly labelled illustrative workflow, then link to real product screens | Every CTA reaches a working route; examples never imply live customer data |
+| Fast, comprehensible setup | Outpero job description; Bolna templates; Retell visual studio | Six-step builder and agent workspace exist | Improve hierarchy, terminology, progress and field errors without changing payloads | Create/edit payload regression checks in fixtures |
+| Trustworthy pricing | Outpero exposes channels/rental/GST; Vapi component calculator | Wallet, plans and invoice code exist; commercial readiness uncertain | Separate plan allowance, overage, wallet, GST and supported capacity; qualify uncertain claims | Compare UI against backend responses and operational sign-off |
+| Understand failures | Outpero explains retries/carrier refusal; Retell QA/monitoring | Campaign status/error data and call details exist | Clear blocked/empty/error/low-credit states using actual response data | Offline/401/402/422/empty/loading examples render correctly |
+| Reviewable outcomes | Retell CRM outcomes; ElevenAgents analytics | Confidence and source-turn data on call detail | Prioritize structured fields, review flags and transcript evidence | Do not invent missing values or omit uncertainty |
+| Complete buyer journey | Outpero app/docs/legal; major vendors trust resources | No dedicated legal routes; marketing/signup claims conflict with defaults | Honest CTA, consistent public navigation, user-approved legal content | No dead links; no unavailable public-signup promise |
+| Mobile/keyboard polish | Not visually tested across competitors | Code review found focus/sign-out/motion issues | Accessible navigation, forms, tables, themes and reduced motion | Actual browser/keyboard screenshots and regression matrix |
+
+These improvements address our observed weaknesses. Claims that they outperform competitors require later, authorized head-to-head testing.
+
+## Deferred capability work: not part of a reskin
+
+Inbound callbacks, WhatsApp/CRM/calendar integrations, self-serve number provisioning, increased concurrency, automatic prompt generation, changes to billing duration, and telephony/call-flow changes require separate backend scope and approval. Do not place decorative controls for these in the shipped UI or describe them as implemented.
+
+## Recommended positioning and page strategy
+
+**Draft:** “Business calls. Clear outcomes.” Explain configurable agents, campaigns and reviewable results for Indian teams; use a proven education scenario as one example, not the only supported business.
+
+Use deliberate typography, generous but functional spacing, clear tables and a restrained accent. Lead with product evidence and clear actions, not simulated latency dashboards, invented customer logos or decorative 3D. Keep both themes and make any motion optional. The [launch redesign plan](../docs/SAAS_LAUNCH_REDESIGN_PLAN.md) defines page ownership, safety boundaries and acceptance gates.
+
+## Next research required
+
+A functional browser viewport and authorized vendor test accounts are needed for full onboarding, dashboards, import edge cases, voice listening, mobile, accessibility and latency/quality comparisons. No absence claim should be inferred from those untested areas.
+
+Each profile contains direct source links. A later reviewer should re-open pricing before a sales proposal; promotional and commercial terms change.

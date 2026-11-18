@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { billingApi, getStoredUser } from '../api.js';
+import '../account-pages.css';
 
 const KIND_LABELS = {
   grant: { cls: 'ok', label: 'Welcome credit' },
@@ -248,24 +249,27 @@ export default function CreditsPage() {
   const renewWindow = subscription ? daysUntil(subscription.period_end) <= 7 : false;
 
   return (
-    <div>
+    <div className="es-account es-account-billing">
       <div className="page-head">
         <div>
+          <div className="es-account-eyebrow">Workspace / Billing</div>
           <h2 className="page-title">Billing &amp; credits</h2>
-          <p className="page-sub">
-            A monthly plan with included minutes, plus a prepaid wallet for overage.
-            Only connected calls consume minutes.
-          </p>
+          <p className="page-sub">Your plan covers included minutes. Your prepaid wallet covers usage beyond that allowance.</p>
         </div>
         <div className="head-actions">
-          <Link to="/campaigns" className="btn primary">
-            Run a campaign
-          </Link>
+          <Link to="/campaigns" className="btn btn-secondary">View campaigns</Link>
         </div>
       </div>
+      <nav className="es-account-section-nav" aria-label="Billing sections">
+        <a href="#billing-plans">Plans</a>
+        <a href="#billing-wallet">Wallet top-ups</a>
+        <a href="#billing-invoices">Invoices</a>
+        <a href="#billing-details">Billing details</a>
+        <a href="#billing-history">Wallet history</a>
+      </nav>
 
       {error && (
-        <div className="banner banner-error">
+        <div className="banner banner-error" role="alert">
           {error}{' '}
           <button type="button" className="btn btn-secondary btn-sm" onClick={load}>
             Retry
@@ -290,10 +294,20 @@ export default function CreditsPage() {
           )}
 
           {notice && (
-            <div className="banner banner-success" style={{ marginBottom: 16 }}>
-              {notice}
+            <div className="banner banner-info es-account-payment-notice" role="status" style={{ marginBottom: 16 }}>
+              <strong>Billing update</strong><span>{notice}</span>
             </div>
           )}
+
+          <div className="es-account-readiness" role="status">
+            <div>
+              <strong>{checkoutOn ? 'Online checkout enabled' : manualOn ? 'Manual payments enabled' : 'Payments unavailable'}</strong>
+              <p>{checkoutOn ? 'Checkout opens in Razorpay. Your balance updates after payment verification.' : manualOn ? 'This environment applies purchases through its manual payment flow; online checkout is unavailable.' : 'Plan purchases and wallet top-ups are disabled in this environment.'}</p>
+            </div>
+            <span className={`badge ${paymentsOn ? 'cyan' : 'warn'}`}>{paymentsOn ? 'Payment mode configured' : 'Not enabled'}</span>
+          </div>
+          {busy !== null && <p className="es-account-note" role="status">{busy === 'cancel' ? 'Updating your renewal preference…' : 'Processing your billing request. Complete or dismiss checkout if it opens.'}</p>}
+          {!canManage && user && <p className="es-account-note">Only workspace owners and admins can change billing details, choose plans or top up the wallet.</p>}
 
           {/* --- current plan ------------------------------------------------ */}
           <div className="card plan-hero">
@@ -395,11 +409,12 @@ export default function CreditsPage() {
           </div>
 
           {/* --- plans ------------------------------------------------------- */}
-          <div className="card" style={{ marginTop: 18 }}>
+          <div className="card" id="billing-plans" style={{ marginTop: 18 }}>
             <div className="card-h">
-              <h3>Plans</h3>
+              <div><div className="es-account-eyebrow">01 / Plan allowance</div><h3>Choose your monthly plan</h3></div>
               <span>monthly · prices include 18% GST</span>
             </div>
+            <p className="es-account-section-note">Included minutes belong to the plan period, not the wallet. Listed concurrency is a plan limit; actual calling capacity depends on the deployed environment.</p>
             <div className="plan-grid">
               {planCatalog.map((plan) => {
                 const isCurrent = currentPlan && plan.id === currentPlan.id;
@@ -412,7 +427,7 @@ export default function CreditsPage() {
                   >
                     {isCurrent && <span className="plan-flag">Current</span>}
                     {!isCurrent && plan.id === 'growth' && (
-                      <span className="plan-flag">Most popular</span>
+                      <span className="plan-flag">Growth</span>
                     )}
                     <div className="plan-name">{plan.name}</div>
                     <div className="plan-price">
@@ -486,7 +501,7 @@ export default function CreditsPage() {
           </div>
 
           {/* --- top-ups ----------------------------------------------------- */}
-          <div className="card" style={{ marginTop: 18 }}>
+          <div className="card" id="billing-wallet" style={{ marginTop: 18 }}>
             <div className="card-h">
               <h3>Top up the wallet</h3>
               <span>overage credit · never expires</span>
@@ -533,7 +548,7 @@ export default function CreditsPage() {
           </div>
 
           {/* --- invoices ---------------------------------------------------- */}
-          <div className="card" style={{ marginTop: 18 }}>
+          <div className="card" id="billing-invoices" style={{ marginTop: 18 }}>
             <div className="card-h">
               <h3>Invoices</h3>
               <span>GST invoices for plans and top-ups</span>
@@ -575,7 +590,7 @@ export default function CreditsPage() {
 
           {/* --- profile + explainer ----------------------------------------- */}
           <div className="grid g2" style={{ marginTop: 18 }}>
-            <div className="card">
+            <div className="card" id="billing-details">
               <div className="card-h">
                 <h3>Billing details</h3>
                 <span>printed on future invoices</span>
@@ -674,7 +689,7 @@ export default function CreditsPage() {
             </div>
           </div>
 
-          <div className="card" style={{ marginTop: 18 }}>
+          <div className="card" id="billing-history" style={{ marginTop: 18 }}>
             <div className="card-h">
               <h3>Wallet history</h3>
               <span>latest {ledger.length}</span>

@@ -11,6 +11,7 @@ import TextPlayground, { confidenceClass } from '../components/TextPlayground.js
 import { LEAD_FIELD_HINTS, leadCardDefaults } from '../utils/leadCard.js';
 import { cleanTranscriptText } from '../utils/transcript.js';
 import { agentOptionLabel } from '../utils/agentPurpose.js';
+import '../account-pages.css';
 
 
 const PHASES = {
@@ -607,11 +608,11 @@ export default function PlaygroundPage() {
 
   if (phase === PHASES.TEXT) {
     return (
-      <div className="pg">
-        <div className="card" style={{ padding: '20px 24px' }}>
+      <div className="pg es-account es-account-playground es-account-pg-text">
+        <div className="card es-account-pg-main">
           <div className="card-h" style={{ marginBottom: 0 }}>
-            <h3>Text mode · same extraction pipeline</h3>
-            <span className="chip queued"><i></i>sandbox</span>
+            <div><div className="es-account-eyebrow">Playground / Text</div><h3>Text conversation</h3></div>
+            <span className="chip queued"><i></i>No microphone</span>
           </div>
           <TextPlayground
             key={selectedVersionId}
@@ -661,11 +662,11 @@ export default function PlaygroundPage() {
     const agentFields = (result && result.extracted_fields) || [];
     const agentTurns = (result && result.transcript) || [];
     return (
-      <div className="pg">
-        <div className="card" style={{ padding: '10px 26px 26px' }}>
+      <div className="pg es-account es-account-playground es-account-pg-live">
+        <div className="card es-account-pg-main">
           <div className="card-h">
-            <h3>{versionInfo ? `${versionInfo.agentName || 'Unknown'} · live session` : 'Live session'}</h3>
-            <span className={`chip in-progress`} id="stateChip">
+            <div><div className="es-account-eyebrow">Playground / Browser voice</div><h3>{versionInfo ? `${versionInfo.agentName || 'Unknown'} · live session` : 'Live session'}</h3></div>
+            <span className={`chip in-progress`} id="stateChip" role="status">
               <i></i>{connecting ? 'Connecting…' : speaking ? 'Listening' : bargeIn ? 'Interrupted' : 'Agent on the line'}
             </span>
           </div>
@@ -777,14 +778,16 @@ export default function PlaygroundPage() {
     const fields = (result && result.extracted_fields) || [];
     const resolvedCallId = result && (result.call_id || (sessionRef.current && sessionRef.current.call_id));
     return (
-      <div className="pg">
-        <div className="card" style={{ padding: '24px' }}>
+      <div className="pg es-account es-account-playground es-account-pg-ended">
+        <div className="card es-account-pg-main">
+          <div className="es-account-eyebrow">Playground / Review</div>
+          <h2 className="page-title">Session results</h2>
           <button type="button" className="btn btn-ghost self-start" onClick={backToSetup}>
             ← Run another test
           </button>
 
-          <div className="banner banner-success" style={{ marginTop: 12 }}>
-            <strong>Call finished.</strong>{' '}
+          <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
+            <strong>Session ended.</strong>{' '}
             {result && result.duration_seconds != null && <>Duration: {fmtClock(result.duration_seconds * 1000)}. </>}
             {result && result.flagged_for_human ? 'This session was flagged for human review.' : null}
           </div>
@@ -920,11 +923,15 @@ export default function PlaygroundPage() {
   // ------------------------------------------------------------------ setup
 
   return (
-    <div className="pg">
-      <div className="card" style={{ padding: '24px' }}>
+    <div className="pg es-account es-account-playground es-account-pg-setup">
+      <div className="card es-account-pg-main">
         <div className="card-h">
-          <h3>Set up a test session</h3>
-          <span style={{ fontSize: 12, color: 'var(--dim)' }}>sandbox</span>
+          <div>
+            <div className="es-account-eyebrow">Agent testing</div>
+            <h2 className="page-title">Playground</h2>
+            <p className="page-sub">Choose a saved version, add context and select how to test.</p>
+          </div>
+          <span className={`badge ${mode === MODES.PHONE ? 'warn' : 'cyan'}`}>{mode === MODES.PHONE ? 'Real phone call' : 'Browser test'}</span>
         </div>
 
         {fatalError && (

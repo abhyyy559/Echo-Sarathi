@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { billingApi, platformApi } from '../api.js';
+import '../account-pages.css';
 
 /* Platform admin — the operator console for the sales-led motion.
  * Visible only to emails in PLATFORM_ADMIN_EMAILS; the backend enforces it,
@@ -168,20 +170,24 @@ export default function AdminPage() {
 
   if (forbidden) {
     return (
-      <div className="empty-state">
-        Platform administration is restricted to operator accounts.
+      <div className="es-account es-account-admin">
+        <section className="es-account-restricted" role="status">
+          <div className="es-account-eyebrow">Operator access</div>
+          <h2>Platform administration is restricted</h2>
+          <p>This area is available to platform operator accounts, not workspace administrators.</p>
+          <Link className="btn btn-secondary" to="/">Back to overview</Link>
+        </section>
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="es-account es-account-admin">
       <div className="page-head">
         <div>
+          <div className="es-account-eyebrow">Operator workspace</div>
           <h2 className="page-title">Platform admin</h2>
-          <p className="page-sub">
-            Every organization, contract pricing, credit adjustments and billing lifecycle.
-          </p>
+          <p className="page-sub">Review organizations, manage contract plans and make recorded wallet adjustments.</p>
         </div>
         <div className="head-actions">
           <button
@@ -195,19 +201,20 @@ export default function AdminPage() {
         </div>
       </div>
 
+      <p className="es-account-note"><strong>Platform-wide controls.</strong> Running the billing lifecycle expires lapsed plan periods and sends renewal reminders. Organization actions below apply to the selected workspace.</p>
       {error && (
-        <div className="banner banner-error" style={{ marginBottom: 16 }}>
+        <div className="banner banner-error" role="alert" style={{ marginBottom: 16 }}>
           {error}
         </div>
       )}
       {notice && (
-        <div className="banner banner-success" style={{ marginBottom: 16 }}>
+        <div className="banner banner-success" role="status" style={{ marginBottom: 16 }}>
           {notice}
         </div>
       )}
 
       {loading && !summary && (
-        <div className="loading-page">
+        <div className="loading-page" role="status">
           <span className="spinner" /> Loading platform data…
         </div>
       )}
@@ -244,9 +251,11 @@ export default function AdminPage() {
 
       <div className="card" style={{ marginTop: 18 }}>
         <div className="card-h">
-          <h3>Organizations</h3>
+          <div><div className="es-account-eyebrow">Organization directory</div><h3>Organizations</h3></div>
           <form className="admin-search" onSubmit={search}>
+            <label htmlFor="admin-org-search" className="es-account-sr-only">Search organizations by name or slug</label>
             <input
+              id="admin-org-search"
               type="search"
               value={query}
               placeholder="Search name or slug…"
@@ -257,6 +266,8 @@ export default function AdminPage() {
             </button>
           </form>
         </div>
+        {loading && <p className="es-account-section-note" role="status">Refreshing organizations…</p>}
+        <div className="es-account-table-scroll" role="region" aria-label="Organizations" tabIndex={0}>
         <table className="tbl">
           <thead>
             <tr>
@@ -309,13 +320,14 @@ export default function AdminPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {detail && (
         <>
-          <div className="card" style={{ marginTop: 18 }}>
+          <div className="card es-account-selected-org" style={{ marginTop: 18 }}>
             <div className="card-h">
-              <h3>{detail.name}</h3>
+              <div><div className="es-account-eyebrow">Selected organization</div><h3>{detail.name}</h3></div>
               <span>
                 {detail.slug} · {detail.billing?.plan?.name || detail.plan_id} ·{' '}
                 ₹{inr((detail.billing?.balance_paise || 0) / 100, 2)} wallet
