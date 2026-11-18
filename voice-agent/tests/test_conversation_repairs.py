@@ -280,13 +280,12 @@ def test_smart_turn_preferred_with_fallback(monkeypatch) -> None:
     assert detector is not None
 
 
-def test_room_options_none_without_hush() -> None:
-    import sys
-
+def test_room_options_none_without_hush(monkeypatch) -> None:
     import app.pipeline as pipeline_module
 
-    assert "livekit.plugins.hush" not in sys.modules
-    # Local test venvs don't install hush: plain start, no crash.
+    # Be deterministic: a test venv may or may not have the hush plugin
+    # installed. Only the "no noise cancellation" branch is under test.
+    monkeypatch.setattr(pipeline_module, "_get_noise_cancellation", lambda: None)
     assert pipeline_module._room_options() is None
 
 

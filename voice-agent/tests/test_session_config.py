@@ -92,7 +92,8 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
     if turn_detection == "vad":
         assert pipeline_module._inference is None
     else:
-        assert type(turn_detection).__name__ == "TurnDetector"
+        # smart-turn-livekit renamed the class to SmartTurnDetector in 0.4.x.
+        assert type(turn_detection).__name__ in {"TurnDetector", "SmartTurnDetector"}
     # Preemptive shape is version-dependent (mapping on 1.8+, bool on older):
     # resolve it through the same helper the pipeline uses.
     expected_preemptive = pipeline_module._preemptive_kwargs(True)[
