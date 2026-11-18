@@ -1,5 +1,12 @@
-# VocalIQ - Project Master Document
+# VocalIQ - Project Master Document (historical)
 
+> **Historical planning document.** Current implementation state lives in
+> `docs/ARCHITECTURE.md`; the BYOK provider contract lives in
+> `docs/CONTRIBUTING_ADAPTERS.md`. Plivo was replaced by Vobiz, Redis was dropped,
+> and Telugu/Tenglish with Sarvam is shipped. Later "future consideration"
+> sections still mention Redis as a scaling option — read them as proposals,
+> not current state.
+>
 > **Single source of truth.** All standalone markdown files (PRD, status, log,
 > research, architecture, guides, specs) are consolidated below and removed from
 > the repo. Use the bookmarks to jump. Git history preserves every original.
@@ -54,13 +61,13 @@ These are **decided**, not open questions — do not re-litigate them without a 
 |---|---|---|
 | Voice pipeline architecture | **Cascaded** (STT → LLM with tool-calling → TTS), not speech-to-speech | Structured field extraction needs an auditable text layer and reliable tool-calling |
 | Real-time orchestration | **LiveKit Agents** (fallback: Pipecat) | Solves session concurrency, WebRTC/SIP, turn-taking, barge-in as first-class primitives — don't rebuild this |
-| Telephony (India) | **Plivo** for prototype (fallback: Exotel for compliance-handled option) | Cheapest, LiveKit/Pipecat-native, fast DID provisioning; avoid Twilio for India-domestic economics |
+| Telephony (India) | **Vobiz** for prototype (fallback: Exotel for compliance-handled option) | Cheapest, LiveKit/Pipecat-native, fast DID provisioning; avoid Twilio for India-domestic economics |
 | STT (English) | **Deepgram** (Flux model for built-in turn detection; Nova-3 as fallback) | Purpose-built for voice agents, lowest end-of-speech latency |
 | TTS (English) | **Cartesia Sonic** | Lowest time-to-first-audio of any mainstream provider |
 | LLM | **Fast/cheap model by default** (Groq-hosted Llama 3.3-class or GPT-4o-mini-class), with deterministic escalation rules for ambiguous turns — not a large model on every turn | Latency + cost; the task is intent classification/slot-filling, not deep reasoning |
 | Backend | **FastAPI** (Python) | Same language as the voice pipeline (LiveKit Agents/Pipecat are Python) |
 | Database | **PostgreSQL** | Relational, reporting-heavy workload; no need for a vector DB at this stage |
-| Session/queue state | **Redis** | Call session state + outbound dialer rate-limiting queue |
+| Session/queue state | **Postgres-backed dialer queue** | Call session state + per-org concurrency/CPS limits. Redis was evaluated and dropped; no Redis dependency. |
 | Frontend | **React** admin dashboard | Standard, matches contractor/agent availability |
 | Hosting region | **India (Mumbai)** cloud region | DPDP data-localization alignment |
 | Telugu stack (Phase 2, not now) | **Sarvam AI** (Saaras v3 STT, Bulbul V3 TTS) | Only India-first vendor with real Telugu code-switching support — do not try to stretch the English stack to Telugu |
@@ -125,7 +132,7 @@ Admin (browser) ──> Frontend (React) ──> Backend API (FastAPI)
                                                                     │
                                                                     ▼
                                                           Telephony provider
-                                                          (Plivo/Exotel)
+                                                          (Vobiz/Exotel)
                                                                     │
                                                                     ▼
                                                     Voice pipeline (LiveKit Agents)
@@ -156,7 +163,7 @@ Admin (browser) ──> Frontend (React) ──> Backend API (FastAPI)
 
 ## 10. Milestones
 
-- **M0 — Scaffold**: repo structure, docker-compose local dev, all provider accounts created (Plivo/Exotel, Deepgram, Cartesia, LLM/Groq), `.env` wired, empty end-to-end call (agent says one line, hangs up) working on a real phone.
+- **M0 — Scaffold**: repo structure, docker-compose local dev, all provider accounts created (Vobiz/Exotel, Deepgram, Cartesia, LLM/Groq), `.env` wired, empty end-to-end call (agent says one line, hangs up) working on a real phone.
 - **M1 — Single domain config, single call**: full "absent student" question flow working on one outbound test call, transcript + extraction + export working end-to-end.
 - **M2 — Campaign dialer**: CSV upload → review → launch → concurrent calls (target 10) → live dashboard → export.
 - **M3 — Compliance gate**: DLT registered, consent flow live, disclosure script live, retention job live. **This gates any real (non-test-number) campaign.**
@@ -227,7 +234,7 @@ Also noted from transcript: the demo agent addressed a non-parent as parent ("yo
 
 1. **Telugu + Indian regional languages** via Sarvam (Saaras STT / Bulbul TTS) — separate pipeline profile per language
 2. **Bring-your-own providers**: org-level settings page where users paste their own STT/TTS/LLM API keys (Deepgram/Cartesia/Groq/OpenAI/Sarvam/ElevenLabs…) — runtime resolves per-org provider chain; positions product as fully open-source, vendor-neutral alternative to ₹2–12/min incumbents
-3. Phone-number purchasing flows per org (Plivo/Exotel re-evaluation for India domestic)
+3. Phone-number purchasing flows per org (Vobiz/Exotel re-evaluation for India domestic)
 4. Human-agent live transfer
 5. Auth hardening (SSO, roles granularity), production hosting (Mumbai region), DLT registration workflow assistant
 
@@ -305,7 +312,7 @@ E2E test: voice-agent\.venv\Scripts\python.exe scripts\e2e_caller.py --wav calle
 - **Objective**: Build a domain-independent AI voice calling platform for India (English-first).
 - **Phase**: Phase 0 - Scaffolding (Milestone M0 completed).
 - **Next Milestone**: M1 - Single domain config, single call.
-- **Tech Stack**: FastAPI, LiveKit Agents, Twilio, Deepgram, Cartesia, PostgreSQL, Redis.
+- **Tech Stack**: FastAPI, LiveKit Agents, Twilio + Vobiz, Deepgram, Cartesia, Sarvam, PostgreSQL. No Redis.
 
 ## Current Progress (2026-08-23)
 
@@ -316,7 +323,7 @@ E2E test: voice-agent\.venv\Scripts\python.exe scripts\e2e_caller.py --wav calle
    - Configured `.gitignore` for Python/Node.js development.
 
 2. **Infrastructure**
-   - Docker Compose setup for Postgres, Redis, and services.
+   - Docker Compose setup for Postgres and services (no Redis).
 
 3. **Backend (FastAPI)**
    - SQLAlchemy models for PRD entities (`contacts`, `campaigns`, `calls`, etc.).
@@ -327,7 +334,7 @@ E2E test: voice-agent\.venv\Scripts\python.exe scripts\e2e_caller.py --wav calle
    - Agent connects to "test-room" and speaks TTS line via Cartesia.
    - Docker-ready with `Dockerfile` and `requirements.txt`.
 
-5. **Telephony (Twilio - migrated from Plivo)**
+5. **Telephony (Twilio - migrated from Vobiz)**
    - Webhook endpoint and API route for outbound test calls.
    - Voice-agent integration for call audio handling.
    - Twilio trial account created, test call placed successfully.
@@ -389,7 +396,7 @@ E2E test: voice-agent\.venv\Scripts\python.exe scripts\e2e_caller.py --wav calle
 - ✅ **Test phone number** provided: `+919391470646`
 - ✅ **Twilio trial account created** with Gmail (`abhyyy559@gmail.com`)
 - ✅ **Test call placed** from Twilio trial number `+17372508034` → `+919391470646` (status: queued)
-- ✅ **Telephony code refactored to Twilio** (replaced Plivo integration)
+- ✅ **Telephony code refactored to Twilio** (replaced Vobiz integration)
 - **Next**:
   1. **Add Twilio credentials** to `.env` (SID, Auth Token, Phone Number)
   2. **Add Deepgram API Key** to `.env`
@@ -402,7 +409,7 @@ E2E test: voice-agent\.venv\Scripts\python.exe scripts\e2e_caller.py --wav calle
 ---
 
 ## Telephony Provider Change (2026-08-15)
-- **From**: Plivo (requires corporate email - blocked)
+- **From**: Vobiz (requires corporate email - blocked)
 - **To**: Twilio (accepts personal Gmail, $15 trial credit, India numbers available)
 - **Status**:
   - Twilio trial call successfully placed via Console (call SID: `CA63cbe92c0a74513f880bd7b52f45f2a7`)
@@ -978,11 +985,11 @@ Exotel / Kaleyra / Ozonetel (Indian CPaaS):
 Pros: Deeply integrated with Indian telecom (Jio, Airtel, Vi). Excellent DLT compliance dashboards. Local data centers \= low network latency.  
 Cons: Their core APIs are built for legacy IVR, not real-time AI. Many do not offer true bidirectional WebSocket streaming; they use POST APIs to trigger pre-recorded audio or basic dynamic TTS.  
 Pricing: \~₹0.80 \- ₹1.50/min. Number rental \~₹200-₹300/mo.  
-Plivo / Sinch:  
-Pros: Sinch (via Voice API) and Plivo offer decent SIP trunking and WebSocket support. Plivo has good Indian coverage.  
+Vobiz / Sinch:  
+Pros: Sinch (via Voice API) and Vobiz offer decent SIP trunking and WebSocket support. Vobiz has good Indian coverage.  
 Cons: Still require strict DLT registration.  
 Voice-AI Specific Platforms (Vapi, Retell AI, Bland AI):  
-Pros: Out-of-the-box orchestration of STT, LLM, TTS, and telephony. You can bring your own Twilio/Plivo numbers.  
+Pros: Out-of-the-box orchestration of STT, LLM, TTS, and telephony. You can bring your own Twilio/Vobiz numbers.  
 Cons: High markup on usage (\~$0.10 \- $0.15/min). May not fully support Indian DLT routing natively.  
 Recommendation for Telephony: Do not build your own SIP/PBX infrastructure initially. Use Twilio Media Streams (bringing your own Indian virtual number via a local CPaaS provider that supports SIP forwarding, or using Twilio's Indian mobile numbers if you qualify). Alternatively, Exotel recently launched real-time WebSocket APIs—verify their latency. If you want ultimate control, rent an Indian SIP trunk from a local provider and bridge it to your application using FreeSWITCH or Asterisk.
 
@@ -1163,7 +1170,7 @@ Table
 | Approach | What It Is | Pros | Cons | Verdict |
 | :---- | :---- | :---- | :---- | :---- |
 | Physical SIM / eSIM | Consumer mobile SIM in a GSM gateway or Android device | Very low per-minute cost; no KYC beyond normal SIM | Illegal/gray-area for commercial bulk calling; no API control; no concurrent calls; TRAI considers this "gray traffic"; no call recording consent automation; device failure \= downtime; no CLI management | Inappropriate |
-| Cloud Telephony (CPaaS) | Exotel, Ozonetel, Knowlarity, Plivo, Twilio | Full API control; WebSocket/RTP streaming; DLT compliance support; concurrent scaling; legitimate CLI | Higher per-minute cost; KYC required; monthly commitments | Correct for prototypes and mid-scale |
+| Cloud Telephony (CPaaS) | Exotel, Ozonetel, Knowlarity, Vobiz, Twilio | Full API control; WebSocket/RTP streaming; DLT compliance support; concurrent scaling; legitimate CLI | Higher per-minute cost; KYC required; monthly commitments | Correct for prototypes and mid-scale |
 | Direct SIP Trunk | Direct carrier relationship with Airtel Business, Jio Business, Tata | Lowest per-minute cost at scale; best latency; full control | You become your own CPaaS; need SBC config, codec negotiation, DLT plumbing, telecom engineer | Correct at 20L+ minutes/month |
 | Hybrid | Direct SIP for volume \+ CPaaS for overflow/failover | Cost optimization \+ operational safety | Complexity | Correct for mature scale |
 
@@ -1179,13 +1186,13 @@ Table
 | Exotel | Very high | ₹0.80–1.00 | 2–5 days | Strongest operational support | AgentStream (\<50ms) | India-native voice AI; DLT hand-holding |
 | Ozonetel | Very high | Competitive | 3–7 days | Strong | Yes | Contact-center workflows; unlimited minute plans |
 | Knowlarity | High | Competitive | 2–5 days | Strong | Yes | Mid-market with compliance needs |
-| Plivo | Moderate | ₹0.80–1.20 | 24–48 hours | Competent | Yes | Developer-led; global expansion later |
+| Vobiz | Moderate | ₹0.80–1.20 | 24–48 hours | Competent | Yes | Developer-led; global expansion later |
 | Twilio | Low in India | ₹1.20–1.50 | 24–48 hours | Thinnest | Yes | Global-first teams; weak India-specific compliance |
 | Direct SIP (Airtel/Jio) | N/A | ₹0.60–1.20 | Weeks | You handle it | Raw SIP/RTP | 20L+ minutes/month with telecom engineer |
 
 Verified fact: Exotel's pricing is typically ₹0.80–1.00 for outbound and ₹0.30–0.50 for inbound, with AgentStream providing \<50ms media latency for AI streaming.  
-Verified fact: Plivo and Twilio provision new Indian DIDs in 24–48 hours versus 2–7 business days for India-native providers.  
-Challenge to your assumption: Twilio is not the best choice for India despite its global popularity. Its India DLT support is the thinnest among major providers, and its India outbound rates are 20–50% higher than Exotel/Plivo. If you start with Twilio because "it's what everyone uses," you will pay a premium and struggle with TRAI compliance.
+Verified fact: Vobiz and Twilio provision new Indian DIDs in 24–48 hours versus 2–7 business days for India-native providers.  
+Challenge to your assumption: Twilio is not the best choice for India despite its global popularity. Its India DLT support is the thinnest among major providers, and its India outbound rates are 20–50% higher than Exotel/Vobiz. If you start with Twilio because "it's what everyone uses," you will pay a premium and struggle with TRAI compliance.
 
 ## KYC, DLT, and Regulatory Requirements
 
@@ -1432,7 +1439,7 @@ Table
 
 | Component | Low-Cost Option | Mid-Range | Premium | Notes |
 | :---- | :---- | :---- | :---- | :---- |
-| Telephony (India outbound) | ₹0.60 (direct SIP) | ₹0.90 (Exotel/Plivo) | ₹1.50 (Twilio) | Dominant cost at scale |
+| Telephony (India outbound) | ₹0.60 (direct SIP) | ₹0.90 (Exotel/Vobiz) | ₹1.50 (Twilio) | Dominant cost at scale |
 | STT | $0.0036 (Deepgram Nova-2) | $0.0043 (Deepgram Nova-3) | $0.0075 (AssemblyAI) | Billed per audio minute |
 | LLM | $0.0002 (small open model) | $0.002 (GPT-4.1) | $0.015 (GPT-5.5) | Token-based; history matters |
 | TTS | $0.003 (Deepgram Aura-2) | $0.005 (Cartesia) | $0.010 (ElevenLabs) | Dominant API cost |
@@ -1487,7 +1494,7 @@ Table
 | :---- | :---- | :---- | :---- |
 | 1 | Single WebSocket thread; local dev | None | N/A |
 | 10 | Single server; async event loop | LLM rate limits; TTS concurrency | Most APIs handle 10 easily |
-| 100 | Load-balanced workers; Redis for state | Telephony trunk capacity; STT socket limits; LLM TPM | Exotel/Plivo: negotiate CC; Deepgram: concurrency tiers |
+| 100 | Load-balanced workers; Redis for state | Telephony trunk capacity; STT socket limits; LLM TPM | Exotel/Vobiz: negotiate CC; Deepgram: concurrency tiers |
 | 1,000 | Kubernetes cluster; dedicated SBC; multi-region | Telephony trunk saturation; TTS throughput; database writes | Requires direct SIP or enterprise CPaaS; custom infrastructure |
 | 10,000 | Multi-region auto-scaling; direct carrier relationships; edge compute | Carrier-grade routing; regulatory limits; cost explosion | Requires direct Airtel/Jio relationships; dedicated infrastructure |
 
@@ -1535,11 +1542,11 @@ Do not assume institutional use exempts you. TRAI's regulations apply to all aut
 
 ### Academic/Student Access
 
-Most providers (Twilio, Exotel, Plivo) offer startup credits but not specific academic discounts for telephony. You can typically get:
+Most providers (Twilio, Exotel, Vobiz) offer startup credits but not specific academic discounts for telephony. You can typically get:
 
 * Exotel: 7-day trial with ₹500 credits  
 * Twilio: $15–50 trial credit  
-* Plivo: Trial credits on request
+* Vobiz: Trial credits on request
 
 For significant volume, negotiate as a startup rather than an academic project.  
 ---
@@ -1657,7 +1664,7 @@ Primary recommendation: Exotel
 * Competitive ₹0.80–1.00/min outbound  
 * Strong operational support for Indian regulations
 
-Alternative: Plivo
+Alternative: Vobiz
 
 * Better for globally-minded teams  
 * Faster DID provisioning (24–48 hours)  
@@ -1670,7 +1677,7 @@ Avoid: Twilio for India-specific deployment
 * Highest India outbound rates  
 * Better suited for global expansion later
 
-At scale (\>20L min/month): Direct SIP with Airtel Business or Jio Business, using Exotel/Plivo as CPaaS layer for API convenience.
+At scale (\>20L min/month): Direct SIP with Airtel Business or Jio Business, using Exotel/Vobiz as CPaaS layer for API convenience.
 
 ## 2\. Best Indian Number Approach
 
@@ -1834,7 +1841,7 @@ The providers below differ primarily in which of the three they actually give yo
 | Ozonetel (Kookoo) | Yes | Yes | WebSocket streaming available | Medium | High | Well-documented. More developer-friendly than Exotel historically. |
 | Kaleyra (Tata Communications) | Yes | Yes | Media streams available | Medium | Very high | Enterprise. Acquired by Tata in 2024\. Strong on CPaaS but AI-orchestration is less turnkey. |
 | Twilio | Limited in India (inbound DIDs discontinued for new accounts; outbound via regulatory bundle) | Yes, via partner carriers | Yes (Media Streams over WebSocket) | High for India numbers; easier via Twilio's global number pool, but those aren't Indian | High | Media Streams are the gold standard for AI integrations, but Indian DID acquisition is painful. |
-| Plivo | Yes (Indian DID available) | Yes | Limited AI-specific media stream | Medium | Medium | Solid CPaaS, cheaper than Twilio. AI integrations less turnkey. |
+| Vobiz | Yes (Indian DID available) | Yes | Limited AI-specific media stream | Medium | Medium | Solid CPaaS, cheaper than Twilio. AI integrations less turnkey. |
 | Sarvam AI (Voice Agent platform) | Partners with Indian telephony | Yes | Fully managed voice pipeline | Medium (they handle much) | Depends on plan | Telugu-first AI voice agents. Strong for Indian languages. Less "bring-your-own-model" flexibility in early versions. |
 | [Gnani.ai](https://gnani.ai/) | Partners with carriers | Yes | Managed voice AI | Medium | High | Indian enterprise voice AI. Telugu STT/TTS strong. |
 | SIP trunk providers (e.g., Tata, Airtel, enterprise SIP) | Yes | Yes | You must build media server (FreeSWITCH) | High | Very high | Full control, but you own media routing, NAT, codecs, RTP. This is a multi-week engineering effort. |
@@ -1855,7 +1862,7 @@ Recommendation: Use cloud telephony with Indian DIDs via a CPaaS. This gives you
 Providers like Vapi, Retell AI, LiveKit, and Bolna abstract the entire telephony+AI pipeline. They each have different India coverage:
 
 * Vapi: Works with Twilio/Telnyx/Exotel; Indian DID support depends on the underlying provider. Vapi handles WebSocket audio, VAD, STT/TTS plugin, LLM orchestration, and structured data extraction. Fast to start.  
-* Retell AI: Strong turn-detection model. Telephony via Twilio/Vonage/SIP. Indian DIDs possible via Plivo/Exotel connector.  
+* Retell AI: Strong turn-detection model. Telephony via Twilio/Vonage/SIP. Indian DIDs possible via Vobiz/Exotel connector.  
 * LiveKit: Open-source WebRTC/agents framework. You bring your own telephony via SIP; stronger for building custom pipelines.
 
 Key inference: If your goal is to get a high-quality English demo fast, using a managed orchestrator (Vapi/Retell) with an Indian CPaaS for numbers is the pragmatic path. If you need deep control over turn-taking (which you said is a differentiator), you may eventually build your own orchestrator, but do not start there.
@@ -2310,7 +2317,7 @@ Primary: Exotel or Ozonetel (Indian CPaaS with WebSocket streaming and DLT assis
 * Exotel's "Exotel AI" suite is more mature for voice agents; Ozonetel is more developer-friendly.  
 * Choose based on: WebSocket audio format, pricing, concurrency, and whether they can provide 16kHz audio.
 
-Alternative: Plivo (cheaper, Indian DID available) if you want a global CPaaS.
+Alternative: Vobiz (cheaper, Indian DID available) if you want a global CPaaS.
 
 Avoid for initial phase: Twilio (Indian DID friction), SIP direct (engineering burden), SIM-based (unscalable).
 
@@ -2565,7 +2572,7 @@ That is exactly the type of interface we want.
 
 ### **Weakness**
 
-Pricing isn't as transparently exposed as Plivo/Twilio.
+Pricing isn't as transparently exposed as Vobiz/Twilio.
 
 You'll likely have to deal with:
 
@@ -2581,11 +2588,11 @@ For a random student wanting to call 500 people tomorrow, it is considerably les
 
 ---
 
-# **4\. Plivo**
+# **4\. Vobiz**
 
-[Plivo](https://www.plivo.com/?utm_source=chatgpt.com)
+[Vobiz](https://www.plivo.com/?utm_source=chatgpt.com)
 
-Plivo is technically very interesting.
+Vobiz is technically very interesting.
 
 Current India pricing lists:
 
@@ -2594,7 +2601,7 @@ Current India pricing lists:
 * browser/SIP: ₹0.34/min  
 * local number requirements include **Certificate of Incorporation \+ GST**.
 
-More importantly, Plivo supports:
+More importantly, Vobiz supports:
 
 * bidirectional WebSocket streaming  
 * 8 kHz / 16 kHz PCM  
@@ -2705,7 +2712,7 @@ My ranking:
 | Provider | India PSTN | Streaming | AI friendliness | Developer control | Recommendation |
 | ----- | ----- | ----- | ----- | ----- | ----- |
 | **Exotel** | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | **\#1** |
-| **Plivo** | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | \#2 |
+| **Vobiz** | ★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | \#2 |
 | **Ozonetel** | ★★★★★ | ★★★★ | ★★★★ | ★★★ | \#3 |
 | **Knowlarity** | ★★★★★ | ★★★ | ★★★ | ★★★ | \#4 |
 | **Twilio** | ★★ for your use case | ★★★★★ | ★★★★★ | ★★★★★ | Avoid as primary India PSTN |
@@ -3006,7 +3013,7 @@ STOP PLAYBACK
       ↓  
 LISTEN
 
-Plivo exposes explicit mechanisms for clearing buffered audio, and Exotel's voice-streaming architecture is designed for bidirectional conversational media.
+Vobiz exposes explicit mechanisms for clearing buffered audio, and Exotel's voice-streaming architecture is designed for bidirectional conversational media.
 
 ---
 
@@ -3466,7 +3473,7 @@ The serious ecosystem currently includes:
 ### **Infrastructure/platform**
 
 * [Exotel](https://exotel.com/?utm_source=chatgpt.com)  
-* [Plivo](https://www.plivo.com/?utm_source=chatgpt.com)  
+* [Vobiz](https://www.plivo.com/?utm_source=chatgpt.com)  
 * [Twilio](https://www.twilio.com/?utm_source=chatgpt.com)  
 * [Ozonetel](https://ozonetel.com/?utm_source=chatgpt.com)  
 * [Knowlarity](https://www.knowlarity.com/?utm_source=chatgpt.com)
@@ -4240,7 +4247,7 @@ Especially if calls become long and model selection is careless.
 
 ### **Secondary**
 
-**Plivo**
+**Vobiz**
 
 ### **Enterprise alternative**
 
@@ -4797,7 +4804,7 @@ To make legitimate outbound calls in India with proper Caller ID, low latency, a
 | Option | Inbound/Outbound Audio Path | Indian CLI Support | Regulatory Compliance | Concurrency Capabilities | Real-Time Audio Streaming |
 | :---- | :---- | :---- | :---- | :---- | :---- |
 | Indian Cloud Telephony (Exotel, Tata Tele, MyOperator) | HTTP Webhooks / WebSockets | High (Fixed Local / 140 / 160 Series) | High (Full TRAI/DLT Compliance) | High (Scalable via virtual channels) | Excellent (Exotel Voicebot Applet / Audio Streaming over WSS) |
-| Global CPaaS with India POP (Plivo, Twilio India) | SIP Trunking / Bidirectional WSS | High (Must complete Indian Entity KYC) | High (Enforces TRAI DLT scrubbing) | Unlimited (Elastic SIP / Channel scaling) | Excellent (Direct WSS / Native LiveKit & Pipecat adapters) |
+| Global CPaaS with India POP (Vobiz, Twilio India) | SIP Trunking / Bidirectional WSS | High (Must complete Indian Entity KYC) | High (Enforces TRAI DLT scrubbing) | Unlimited (Elastic SIP / Channel scaling) | Excellent (Direct WSS / Native LiveKit & Pipecat adapters) |
 | Direct SIP Trunking (Tata Comms, Airtel Enterprise) | Pure SIP/RTP Protocol | Enterprise Direct CLI | Enterprise Legal Agreement Required | Very High (Dedicated Bandwidth E1/PRI/IP-SIP) | Raw RTP Audio (Requires custom SBC/RTP Media Gateway) |
 | GSM Gateways / SIM Boxes | Analog/GSM to SIP | Single Mobile Number | Illegal / High Risk (Banned by TRAI for commercial transit) | Very Low (Limited by hardware ports & SIM locks) | Poor (A/D conversion distortion, high jitter) |
 
@@ -4817,9 +4824,9 @@ To make legitimate outbound calls in India with proper Caller ID, low latency, a
 
 ### Telecom Recommendation for Prototype vs. Production
 
-* For Prototype: Use Plivo or Exotel. Both offer compliant Indian virtual numbers with direct Bidirectional WebSocket Audio Streaming (PCM 8kHz mono, Slinc/Base64). This bypasses the complexity of building custom Session Border Controllers (SBC) while keeping latency low ($\<100\\text{ms}$ telephonic transport).  
+* For Prototype: Use Vobiz or Exotel. Both offer compliant Indian virtual numbers with direct Bidirectional WebSocket Audio Streaming (PCM 8kHz mono, Slinc/Base64). This bypasses the complexity of building custom Session Border Controllers (SBC) while keeping latency low ($\<100\\text{ms}$ telephonic transport).  
 *   
-* For High-Scale Production: Transition to Direct Enterprise Cloud SIP Trunking (Plivo / Tata Communications) connected directly to a self-hosted media server cluster (LiveKit SIP ingress/egress).  
+* For High-Scale Production: Transition to Direct Enterprise Cloud SIP Trunking (Vobiz / Tata Communications) connected directly to a self-hosted media server cluster (LiveKit SIP ingress/egress).  
 * 
 
 ## 2\. Real-Time Voice Pipeline Architecture
@@ -4829,7 +4836,7 @@ To achieve a natural human-like voice conversation, you must avoid coarse turn-t
                          FULL-DUPLEX REAL-TIME AUDIO PIPELINE  
                             
 Caller Phone  \<---\> Telephony Provider \<---\> WebSocket Bridge (PCM 8kHz Audio Streams)  
-                        (Plivo / Exotel)               |  
+                        (Vobiz / Exotel)               |  
                                                       v  
   \+-----------------------------------------------------------------------------------+  
   |                              AGENT ORCHESTRATION ENGINE                            |  
@@ -4925,7 +4932,7 @@ USER SPEAKS WHILE AI IS PRODUCING AUDIO
 
    * Acoustic VAD detects speech ($\>30\\text{ms}$ energy above threshold).  
    *   
-   * Orchestrator sends an immediate clear event to the telephony provider (e.g., Plivo/Exotel WebSocket clear command).  
+   * Orchestrator sends an immediate clear event to the telephony provider (e.g., Vobiz/Exotel WebSocket clear command).  
    *   
    * The audio queue is flushed, LLM output generation is aborted, and the STT engine prioritizes the new user speech input.  
    *   
@@ -5007,7 +5014,7 @@ END-TO-END SPEECH-TO-SPEECH (e.g., OpenAI Realtime / Gemini Live):
 
 | Cost Center | Vendor / Solution | Per-Minute Cost (USD) | Per-Minute Cost (INR) |
 | :---- | :---- | :---- | :---- |
-| Telephony Transit & WSS | Plivo / Exotel (India Outbound \+ Streaming) | $\\$0.011$ | ₹0.94 |
+| Telephony Transit & WSS | Vobiz / Exotel (India Outbound \+ Streaming) | $\\$0.011$ | ₹0.94 |
 | Streaming STT | Deepgram Nova-2 / Sarvam STT | $\\$0.005 \- \\$0.007$ | ₹0.42 \- ₹0.60 |
 | LLM Reasoning | Gemini 2.0 Flash / Groq Llama-3.1-8B ($\\approx 1k$ tokens/min) | $\\$0.002 \- \\$0.004$ | ₹0.17 \- ₹0.34 |
 | Streaming TTS | Cartesia / Sarvam Bulbul v3 ($\\approx 600$ chars/min) | $\\$0.003 \- \\$0.018$ | ₹0.25 \- ₹1.50 |
@@ -5158,8 +5165,8 @@ Adapting an AI voice system to Telugu involves more than simple translation. It 
 
 | Provider / Platform | Core Differentiators | Platform Bottlenecks & Weaknesses | Indian Telephony Integration |
 | :---- | :---- | :---- | :---- |
-| Retell AI | Excellent low-latency orchestration, built-in turn-taking, developer-friendly Webhooks. | High markup on underlying STT/TTS; restricted customization for low-level audio buffering. | Good (Supports custom SIP Trunking / Plivo). |
-| Vapi | Flexible, modular architecture; allows easy swapping of STT/LLM/TTS models. | Higher latency variations due to multiple API orchestrations; requires careful tuning. | High (Native SIP / WebSockets via Plivo & Twilio). |
+| Retell AI | Excellent low-latency orchestration, built-in turn-taking, developer-friendly Webhooks. | High markup on underlying STT/TTS; restricted customization for low-level audio buffering. | Good (Supports custom SIP Trunking / Vobiz). |
+| Vapi | Flexible, modular architecture; allows easy swapping of STT/LLM/TTS models. | Higher latency variations due to multiple API orchestrations; requires careful tuning. | High (Native SIP / WebSockets via Vobiz & Twilio). |
 | Bland AI | Native custom telephony infrastructure, built for high enterprise outbound volume. | Proprietary "black-box" model execution; limited control over exact VAD and turn-taking logic. | Moderate (Primarily optimized for US/EU PSTN). |
 | Bolna.ai | Open-source platform built specifically for Indian voice AI workflows; native support for Indic TTS/STT. | Infrastructure requires active engineering maintenance at large scale. | Native (Pre-built integrations with Indian DLT, Vobiz, Exotel). |
 
@@ -5180,7 +5187,7 @@ Adapting an AI voice system to Telugu involves more than simple translation. It 
 \+-----------------------------------------------------------------------------------+  
 |                                PRODUCTION STACK                                   |  
 |                                                                                   |  
-|  \[ Telephony Layer \]       Plivo / Exotel SIP Trunking (160 Series Numbers)       |  
+|  \[ Telephony Layer \]       Vobiz / Exotel SIP Trunking (160 Series Numbers)       |  
 |  \[ Transport Protocol \]    Bidirectional WebSockets (PCM 8kHz / Slinc)             |  
 |  \[ Framework Core \]        Pipecat / LiveKit Agents Engine (Python/Go)            |  
 |  \[ VAD Engine \]            Silero VAD (Sub-10ms Acoustic Detection)               |  
@@ -5203,7 +5210,7 @@ Adapting an AI voice system to Telugu involves more than simple translation. It 
 PHASE 1: Core Architecture & English Prototype  
   │  
   ├── 1\. Deploy Pipecat/LiveKit Orchestrator on AWS Mumbai (ap-south-1)  
-  ├── 2\. Provision Plivo/Exotel Indian Test Numbers with WebSockets  
+  ├── 2\. Provision Vobiz/Exotel Indian Test Numbers with WebSockets  
   ├── 3\. Wire Pipeline: Silero VAD \-\> Deepgram STT \-\> Groq LLM \-\> Cartesia TTS  
   └── 4\. Build CSV Ingestion, Campaign Scheduler, and Structured Data Exporter
 
@@ -5229,7 +5236,7 @@ PHASE 4: Enterprise Scale & Telecom Compliance
 
 To realize your vision of an ultra-natural AI voice platform:
 
-1. Avoid SIM Cards: Use Plivo or Exotel Cloud Telephony over WebSockets to ensure Indian compliance, full-duplex control, and scalability.  
+1. Avoid SIM Cards: Use Vobiz or Exotel Cloud Telephony over WebSockets to ensure Indian compliance, full-duplex control, and scalability.  
 2.   
 3. Prioritize Latency: Choose high-performance components like Cartesia Sonic (English), Sarvam AI (Telugu), and Groq Llama-3.1 to keep total round-trip response time below $800\\text{ms}$.  
 4.   
@@ -5252,10 +5259,10 @@ www.infobip.com
 .  
 Best Options for India:
 
-* Cloud Telephony (Aggregators): Providers like Exotel, Plivo, and Ozonetel are the standard for Indian Voice AI  
+* Cloud Telephony (Aggregators): Providers like Exotel, Vobiz, and Ozonetel are the standard for Indian Voice AI  
 * caller.digital  
 * . They provide DLT-compliant virtual numbers and handle the complex KYC required by Indian telecom operators (Jio, Airtel, Vi).  
-* Programmable Voice APIs: Plivo offers excellent WebSocket-based "Audio Streaming" specifically designed for AI agents  
+* Programmable Voice APIs: Vobiz offers excellent WebSocket-based "Audio Streaming" specifically designed for AI agents  
 * plivo.com  
 * . EnableX is another strong local contender with real-time raw audio WebSocket streaming  
 * www.enablex.io  
@@ -5263,7 +5270,7 @@ Best Options for India:
 * SIP Trunking: For high volume (10k+ calls/day), direct SIP trunks via Tata Tele or Jio Business offer the lowest per-minute rates (₹0.40–₹0.60/min) but require a Registered Telemarketer license and high upfront deposits.  
 * Pricing & Routing: Twilio is generally too expensive for domestic Indian outbound calls (₹1.20–₹1.50/min)  
 * exotel.com  
-* . Local providers like Plivo or Exotel charge between ₹0.50 and ₹0.90 per minute for outbound mobile calls  
+* . Local providers like Vobiz or Exotel charge between ₹0.50 and ₹0.90 per minute for outbound mobile calls  
 * caller.digital  
 * ,  
 * vobiz.ai  
@@ -5405,7 +5412,7 @@ Moving to Telugu is not just a "translation" task; it is a linguistic engineerin
 ### 12\. Competitive Landscape Analysis
 
 * Bland AI / Air AI: Proprietary, end-to-end platforms. Good for US markets, but they lack the deep integration with Indian DLT compliance and local SIP routing required for high connection rates in India.  
-* Vapi / Retell AI: These are "orchestration layers." They allow you to plug in Twilio/Plivo and Deepgram. They are excellent for developer flexibility but require you to manage the Indian telecom compliance wrapper yourself.  
+* Vapi / Retell AI: These are "orchestration layers." They allow you to plug in Twilio/Vobiz and Deepgram. They are excellent for developer flexibility but require you to manage the Indian telecom compliance wrapper yourself.  
 * Differentiation: The winning systems in India will be those that master Semantic Endpointing and DLT Compliance, not just those with the best voices.
 
 ### 13\. Critical Risks (The "Project Killers")
@@ -5419,7 +5426,7 @@ Moving to Telugu is not just a "translation" task; it is a linguistic engineerin
 
 Based on the research, here is the optimal stack for your prototype and MVP:
 
-* Telephony: Plivo or Exotel. Use their WebSocket Audio Streaming APIs. Ensure your "Principal Entity" KYC is completed before writing code.  
+* Telephony: Vobiz or Exotel. Use their WebSocket Audio Streaming APIs. Ensure your "Principal Entity" KYC is completed before writing code.  
 * Orchestration Framework: Pipecat (Python). It gives you the lowest-level control over the VAD and Barge-in logic, which is essential for "natural" conversation.  
 * STT: Deepgram Nova-3 (Telephony model, streaming).  
 * LLM: Groq (Llama 3.1 70B). The inference speed is unmatched and critical for keeping latency under 600ms.  
@@ -5456,8 +5463,8 @@ A physical/eSIM-based approach (a phone connected to a modem/GSM gateway) has no
 
 | Provider | India fit | Outbound rate (typical) | Number rental | Streaming for voice AI | DLT handling | Notes |
 | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
-| **Exotel** | India/APAC-native, UL-VNO licensed telecom operator | \~₹0.80–1.00/min (Source: Exotel migration guide, 2026\) | Varies by plan | AgentStream — bidirectional WebSocket, 16-bit 8kHz PCM, \<20–50ms media latency (provider claim) | Strongest — handles DLT/DND as part of the platform (Source: caller.digital, 2026\) | Best "compliance handled for you" option; \~10–25% pricier than Plivo per-minute (Source: caller.digital, 2026\) |
-| **Plivo** | Global CPaaS with strong India presence | Local outbound \~₹0.60/min (Source: awaaz.ai, 2026\) | \~₹250/month (Source: awaaz.ai, 2026\) | Native SIP trunking \+ audio streaming; explicitly integrates with LiveKit and Pipecat (Source: Plivo pricing page, 2026\) | Competent, self-managed DLT registration | Best "developer-first, cheapest to prototype on" option; 24–48hr Indian DID provisioning (Source: caller.digital, 2026\) |
+| **Exotel** | India/APAC-native, UL-VNO licensed telecom operator | \~₹0.80–1.00/min (Source: Exotel migration guide, 2026\) | Varies by plan | AgentStream — bidirectional WebSocket, 16-bit 8kHz PCM, \<20–50ms media latency (provider claim) | Strongest — handles DLT/DND as part of the platform (Source: caller.digital, 2026\) | Best "compliance handled for you" option; \~10–25% pricier than Vobiz per-minute (Source: caller.digital, 2026\) |
+| **Vobiz** | Global CPaaS with strong India presence | Local outbound \~₹0.60/min (Source: awaaz.ai, 2026\) | \~₹250/month (Source: awaaz.ai, 2026\) | Native SIP trunking \+ audio streaming; explicitly integrates with LiveKit and Pipecat (Source: Vobiz pricing page, 2026\) | Competent, self-managed DLT registration | Best "developer-first, cheapest to prototype on" option; 24–48hr Indian DID provisioning (Source: caller.digital, 2026\) |
 | **Ozonetel** | India CCaaS \+ telephony | Unlimited-minute agent pricing on some plans (unusual model) | — | Yes | Strong | Leans more contact-center-suite than raw API; good if you eventually want agent-desktop/CCaaS features |
 | **Knowlarity (Vonage)** | India-native | — | — | Yes | Strong | Similar profile to Exotel |
 | **Twilio** | Global, weakest India economics | \~₹1.20–1.50/min outbound, \~₹0.50–0.80 inbound (Source: Exotel migration guide citing Twilio's own India pricing, 2026\) | — | Best-in-class docs, `<Stream>` verb, ConversationRelay | DLT is **self-managed with no platform tooling** (Source: frejun.com, 2026\) | 50–100% more expensive than India-native providers for India-domestic calls; best documentation ecosystem but that's not worth the premium here |
@@ -5473,7 +5480,7 @@ A physical/eSIM-based approach (a phone connected to a modem/GSM gateway) has no
 
 ### **Recommendation**
 
-Prototype on **Plivo** (cheapest, cleanest API, works directly with LiveKit/Pipecat, fast DID provisioning) or **Exotel** if you'd rather have DLT/compliance handled for you at a \~15–25% cost premium. Do **not** start with Twilio for India-domestic calling — its India economics are worse on every axis and its DLT tooling is weaker, and its main advantage (documentation quality) matters less once you're using LiveKit/Pipecat docs instead of Twilio's. Register DLT in parallel with prototyping — it's the long pole, and calls will silently fail without it once you leave a sandbox/test-number phase.
+Prototype on **Vobiz** (cheapest, cleanest API, works directly with LiveKit/Pipecat, fast DID provisioning) or **Exotel** if you'd rather have DLT/compliance handled for you at a \~15–25% cost premium. Do **not** start with Twilio for India-domestic calling — its India economics are worse on every axis and its DLT tooling is weaker, and its main advantage (documentation quality) matters less once you're using LiveKit/Pipecat docs instead of Twilio's. Register DLT in parallel with prototyping — it's the long pole, and calls will silently fail without it once you leave a sandbox/test-number phase.
 
 ---
 
@@ -5583,7 +5590,7 @@ This is the architecture decision I think the brief under-weights. As of mid-202
 
 | Component | Range (₹/min) |
 | ----- | ----- |
-| Telephony (Plivo/Exotel local outbound) | ₹0.60–1.00 |
+| Telephony (Vobiz/Exotel local outbound) | ₹0.60–1.00 |
 | STT (Deepgram/AssemblyAI) | ₹0.50–1.00 |
 | LLM (Groq-hosted small/fast model) | ₹0.20–1.00 |
 | TTS (Cartesia) | ₹1.00–2.00 |
@@ -5618,7 +5625,7 @@ US-context comparisons (the kind that show up in most vendor blogs) compare AI a
 | ----- | ----- |
 | 1 call | Nothing — this is where you validate conversation quality |
 | 10 concurrent | Still trivial on any provider; useful for load-testing turn-detection tuning under real network jitter |
-| 100 concurrent | Telephony provider's **channel/CPS (calls-per-second) limits** become the first bottleneck — Plivo's AI-agent tier, for example, is quoted at 50 concurrent calls / 3 CPS on its documented plan (Source: Plivo pricing page, 2026); you'll need to confirm and likely negotiate higher limits, or shard across multiple provider accounts/numbers |
+| 100 concurrent | Telephony provider's **channel/CPS (calls-per-second) limits** become the first bottleneck — Vobiz's AI-agent tier, for example, is quoted at 50 concurrent calls / 3 CPS on its documented plan (Source: Vobiz pricing page, 2026); you'll need to confirm and likely negotiate higher limits, or shard across multiple provider accounts/numbers |
 | 1,000 concurrent | This is enterprise-scale telephony provisioning — direct carrier SIP trunking (the "20 lakh+ minutes/month" tier some sources describe going direct to Airtel/Jio) rather than a standard CPaaS plan (Source: caller.digital, 2026); at this point your LLM/STT/TTS provider rate limits and your own orchestration layer's horizontal scaling (stateless WebSocket workers behind a load balancer, session state in Redis/Postgres, a queue-throttled outbound dialer respecting CPS limits) become the binding constraints, not any single component |
 
 **My take on architecture for this:** use a framework that already solves the concurrency/session-management problem rather than building it — LiveKit Agents and Pipecat both handle per-call session isolation, horizontal worker scaling, and WebRTC/SIP media at scale as first-class concerns (Source: multiple framework comparisons, 2026). Building your own WebSocket-per-call orchestrator from scratch is exactly the kind of "not your differentiator" engineering effort I'd avoid — your differentiator is conversation quality and domain flexibility, not real-time media infrastructure.
@@ -5694,17 +5701,17 @@ Two genuinely different categories are relevant to you, and I'd resist conflatin
 
 *(Recommendations, explicitly — not facts. Multiple viable alternatives are noted for each.)*
 
-1. **Telephony**: Start on **Plivo** (cheapest, LiveKit/Pipecat-native, fast DID provisioning). Move to **Exotel** if you want DLT/compliance handled for you at a modest premium, or once call volume justifies enterprise support. Avoid Twilio for India-domestic calling.  
+1. **Telephony**: Start on **Vobiz** (cheapest, LiveKit/Pipecat-native, fast DID provisioning). Move to **Exotel** if you want DLT/compliance handled for you at a modest premium, or once call volume justifies enterprise support. Avoid Twilio for India-domestic calling.  
 2. **Indian number approach**: DLT-registered virtual number via the chosen CPaaS provider — not SIM/eSIM. Start DLT Principal Entity registration in parallel with prototyping, since it's the longest lead-time item.  
 3. **STT**: Deepgram (Flux, for built-in turn detection) or AssemblyAI for English. **Sarvam Saaras v3** for Telugu — no credible alternative at comparable maturity.  
 4. **TTS**: **Cartesia Sonic** for English (latency-critical). **Sarvam Bulbul V3** for Telugu.  
 5. **LLM strategy**: cascaded (not speech-to-speech) architecture throughout, for tool-calling reliability and Telugu support. Default to a fast/cheap model (Groq-hosted Llama 3.3-class, or GPT-4o-mini-class) for standard turns; add deterministic escalation logic (not a bigger model on every turn) for ambiguous/sensitive responses.  
-6. **Real-time communication architecture**: build on **LiveKit Agents** or **Pipecat** rather than a from-scratch WebSocket orchestrator — both solve session isolation, concurrency scaling, and telephony integration as first-class problems, and both plug directly into Plivo/Exotel and every STT/TTS/LLM provider above. Consider evaluating **Bolna** directly as a starting scaffold, since it's already assembled close to this exact stack for the Indian market.  
+6. **Real-time communication architecture**: build on **LiveKit Agents** or **Pipecat** rather than a from-scratch WebSocket orchestrator — both solve session isolation, concurrency scaling, and telephony integration as first-class problems, and both plug directly into Vobiz/Exotel and every STT/TTS/LLM provider above. Consider evaluating **Bolna** directly as a starting scaffold, since it's already assembled close to this exact stack for the Indian market.  
 7. **Backend architecture**: FastAPI (or equivalent) admin/API layer \+ your chosen agent framework for the real-time voice layer; a queue-based outbound campaign dialer that respects provider CPS limits; async workers for post-call processing (summary generation, structured field extraction, export).  
 8. **Database**: Postgres for structured data (contacts, campaigns, calls, extracted fields, status) — this is a relational, reporting-heavy workload, not a vector/document-store problem at this stage. Object storage (S3-compatible, India-region for data-localization) for recordings.  
 9. **Deployment**: containerized, deployed in an India-region cloud (Mumbai) for DPDP data-localization alignment. Managed LiveKit Cloud or Pipecat Cloud is a reasonable Phase-1 choice to avoid owning real-time media infra before you've validated conversation quality; revisit self-hosting purely as a cost optimization once volume justifies it.  
 10. **Development roadmap**:  
-    * **Phase 0 (now)**: single-number English prototype, no auth, cascaded pipeline (Plivo/Exotel \+ Deepgram \+ fast LLM \+ Cartesia) on LiveKit Agents or Pipecat, validated against real (not scripted) test calls for turn-detection quality.  
+    * **Phase 0 (now)**: single-number English prototype, no auth, cascaded pipeline (Vobiz/Exotel \+ Deepgram \+ fast LLM \+ Cartesia) on LiveKit Agents or Pipecat, validated against real (not scripted) test calls for turn-detection quality.  
     * **Phase 1**: DLT registration \+ consent-capture flow \+ admin CSV upload/campaign/export UI; move from single-call testing to a rate-limited campaign dialer; nail down the absence-call domain logic (question flow, structured extraction schema, escalation rules).  
     * **Phase 2**: Telugu — swap STT/TTS to Sarvam, re-tune turn detection on real Telugu call audio, validate on your actual target population's dialect before declaring it production-ready.  
     * **Phase 3**: Tanglish code-switching, then generalize the domain layer (question flows, extraction schemas) so new use-cases beyond "absent students" are configuration, not new code.  
@@ -5714,7 +5721,7 @@ Two genuinely different categories are relevant to you, and I'd resist conflatin
 
 ## **Sources**
 
-This report draws on \~25 web searches across current (2026) provider documentation, independent benchmarking sites, and industry comparison articles, conducted August 2026\. Key sources cited inline include: Exotel, Plivo, and Twilio pricing/documentation pages; caller.digital, frejun.com, and awaaz.ai telephony comparison guides; TRAI-compliance guides (frejun.com, autointerviewai.com, ondial.ai, expressivr.com); DPDP Act guides (recordinglaw.com, caller.digital, gistly.ai); voice-platform comparisons (techsy.io, retellai.com, bland.ai, tested.media, alphacorp.ai); framework comparisons (thinnest.ai, forasoft.com, evalgent.com, techsy.io); STT/TTS benchmarks (assemblyai.com, futureagi.com, coval.ai, deepgram.com, gladia.io, codesota.com, burki.dev); Sarvam AI product pages; Groq/inference benchmarks (baytechconsulting.com, neuraplus-ai.github.io, apiscout.dev); cascaded-vs-speech-to-speech analysis (futureagi.com, deepgram.com, inworld.ai, reactify-solutions.com, softcery.com); cost models (inworld.ai, retellai.com, bitbytes.io, ravan.ai, caller.digital, famulor.io, klariqo.com); and Indian voice-AI competitor pages (gnani.ai, lumay.ai, vyora.ai, carmaone.ai).
+This report draws on \~25 web searches across current (2026) provider documentation, independent benchmarking sites, and industry comparison articles, conducted August 2026\. Key sources cited inline include: Exotel, Vobiz, and Twilio pricing/documentation pages; caller.digital, frejun.com, and awaaz.ai telephony comparison guides; TRAI-compliance guides (frejun.com, autointerviewai.com, ondial.ai, expressivr.com); DPDP Act guides (recordinglaw.com, caller.digital, gistly.ai); voice-platform comparisons (techsy.io, retellai.com, bland.ai, tested.media, alphacorp.ai); framework comparisons (thinnest.ai, forasoft.com, evalgent.com, techsy.io); STT/TTS benchmarks (assemblyai.com, futureagi.com, coval.ai, deepgram.com, gladia.io, codesota.com, burki.dev); Sarvam AI product pages; Groq/inference benchmarks (baytechconsulting.com, neuraplus-ai.github.io, apiscout.dev); cascaded-vs-speech-to-speech analysis (futureagi.com, deepgram.com, inworld.ai, reactify-solutions.com, softcery.com); cost models (inworld.ai, retellai.com, bitbytes.io, ravan.ai, caller.digital, famulor.io, klariqo.com); and Indian voice-AI competitor pages (gnani.ai, lumay.ai, vyora.ai, carmaone.ai).
 
 **Given how fast this market is moving (several sources note major model/pricing changes within the last 1–2 months), re-verify pricing and latency figures directly against provider pages before committing to a contract — treat everything above as a well-sourced starting map, not a final quote.**
 
@@ -5726,7 +5733,7 @@ This stack is optimized for ultra-low latency (\<800ms), Indian telecom complian
 
 | Component | The Best Choice | Why it won (and what to avoid) |
 | ----- | ----- | ----- |
-| Telephony (India) | Exotel (Primary) or Plivo (Backup) | Avoid Twilio. Twilio is too expensive for domestic India, lacks local DLT hand-holding, and routes via international servers adding latency. Exotel/Plivo offer native Indian DIDs, WebSocket audio streaming, and DLT compliance dashboards. |
+| Telephony (India) | Exotel (Primary) or Vobiz (Backup) | Avoid Twilio. Twilio is too expensive for domestic India, lacks local DLT hand-holding, and routes via international servers adding latency. Exotel/Vobiz offer native Indian DIDs, WebSocket audio streaming, and DLT compliance dashboards. |
 | Orchestration Framework | Pipecat (by Daily.co) | Avoid Vapi/Retell for the core engine. While Vapi/Retell are great for quick MVPs, they abstract away the audio buffer control. To achieve your goal of "human-like barge-in and turn-taking," you need Pipecat's granular, code-level control over the audio pipeline. |
 | STT (English) | Deepgram (Nova-3 / Flux) | Unmatched speed (\<150ms latency). Specifically trained on telephony (8kHz) audio and handles Indian English accents far better than OpenAI Whisper. |
 | STT (Telugu/Phase 2\) | Sarvam AI (Saaras) | Global models fail at "Tanglish" (Telugu-English code-switching). Sarvam is built specifically for Indic languages and mixed-script telephony audio. |
@@ -5773,7 +5780,7 @@ Do not rely on simple "silence timeouts" (e.g., waiting 800ms of silence to know
 
 If you ignore this, TRAI (Telecom Regulatory Authority of India) and telecom operators will block your numbers within 48 hours.
 
-1. SIM Cards / GSM Gateways: Absolutely forbidden. Using SIM farms for bulk automated calling is illegal telecom fraud in India. You must use enterprise Cloud Telephony (Exotel/Plivo).  
+1. SIM Cards / GSM Gateways: Absolutely forbidden. Using SIM farms for bulk automated calling is illegal telecom fraud in India. You must use enterprise Cloud Telephony (Exotel/Vobiz).  
 2. DLT Registration: You must register your business (or the College) as a "Principal Entity" on the telecom DLT portals.  
 3. Number Series (Crucial):  
    * 140 Series: For Promotional/Marketing (Blocked on DND numbers). Do not use this.  
@@ -5807,7 +5814,7 @@ When you move to Phase 2, you do not rebuild the app; you only swap the "Speech 
 Do not build the web dashboard first. Build the voice loop first.
 
 * Phase 1: The Telecom Proof (Days 1-5)  
-  * Register an Exotel/Plivo account. Complete KYC using the College's entity documents.  
+  * Register an Exotel/Vobiz account. Complete KYC using the College's entity documents.  
   * Provision a 160-series or Transactional DID.  
   * Write a basic Python script to initiate an outbound call and stream the raw 8kHz PCM audio to a local WebSocket.  
 * Phase 2: The "Hello World" Voice Loop (Days 6-15)  
@@ -5877,8 +5884,8 @@ A physical/eSIM-based approach (a phone connected to a modem/GSM gateway) has no
 
 | Provider | India fit | Outbound rate (typical) | Number rental | Streaming for voice AI | DLT handling | Notes |
 |---|---|---|---|---|---|---|
-| **Exotel** | India/APAC-native, UL-VNO licensed telecom operator | ~₹0.80–1.00/min (Source: Exotel migration guide, 2026) | Varies by plan | AgentStream — bidirectional WebSocket, 16-bit 8kHz PCM, <20–50ms media latency (provider claim) | Strongest — handles DLT/DND as part of the platform (Source: caller.digital, 2026) | Best "compliance handled for you" option; ~10–25% pricier than Plivo per-minute (Source: caller.digital, 2026) |
-| **Plivo** | Global CPaaS with strong India presence | Local outbound ~₹0.60/min (Source: awaaz.ai, 2026) | ~₹250/month (Source: awaaz.ai, 2026) | Native SIP trunking + audio streaming; explicitly integrates with LiveKit and Pipecat (Source: Plivo pricing page, 2026) | Competent, self-managed DLT registration | Best "developer-first, cheapest to prototype on" option; 24–48hr Indian DID provisioning (Source: caller.digital, 2026) |
+| **Exotel** | India/APAC-native, UL-VNO licensed telecom operator | ~₹0.80–1.00/min (Source: Exotel migration guide, 2026) | Varies by plan | AgentStream — bidirectional WebSocket, 16-bit 8kHz PCM, <20–50ms media latency (provider claim) | Strongest — handles DLT/DND as part of the platform (Source: caller.digital, 2026) | Best "compliance handled for you" option; ~10–25% pricier than Vobiz per-minute (Source: caller.digital, 2026) |
+| **Vobiz** | Global CPaaS with strong India presence | Local outbound ~₹0.60/min (Source: awaaz.ai, 2026) | ~₹250/month (Source: awaaz.ai, 2026) | Native SIP trunking + audio streaming; explicitly integrates with LiveKit and Pipecat (Source: Vobiz pricing page, 2026) | Competent, self-managed DLT registration | Best "developer-first, cheapest to prototype on" option; 24–48hr Indian DID provisioning (Source: caller.digital, 2026) |
 | **Ozonetel** | India CCaaS + telephony | Unlimited-minute agent pricing on some plans (unusual model) | — | Yes | Strong | Leans more contact-center-suite than raw API; good if you eventually want agent-desktop/CCaaS features |
 | **Knowlarity (Vonage)** | India-native | — | — | Yes | Strong | Similar profile to Exotel |
 | **Twilio** | Global, weakest India economics | ~₹1.20–1.50/min outbound, ~₹0.50–0.80 inbound (Source: Exotel migration guide citing Twilio's own India pricing, 2026) | — | Best-in-class docs, `<Stream>` verb, ConversationRelay | DLT is **self-managed with no platform tooling** (Source: frejun.com, 2026) | 50–100% more expensive than India-native providers for India-domestic calls; best documentation ecosystem but that's not worth the premium here |
@@ -5892,7 +5899,7 @@ A physical/eSIM-based approach (a phone connected to a modem/GSM gateway) has no
 - Registration typically takes 5–10 business days when documentation is correct, longer if resubmission is needed (Source: multiple sources, 2026).
 
 ### Recommendation
-Prototype on **Plivo** (cheapest, cleanest API, works directly with LiveKit/Pipecat, fast DID provisioning) or **Exotel** if you'd rather have DLT/compliance handled for you at a ~15–25% cost premium. Do **not** start with Twilio for India-domestic calling — its India economics are worse on every axis and its DLT tooling is weaker, and its main advantage (documentation quality) matters less once you're using LiveKit/Pipecat docs instead of Twilio's. Register DLT in parallel with prototyping — it's the long pole, and calls will silently fail without it once you leave a sandbox/test-number phase.
+Prototype on **Vobiz** (cheapest, cleanest API, works directly with LiveKit/Pipecat, fast DID provisioning) or **Exotel** if you'd rather have DLT/compliance handled for you at a ~15–25% cost premium. Do **not** start with Twilio for India-domestic calling — its India economics are worse on every axis and its DLT tooling is weaker, and its main advantage (documentation quality) matters less once you're using LiveKit/Pipecat docs instead of Twilio's. Register DLT in parallel with prototyping — it's the long pole, and calls will silently fail without it once you leave a sandbox/test-number phase.
 
 ---
 
@@ -6000,7 +6007,7 @@ This is the architecture decision I think the brief under-weights. As of mid-202
 
 | Component | Range (₹/min) |
 |---|---|
-| Telephony (Plivo/Exotel local outbound) | ₹0.60–1.00 |
+| Telephony (Vobiz/Exotel local outbound) | ₹0.60–1.00 |
 | STT (Deepgram/AssemblyAI) | ₹0.50–1.00 |
 | LLM (Groq-hosted small/fast model) | ₹0.20–1.00 |
 | TTS (Cartesia) | ₹1.00–2.00 |
@@ -6034,7 +6041,7 @@ US-context comparisons (the kind that show up in most vendor blogs) compare AI a
 |---|---|
 | 1 call | Nothing — this is where you validate conversation quality |
 | 10 concurrent | Still trivial on any provider; useful for load-testing turn-detection tuning under real network jitter |
-| 100 concurrent | Telephony provider's **channel/CPS (calls-per-second) limits** become the first bottleneck — Plivo's AI-agent tier, for example, is quoted at 50 concurrent calls / 3 CPS on its documented plan (Source: Plivo pricing page, 2026); you'll need to confirm and likely negotiate higher limits, or shard across multiple provider accounts/numbers |
+| 100 concurrent | Telephony provider's **channel/CPS (calls-per-second) limits** become the first bottleneck — Vobiz's AI-agent tier, for example, is quoted at 50 concurrent calls / 3 CPS on its documented plan (Source: Vobiz pricing page, 2026); you'll need to confirm and likely negotiate higher limits, or shard across multiple provider accounts/numbers |
 | 1,000 concurrent | This is enterprise-scale telephony provisioning — direct carrier SIP trunking (the "20 lakh+ minutes/month" tier some sources describe going direct to Airtel/Jio) rather than a standard CPaaS plan (Source: caller.digital, 2026); at this point your LLM/STT/TTS provider rate limits and your own orchestration layer's horizontal scaling (stateless WebSocket workers behind a load balancer, session state in Redis/Postgres, a queue-throttled outbound dialer respecting CPS limits) become the binding constraints, not any single component |
 
 **My take on architecture for this:** use a framework that already solves the concurrency/session-management problem rather than building it — LiveKit Agents and Pipecat both handle per-call session isolation, horizontal worker scaling, and WebRTC/SIP media at scale as first-class concerns (Source: multiple framework comparisons, 2026). Building your own WebSocket-per-call orchestrator from scratch is exactly the kind of "not your differentiator" engineering effort I'd avoid — your differentiator is conversation quality and domain flexibility, not real-time media infrastructure.
@@ -6107,17 +6114,17 @@ Two genuinely different categories are relevant to you, and I'd resist conflatin
 
 *(Recommendations, explicitly — not facts. Multiple viable alternatives are noted for each.)*
 
-1. **Telephony**: Start on **Plivo** (cheapest, LiveKit/Pipecat-native, fast DID provisioning). Move to **Exotel** if you want DLT/compliance handled for you at a modest premium, or once call volume justifies enterprise support. Avoid Twilio for India-domestic calling.
+1. **Telephony**: Start on **Vobiz** (cheapest, LiveKit/Pipecat-native, fast DID provisioning). Move to **Exotel** if you want DLT/compliance handled for you at a modest premium, or once call volume justifies enterprise support. Avoid Twilio for India-domestic calling.
 2. **Indian number approach**: DLT-registered virtual number via the chosen CPaaS provider — not SIM/eSIM. Start DLT Principal Entity registration in parallel with prototyping, since it's the longest lead-time item.
 3. **STT**: Deepgram (Flux, for built-in turn detection) or AssemblyAI for English. **Sarvam Saaras v3** for Telugu — no credible alternative at comparable maturity.
 4. **TTS**: **Cartesia Sonic** for English (latency-critical). **Sarvam Bulbul V3** for Telugu.
 5. **LLM strategy**: cascaded (not speech-to-speech) architecture throughout, for tool-calling reliability and Telugu support. Default to a fast/cheap model (Groq-hosted Llama 3.3-class, or GPT-4o-mini-class) for standard turns; add deterministic escalation logic (not a bigger model on every turn) for ambiguous/sensitive responses.
-6. **Real-time communication architecture**: build on **LiveKit Agents** or **Pipecat** rather than a from-scratch WebSocket orchestrator — both solve session isolation, concurrency scaling, and telephony integration as first-class problems, and both plug directly into Plivo/Exotel and every STT/TTS/LLM provider above. Consider evaluating **Bolna** directly as a starting scaffold, since it's already assembled close to this exact stack for the Indian market.
+6. **Real-time communication architecture**: build on **LiveKit Agents** or **Pipecat** rather than a from-scratch WebSocket orchestrator — both solve session isolation, concurrency scaling, and telephony integration as first-class problems, and both plug directly into Vobiz/Exotel and every STT/TTS/LLM provider above. Consider evaluating **Bolna** directly as a starting scaffold, since it's already assembled close to this exact stack for the Indian market.
 7. **Backend architecture**: FastAPI (or equivalent) admin/API layer + your chosen agent framework for the real-time voice layer; a queue-based outbound campaign dialer that respects provider CPS limits; async workers for post-call processing (summary generation, structured field extraction, export).
 8. **Database**: Postgres for structured data (contacts, campaigns, calls, extracted fields, status) — this is a relational, reporting-heavy workload, not a vector/document-store problem at this stage. Object storage (S3-compatible, India-region for data-localization) for recordings.
 9. **Deployment**: containerized, deployed in an India-region cloud (Mumbai) for DPDP data-localization alignment. Managed LiveKit Cloud or Pipecat Cloud is a reasonable Phase-1 choice to avoid owning real-time media infra before you've validated conversation quality; revisit self-hosting purely as a cost optimization once volume justifies it.
 10. **Development roadmap**:
-    - **Phase 0 (now)**: single-number English prototype, no auth, cascaded pipeline (Plivo/Exotel + Deepgram + fast LLM + Cartesia) on LiveKit Agents or Pipecat, validated against real (not scripted) test calls for turn-detection quality.
+    - **Phase 0 (now)**: single-number English prototype, no auth, cascaded pipeline (Vobiz/Exotel + Deepgram + fast LLM + Cartesia) on LiveKit Agents or Pipecat, validated against real (not scripted) test calls for turn-detection quality.
     - **Phase 1**: DLT registration + consent-capture flow + admin CSV upload/campaign/export UI; move from single-call testing to a rate-limited campaign dialer; nail down the absence-call domain logic (question flow, structured extraction schema, escalation rules).
     - **Phase 2**: Telugu — swap STT/TTS to Sarvam, re-tune turn detection on real Telugu call audio, validate on your actual target population's dialect before declaring it production-ready.
     - **Phase 3**: Tanglish code-switching, then generalize the domain layer (question flows, extraction schemas) so new use-cases beyond "absent students" are configuration, not new code.
@@ -6126,7 +6133,7 @@ Two genuinely different categories are relevant to you, and I'd resist conflatin
 ---
 
 ## Sources
-This report draws on ~25 web searches across current (2026) provider documentation, independent benchmarking sites, and industry comparison articles, conducted August 2026. Key sources cited inline include: Exotel, Plivo, and Twilio pricing/documentation pages; caller.digital, frejun.com, and awaaz.ai telephony comparison guides; TRAI-compliance guides (frejun.com, autointerviewai.com, ondial.ai, expressivr.com); DPDP Act guides (recordinglaw.com, caller.digital, gistly.ai); voice-platform comparisons (techsy.io, retellai.com, bland.ai, tested.media, alphacorp.ai); framework comparisons (thinnest.ai, forasoft.com, evalgent.com, techsy.io); STT/TTS benchmarks (assemblyai.com, futureagi.com, coval.ai, deepgram.com, gladia.io, codesota.com, burki.dev); Sarvam AI product pages; Groq/inference benchmarks (baytechconsulting.com, neuraplus-ai.github.io, apiscout.dev); cascaded-vs-speech-to-speech analysis (futureagi.com, deepgram.com, inworld.ai, reactify-solutions.com, softcery.com); cost models (inworld.ai, retellai.com, bitbytes.io, ravan.ai, caller.digital, famulor.io, klariqo.com); and Indian voice-AI competitor pages (gnani.ai, lumay.ai, vyora.ai, carmaone.ai).
+This report draws on ~25 web searches across current (2026) provider documentation, independent benchmarking sites, and industry comparison articles, conducted August 2026. Key sources cited inline include: Exotel, Vobiz, and Twilio pricing/documentation pages; caller.digital, frejun.com, and awaaz.ai telephony comparison guides; TRAI-compliance guides (frejun.com, autointerviewai.com, ondial.ai, expressivr.com); DPDP Act guides (recordinglaw.com, caller.digital, gistly.ai); voice-platform comparisons (techsy.io, retellai.com, bland.ai, tested.media, alphacorp.ai); framework comparisons (thinnest.ai, forasoft.com, evalgent.com, techsy.io); STT/TTS benchmarks (assemblyai.com, futureagi.com, coval.ai, deepgram.com, gladia.io, codesota.com, burki.dev); Sarvam AI product pages; Groq/inference benchmarks (baytechconsulting.com, neuraplus-ai.github.io, apiscout.dev); cascaded-vs-speech-to-speech analysis (futureagi.com, deepgram.com, inworld.ai, reactify-solutions.com, softcery.com); cost models (inworld.ai, retellai.com, bitbytes.io, ravan.ai, caller.digital, famulor.io, klariqo.com); and Indian voice-AI competitor pages (gnani.ai, lumay.ai, vyora.ai, carmaone.ai).
 
 **Given how fast this market is moving (several sources note major model/pricing changes within the last 1–2 months), re-verify pricing and latency figures directly against provider pages before committing to a contract — treat everything above as a well-sourced starting map, not a final quote.**
 
@@ -6217,36 +6224,36 @@ Net effect: code-switching is buildable on the stack you already have, on a 1–
 
 Every legal call to an Indian mobile pays PSTN termination to a licensed access provider. No software choice removes that — your own telephony report is explicit that ₹0 telephony is impossible, and that the only sub-₹0.10/min offers on the market are illegal SIM-box/grey routes (documented arrests through 2026, carriers are mandated to actively hunt this traffic, first violation bars *all* your telecom resources for 15 days). This isn't a compliance nicety to route around — it's a hard floor.
 
-**What's actually achievable, and what's genuinely rare:** most vendors in this space (and most competitors) run their agent pipeline through a CPaaS's proprietary media-streaming bridge (Twilio Media Streams, or equivalent), paying a per-stream surcharge on top of the per-minute rate. Self-hosting the bridge — `livekit/sip`, which matches your already-locked LiveKit decision — removes that middle layer entirely. The callee joins your LiveKit room directly; there's no separate streaming fee, fewer network hops, and you own the entire pipeline from carrier trunk to agent. **That's the enterprise-grade, not-personal-tier version of your ask** — a self-hosted, production SIP bridge is a fundamentally different posture than a personal Twilio account, even while the underlying carrier connection (Plivo, then eventually direct carrier SIP) is unavoidably still "a telephony vendor" in the strict sense.
+**What's actually achievable, and what's genuinely rare:** most vendors in this space (and most competitors) run their agent pipeline through a CPaaS's proprietary media-streaming bridge (Twilio Media Streams, or equivalent), paying a per-stream surcharge on top of the per-minute rate. Self-hosting the bridge — `livekit/sip`, which matches your already-locked LiveKit decision — removes that middle layer entirely. The callee joins your LiveKit room directly; there's no separate streaming fee, fewer network hops, and you own the entire pipeline from carrier trunk to agent. **That's the enterprise-grade, not-personal-tier version of your ask** — a self-hosted, production SIP bridge is a fundamentally different posture than a personal Twilio account, even while the underlying carrier connection (Vobiz, then eventually direct carrier SIP) is unavoidably still "a telephony vendor" in the strict sense.
 
 ### 3.2 Recommended path
 
 | Stage | What | Concurrency ceiling | When |
 |---|---|---|---|
-| **Now** | `livekit/sip` self-hosted bridge → Plivo domestic trunk (₹0.38/min, streaming free) | 50 concurrent (PAYG cap) | Immediately — config-level trunk swap, no agent code changes |
-| **Overflow / parallel burst** | Second provider (Exotel) behind the same provider-abstraction interface, absorbing calls once Plivo's ceiling is hit | Sales-defined, effectively higher | As soon as campaign concurrency approaches ~40-50 |
+| **Now** | `livekit/sip` self-hosted bridge → Vobiz domestic trunk (₹0.38/min, streaming free) | 50 concurrent (PAYG cap) | Immediately — config-level trunk swap, no agent code changes |
+| **Overflow / parallel burst** | Second provider (Exotel) behind the same provider-abstraction interface, absorbing calls once Vobiz's ceiling is hit | Sales-defined, effectively higher | As soon as campaign concurrency approaches ~40-50 |
 | **At scale (>100k calls/mo or >300k min/mo sustained)** | Direct carrier SIP (Jio/Tata/Airtel) fronted by Kamailio (signaling) + rtpengine (media, kernel-mode RTP forwarding) | **10,000+ concurrent per instance** — tier-1 carrier-grade | Trigger-based, not calendar-based |
 
-This is the hybrid you described: the primary path (Plivo via self-hosted LiveKit SIP) carries baseline traffic; a second path absorbs parallel overflow; and the carrier-grade path (Path C) is the ceiling-breaker once volume justifies the operational overhead. None of this is "pick one alternative" — it's a provider-abstraction layer with a defined escalation order, which is also what makes a single vendor outage non-fatal to a campaign.
+This is the hybrid you described: the primary path (Vobiz via self-hosted LiveKit SIP) carries baseline traffic; a second path absorbs parallel overflow; and the carrier-grade path (Path C) is the ceiling-breaker once volume justifies the operational overhead. None of this is "pick one alternative" — it's a provider-abstraction layer with a defined escalation order, which is also what makes a single vendor outage non-fatal to a campaign.
 
-**Reality check on jumping straight to Path C:** your own cost model shows direct carrier SIP is *more* expensive than Plivo below ~100k–200k calls/month — channel rental minimums dominate at low volume. If current call volume is closer to college-pilot scale (thousands/month), starting there would work against your own cost-cutting goal, not for it. The self-hosted bridge (Path A) is what gets you the "enterprise, own-the-stack" posture *today* without paying the carrier-SIP premium before you've earned it.
+**Reality check on jumping straight to Path C:** your own cost model shows direct carrier SIP is *more* expensive than Vobiz below ~100k–200k calls/month — channel rental minimums dominate at low volume. If current call volume is closer to college-pilot scale (thousands/month), starting there would work against your own cost-cutting goal, not for it. The self-hosted bridge (Path A) is what gets you the "enterprise, own-the-stack" posture *today* without paying the carrier-SIP premium before you've earned it.
 
 ### 3.3 Concurrency math at representative volumes (from your own report)
 
 | Volume | Avg concurrent (3-min avg call) | Fits on |
 |---|---|---|
-| 10k calls/mo | ~3 concurrent | Trivially inside Plivo's 50-cap |
-| 100k calls/mo | ~28 average, peak 45–60 | **Right at Plivo's ceiling** — this is where overflow provider #2 or Path C becomes necessary, not optional |
+| 10k calls/mo | ~3 concurrent | Trivially inside Vobiz's 50-cap |
+| 100k calls/mo | ~28 average, peak 45–60 | **Right at Vobiz's ceiling** — this is where overflow provider #2 or Path C becomes necessary, not optional |
 
 ---
 
 ## 4. Combined Unit Economics (Closed-Source Managed Tier)
 
-Recomputing your multilingual report's stack total with the more precise telephony figures from your telephony report (₹0.38/min Plivo PAYG rather than the ₹0.80 placeholder used in the multilingual doc's own table):
+Recomputing your multilingual report's stack total with the more precise telephony figures from your telephony report (₹0.38/min Vobiz PAYG rather than the ₹0.80 placeholder used in the multilingual doc's own table):
 
 | Component | Choice | ₹/min | Confidence |
 |---|---|---|---|
-| Telephony | Plivo (self-hosted LiveKit bridge) | 0.38 | [INDEP, vendor pricing page] |
+| Telephony | Vobiz (self-hosted LiveKit bridge) | 0.38 | [INDEP, vendor pricing page] |
 | STT | Saaras v3 | 0.50 | [VENDOR — pricing page vs marketing discrepancy unresolved] |
 | LLM | Sarvam-M/30B + Groq escalation | 0.05–0.30 | Token cost, low risk |
 | TTS | Bulbul v3 (v2 pricing if negotiated: 0.53–0.90) | 0.55–1.80 | Dominant cost line |
@@ -6289,7 +6296,7 @@ These are unresolved in your source research and should block signing anything, 
 2. **Sarvam-M function-calling/extraction accuracy** — no independent benchmark exists; run your domain-config harness against it before committing the LLM tier.
 3. **Bulbul v3 Telugu MOS on your actual scripts** — blind-test candidate voices with real users; Sarvam's own docs admit per-language variance.
 4. **No commercial-safe open Telugu voice cloner exists** — don't plan a self-host cloning fallback around one appearing.
-5. **Concurrency ceiling proximity** — 100k calls/month sits right at Plivo's 50-concurrent cap; load-test at 1.5× planned peak CPS before a campaign, not during one.
+5. **Concurrency ceiling proximity** — 100k calls/month sits right at Vobiz's 50-concurrent cap; load-test at 1.5× planned peak CPS before a campaign, not during one.
 
 ---
 
@@ -6297,7 +6304,7 @@ These are unresolved in your source research and should block signing anything, 
 
 1. Get Sarvam's STT pricing discrepancy resolved in writing — it's a 3x swing (₹0.50 vs ₹1.5/min) that changes the whole economics table.
 2. Stand up the qa-eval harness for Sarvam-M function-calling before any commitment — this is the one unverified claim the whole LLM tier depends on.
-3. Deploy `livekit/sip` against Plivo now (Phase 0/1 from your telephony report) — this is the fastest concrete step toward the "own the bridge" architecture and doesn't wait on any of the above.
+3. Deploy `livekit/sip` against Vobiz now (Phase 0/1 from your telephony report) — this is the fastest concrete step toward the "own the bridge" architecture and doesn't wait on any of the above.
 4. Design the per-language voice-mapping schema in the domain-config format now, even before code-switching logic is built — it's needed either way and unblocks the TTS voice-gallery UX work in parallel.
 5. Negotiate Bulbul v2 pricing before scaling call volume — this is your single biggest lever on hitting ₹2–2.5/min with margin to spare.
 
@@ -6447,7 +6454,7 @@ Assumptions: $1 ≈ ₹87 [EST]; connect-minute = billed phone minute; agent spe
 
 | # | Component | Choice | ₹/connect-min | Quality verdict | Risk |
 |---|---|---|---|---|---|
-| 1 | Telephony | Plivo (locked) | ~0.80 | Proven | Low (existing) |
+| 1 | Telephony | Vobiz (locked) | ~0.80 | Proven | Low (existing) |
 | 2 | STT | **Saaras v3 streaming** (A/B: Deepgram Nova-3 `te`) | **0.50** (DG ≈ 0.44) | Best public Indic/code-mix numbers; 8 kHz-focused | Sarvam pricing-page inconsistency (₹30/hr vs ₹1.5/min marketing) — resolve pre-contract; single-vendor concentration |
 | 3 | LLM | **Sarvam-M/30B non-think** + Groq GPT-OSS-120B escalation | **0.05–0.30** | Only model with published Tenglish/Telugu conversational evidence; general reasoning mediocre but sufficient for config-driven flows | **Function-calling unverified independently** — hard-gate on qa-eval results |
 | 4 | TTS | **Bulbul v3 catalog** (negotiate v2 pricing) | **0.55–1.80** | Best Indic naturalness claim + blind-study win; 8 kHz native | No self-serve cloning; per-language voice variance is real |
@@ -6513,7 +6520,7 @@ Assumptions: $1 ≈ ₹87 [EST]; connect-minute = billed phone minute; agent spe
 | Question | Answer |
 |---|---|
 | Where does the money go today? | On Twilio we pay roughly **₹1.55–1.60/effective minute**: voice ~₹0.65–1.50/min + Media Streams $0.0044/min ≈ ₹0.37/min + recording/AMD extras. |
-| Biggest single legal saving | **Move India legs to Plivo-class domestic routing: ₹0.38/min, audio streaming free → ~75% cut** (plivo.com/voice/pricing/in, retrieved Aug 2026). At 100k calls/mo ≈ **₹3.5 lakh/month avoided**. |
+| Biggest single legal saving | **Move India legs to Vobiz-class domestic routing: ₹0.38/min, audio streaming free → ~75% cut** (plivo.com/voice/pricing/in, retrieved Aug 2026). At 100k calls/mo ≈ **₹3.5 lakh/month avoided**. |
 | Endgame rate | Direct carrier SIP (Jio/Tata/Airtel) lands at **~₹0.30–0.45/min all-in**, but only pays off around **20 lakh+ minutes/month** (caller.digital, 23 Jun 2026). |
 | Cheapest legal ₹/min | **≈ ₹0.30–0.38/min telephony-only at scale. ₹0 is impossible** — PSTN termination is always billed by licensed access providers; DLT/KYC/DID carry non-zero floors (§6). |
 | Legal landmine | Grey routes / SIM banks / eSIM banks are **criminal risk** (arrests Jan 2026; DoT shut 44 illegal exchanges Apr 2026), and the Feb 2025 TCCCPR amendment lets carriers bar our *entire legal* SIP trunk for 15 days on a first UCC violation (§2). |
@@ -6526,7 +6533,7 @@ Assumptions: $1 ≈ ₹87 [EST]; connect-minute = billed phone minute; agent spe
 
 Outbound calls to Indian mobiles assumed (our dominant cost); ~3 min avg/call.
 
-| Dimension | **Global CPaaS (Twilio)** | **India CPaaS (Plivo)** | **India CPaaS (Exotel)** | **India CCaaS (Ozonetel / Knowlarity–Gupshup)** | **Direct carrier SIP (Airtel/Jio/Tata)** | **Self-hosted PBX + carrier SIP** |
+| Dimension | **Global CPaaS (Twilio)** | **India CPaaS (Vobiz)** | **India CPaaS (Exotel)** | **India CCaaS (Ozonetel / Knowlarity–Gupshup)** | **Direct carrier SIP (Airtel/Jio/Tata)** | **Self-hosted PBX + carrier SIP** |
 |---|---|---|---|---|---|---|
 | Outbound rate, India mobile | ~₹0.65 landline, **~₹1.20–1.50 mobile** (edesy.in, Jan 2026; frejun.com Voice API guide, May 2026) | **₹0.38/min** out & in (plivo.com/voice/pricing/in, retrieved Aug 2026) | Credit-based (~₹1/credit), est. **₹0.50–1.50/min**, opaque (prospeo.io 2026; edesy.in May 2026) | Knowlarity prepaid **₹0.40–0.60/min** after bundled mins (knowlarity.com/pricing/voice, Aug 2026); Ozonetel KooKoo **₹0.70/min + ₹500/mo** rental (prospeo.io 2026) | Benchmarks: **₹0.30–0.50 PSTN, ₹0.40–0.70 mobile termination**; high-volume direct-SIP contracts **₹0.60–1.20/min** (frejun.com Jul 2026 citing TRAI; caller.digital 23 Jun 2026) | Same as carrier SIP **+ your infra** — software layer free; aggregator margin removed |
 | Platform/add-on fees | **Media Streams +$0.0044/min**, recording +$0.0025/min, AMD $0.0075/call (quiq.com Twilio breakdown, 2 Aug 2026) | Audio streaming & recording **free/included** (plivo.com/pricing, retrieved Aug 2026) | Bundled credits; dialer/SMS metered separately (cloudtalk.io, 2 Jul 2026) | Plan bundles; toll-free inbound ₹1.05/min extra | Channel rental + DID only | DevOps time; infra ₹10–50k/mo at scale |
@@ -6539,13 +6546,13 @@ Outbound calls to Indian mobiles assumed (our dominant cost); ~3 min avg/call.
 
 ### 1.2 Analysis at our volumes
 
-**1k–10k calls/month (3k–30k min): managed CPaaS wins outright.** Carrier SIP economics invert at low volume: channel rentals (~₹350–700/channel/mo market norm, callin.io Mar 2025) plus minimums exceed what these minutes should ever cost. Plivo's flat ₹0.38/min with zero platform fee is the floor. Exotel/Knowlarity beat Plivo only if we need their DLT hand-holding or CCaaS features — we don't; LiveKit Agents *is* our contact center.
+**1k–10k calls/month (3k–30k min): managed CPaaS wins outright.** Carrier SIP economics invert at low volume: channel rentals (~₹350–700/channel/mo market norm, callin.io Mar 2025) plus minimums exceed what these minutes should ever cost. Vobiz's flat ₹0.38/min with zero platform fee is the floor. Exotel/Knowlarity beat Vobiz only if we need their DLT hand-holding or CCaaS features — we don't; LiveKit Agents *is* our contact center.
 
-**100k calls/month (300k min): aggregator margin starts to hurt.** Aggregators charge ₹0.80–1.80/min retail on outbound mobile vs ₹0.60–1.20 on direct SIP contracts; enterprises cut direct deals around **20 lakh+ min/month** (caller.digital, 23 Jun 2026). Our crossover sits between ~100k–200k calls/mo — not before. Plivo's PAYG concurrency cap also bites near this tier (§4 math).
+**100k calls/month (300k min): aggregator margin starts to hurt.** Aggregators charge ₹0.80–1.80/min retail on outbound mobile vs ₹0.60–1.20 on direct SIP contracts; enterprises cut direct deals around **20 lakh+ min/month** (caller.digital, 23 Jun 2026). Our crossover sits between ~100k–200k calls/mo — not before. Vobiz's PAYG concurrency cap also bites near this tier (§4 math).
 
 **Concurrency reality check (Erlang, not marketing):**
 - 10k calls/mo ≈ 333 calls/day inside a ~6-hour calling window ≈ 56/hr ≈ **~3 concurrent** average. Trivial everywhere.
-- 100k calls/mo ≈ 556/hr ≈ 9 CPS avg ≈ **~28 concurrent** (3-min holding time), peak ~45–60. Exactly where Plivo PAYG (50) and Knowlarity prepaid (10–40 ch) hit ceilings — and where a 60-channel carrier trunk becomes rational.
+- 100k calls/mo ≈ 556/hr ≈ 9 CPS avg ≈ **~28 concurrent** (3-min holding time), peak ~45–60. Exactly where Vobiz PAYG (50) and Knowlarity prepaid (10–40 ch) hit ceilings — and where a 60-channel carrier trunk becomes rational.
 
 **Why not Twilio at any volume:** 2–3× India-rooted pricing, thinnest India compliance tooling, no India region for Media Streams (cross-border audio hop contradicts our localization stance), and per-feature surcharges stack invisibly (quiq.com, 2 Aug 2026). It survives only as a multi-country escape hatch — not our Phase-1 market.
 
@@ -6578,11 +6585,11 @@ Today: a CPaaS places the call and **Media Streams** pushes 8 kHz mulaw audio ov
 
 ### Path A — LiveKit SIP server (recommended; matches our locked LiveKit decision)
 
-The open-source **`livekit/sip`** service is a SIP↔WebRTC bridge: define an outbound trunk pointing at any standard SIP provider (`<trunk-id>.zt.plivo.com`, `sip.telnyx.com`, …) plus inbound trunks + dispatch rules (docs.livekit.io/telephony outbound-trunk & sip-trunk-setup guides, rendered Aug 2026; github.com/livekit/sip). Self-hosted LiveKit carries "full support" for SIP/telephony — SIP runs as a separate service next to our existing LiveKit server (docs.livekit.io/intro/cloud comparison, 8 Aug 2026). Plivo publishes a first-party LiveKit guide and states its trunks "speak standard SIP… whether you self-host LiveKit or run it on LiveKit Cloud," with India media anchoring satisfied by running LiveKit in the India region (plivo.com/livekit, retrieved Aug 2026).
+The open-source **`livekit/sip`** service is a SIP↔WebRTC bridge: define an outbound trunk pointing at any standard SIP provider (`<trunk-id>.zt.plivo.com`, `sip.telnyx.com`, …) plus inbound trunks + dispatch rules (docs.livekit.io/telephony outbound-trunk & sip-trunk-setup guides, rendered Aug 2026; github.com/livekit/sip). Self-hosted LiveKit carries "full support" for SIP/telephony — SIP runs as a separate service next to our existing LiveKit server (docs.livekit.io/intro/cloud comparison, 8 Aug 2026). Vobiz publishes a first-party LiveKit guide and states its trunks "speak standard SIP… whether you self-host LiveKit or run it on LiveKit Cloud," with India media anchoring satisfied by running LiveKit in the India region (plivo.com/livekit, retrieved Aug 2026).
 
 - **What replaces Media Streams:** nothing — the callee joins the LiveKit room as a participant; agents subscribe directly. The WebSocket relay layer disappears (fewer hops, lower latency, no per-stream fee).
 - **What breaks / must be rebuilt:** call-status events → LiveKit webhooks; answering-machine detection → native AMD in LiveKit Agents (docs.livekit.io/telephony/features/answering-machine-detection, Jun 2026); DTMF → handled by livekit/sip (RFC2833/INFO); retry/redial logic stays in our backend dialer worker untouched.
-- **What it saves:** the entire media-streaming surcharge category ($0.0044/min on Twilio; free on Plivo and free-once-self-hosted), plus CPaaS call-control margin when later paired with a raw carrier trunk.
+- **What it saves:** the entire media-streaming surcharge category ($0.0044/min on Twilio; free on Vobiz and free-once-self-hosted), plus CPaaS call-control margin when later paired with a raw carrier trunk.
 - **Effort:** days–weeks: static egress IP or IP-ACL trunk auth, TLS/SRTP, one new service in docker-compose.
 
 ### Path B — FreeSWITCH + mod_audio_fork / mod_audio_stream
@@ -6601,7 +6608,7 @@ Kamailio = signaling proxy; rtpengine = media proxy whose kernel module forwards
 
 ### What open source actually saves
 
-**Platform fees, not physics** — the carrier still bills per-minute termination regardless of who bridges audio. Versus Twilio we delete: voice-rate premium (~₹0.8–1.1/min), Media Streams $0.0044/min, recording $0.0025/min, AMD $0.0075/call (quiq.com, 2 Aug 2026). Versus Plivo we delete only future Enterprise-tier/concurrency premiums. Hence the staged plan: **Path A on Plivo now; Paths A/C on carrier SIP when volume justifies** — not a big-bang PBX build.
+**Platform fees, not physics** — the carrier still bills per-minute termination regardless of who bridges audio. Versus Twilio we delete: voice-rate premium (~₹0.8–1.1/min), Media Streams $0.0044/min, recording $0.0025/min, AMD $0.0075/call (quiq.com, 2 Aug 2026). Versus Vobiz we delete only future Enterprise-tier/concurrency premiums. Hence the staged plan: **Path A on Vobiz now; Paths A/C on carrier SIP when volume justifies** — not a big-bang PBX build.
 
 Asterisk footnote: viable (4,542 concurrent tested on 48 cores, vitalpbx.com Oct 2023; community benchmarks ≈50 calls/core without transcoding, ~20 with), but weakest fit: its strengths are desk-phone PBX features we don't need; G.729 transcoding is CPU-hungry and licensed ($8/channel, asterisk.org, Jan 2025). Carriers give us G.711 end-to-end, so this rarely matters.
 
@@ -6616,7 +6623,7 @@ Monthly telephony-only cost (platform fee + per-minute + DID/channel rentals):
 | Option (rate basis) | 1k calls (3k min) | 10k calls (30k min) | 100k calls (300k min) |
 |---|---|---|---|
 | **Twilio** (₹1.20/min avg mobile + Media Streams ₹0.37/min + ₹200 DID) | **~₹4,900** | **~₹47,000** | **~₹471,000** |
-| **Plivo PAYG** (₹0.38/min + ₹200 DID) | **~₹1,340** ✅ best | **~₹11,600** ✅ best | ~₹114,200* ⚠️ 50-concurrent cap borderline → Enterprise +$1,000/mo ⇒ ~₹201,000 |
+| **Vobiz PAYG** (₹0.38/min + ₹200 DID) | **~₹1,340** ✅ best | **~₹11,600** ✅ best | ~₹114,200* ⚠️ 50-concurrent cap borderline → Enterprise +$1,000/mo ⇒ ~₹201,000 |
 | **Exotel** (est. ₹0.60–1.00/min blended + bundle) | ~₹2,600–3,800 | ~₹19,000–31,000 | ~₹185,000–305,000 (negotiable) |
 | **Knowlarity prepaid** (Advance ₹16,800/yr ⇒ ₹1,400/mo incl 1,200 min, then ₹0.60/min, 10 ch) | ~₹2,600 | ~₹18,700 | Premium Plus (₹60k/yr, 40 ch, 10k free min, ₹0.40/min): ~₹126,000 |
 | **Ozonetel KooKoo** (₹500 rental + ₹0.70/min out, +₹0.50/min port on entry plan) | ~₹3,200 | ~₹21,700 | ~₹210,700+ before sales discounts |
@@ -6624,33 +6631,33 @@ Monthly telephony-only cost (platform fee + per-minute + DID/channel rentals):
 | **Self-hosted (A/B/C) + carrier SIP** | carrier row + ₹8–15k infra (overkill) | carrier row + ₹10–20k infra | carrier row + ₹15–40k infra (media nodes + Kamailio/rtpengine) — buys independence, not cheaper minutes |
 | **One-time, any legal path** | DLT **₹5,900** + KYC + (carrier-only) SIP install ₹5k–15k | — | — |
 
-\* Peak Erlang at 100k calls/mo (~45–60 concurrent) straddles Plivo's PAYG cap; crossing it flips economics toward Enterprise tier or carrier SIP.
+\* Peak Erlang at 100k calls/mo (~45–60 concurrent) straddles Vobiz's PAYG cap; crossing it flips economics toward Enterprise tier or carrier SIP.
 
 **Read-outs**
-1. Per-connected-call cost drops **~₹4.90 → ~₹1.15** by moving Twilio→Plivo — a ~76% cut via a config-level trunk swap, zero agent-code change ("a configuration change, not a rewrite," plivo.com/livekit, Aug 2026).
+1. Per-connected-call cost drops **~₹4.90 → ~₹1.15** by moving Twilio→Vobiz — a ~76% cut via a config-level trunk swap, zero agent-code change ("a configuration change, not a rewrite," plivo.com/livekit, Aug 2026).
 2. Carrier-SIP crossover vs best CPaaS sits between ~100k–200k calls/mo (~300k–600k min), consistent with caller.digital's "direct SIP at 20 lakh+ minutes" guidance (23 Jun 2026). Below crossover, channel minimums lose money.
 3. Fixed-cost gravity: at 1k calls/mo rentals are >50% of bill — boring pay-as-you-go wins. At 100k, per-minute dominates — every paisa is negotiable.
-4. Telephony ≠ total cost: India full-stack AI voice sells at ₹6–12/min (bolti.co.in, 26 Jun 2026); at Plivo rates telephony is ~25–35% of unit economics. Keep logging STT/LLM/TTS vs telephony cost splits per call (CLAUDE.md convention) so the next optimisation targets the right line.
+4. Telephony ≠ total cost: India full-stack AI voice sells at ₹6–12/min (bolti.co.in, 26 Jun 2026); at Vobiz rates telephony is ~25–35% of unit economics. Keep logging STT/LLM/TTS vs telephony cost splits per call (CLAUDE.md convention) so the next optimisation targets the right line.
 
 ---
 
-## 5. Migration sketch: off Twilio, onto the locked Plivo-first path
+## 5. Migration sketch: off Twilio, onto the locked Vobiz-first path
 
-CLAUDE.md already locks "Plivo first (Exotel fallback), not Twilio." This executes that; the cascaded LiveKit architecture is untouched.
+CLAUDE.md already locks "Vobiz first (Exotel fallback), not Twilio." This executes that; the cascaded LiveKit architecture is untouched.
 
 **Phase 0 — Compliance & accounts (week 1, all parallel).**
-File DLT entity/telemarketer registration on a Jio/Airtel portal (₹5,900, 3–7 working days); register header + consent/content templates for the absent-student flow. Open Plivo account + business KYC (mandatory before IN numbers — support.plivo.com, Nov 2024). Buy 1–2 **160-series** service numbers; pre-declare auto-dialer use to the access provider (§2).
+File DLT entity/telemarketer registration on a Jio/Airtel portal (₹5,900, 3–7 working days); register header + consent/content templates for the absent-student flow. Open Vobiz account + business KYC (mandatory before IN numbers — support.plivo.com, Nov 2024). Buy 1–2 **160-series** service numbers; pre-declare auto-dialer use to the access provider (§2).
 *Risks:* template rejections burn days — submit day one; KYC back-and-forth — keep incorporation/GST/signatory docs ready.
 
 **Phase 1 — Parallel-run voice path (weeks 2–4).**
-Deploy `livekit/sip`; create outbound trunk to Plivo (`<trunk-id>.zt.plivo.com`) and inbound trunk + dispatch rule (docs.livekit.io/telephony, Aug 2026). Pin LiveKit + Plivo media to India region for anchoring. Keep Twilio trunks configured as instant fallback. Test: answer rate, ASR accuracy on telephony audio, barge-in latency, AMD hit rate, DTMF, call-status webhooks.
+Deploy `livekit/sip`; create outbound trunk to Vobiz (`<trunk-id>.zt.plivo.com`) and inbound trunk + dispatch rule (docs.livekit.io/telephony, Aug 2026). Pin LiveKit + Vobiz media to India region for anchoring. Keep Twilio trunks configured as instant fallback. Test: answer rate, ASR accuracy on telephony audio, barge-in latency, AMD hit rate, DTMF, call-status webhooks.
 *Exit criterion:* 2 weeks of parallel traffic with ≥ parity on connect rate + extraction accuracy.
 
 **Phase 2 — Dialer cutover (month 2).**
-Point the campaign worker at Plivo-originated calls; Twilio stays warm (disabled by default). Add Exotel as second provider behind a provider-abstraction interface (already our stated fallback) so no single vendor can halt campaigns. Verify in-India media anchoring on every call leg (hangup-cause monitoring for "Violates Media Anchoring").
+Point the campaign worker at Vobiz-originated calls; Twilio stays warm (disabled by default). Add Exotel as second provider behind a provider-abstraction interface (already our stated fallback) so no single vendor can halt campaigns. Verify in-India media anchoring on every call leg (hangup-cause monitoring for "Violates Media Anchoring").
 
 **Phase 3 — Scale renegotiation (month 3+, trigger: >300k min/mo sustained or concurrency cap hits).**
-Either Plivo Enterprise tier (custom concurrency, volume rates from $1k/mo commitment — plivo.com/pricing) **or** begin direct Jio/Tata SIP evaluation with Path C (Kamailio+rtpengine) fronting it. Keep CPaaS as failover trunk permanently.
+Either Vobiz Enterprise tier (custom concurrency, volume rates from $1k/mo commitment — plivo.com/pricing) **or** begin direct Jio/Tata SIP evaluation with Path C (Kamailio+rtpengine) fronting it. Keep CPaaS as failover trunk permanently.
 
 **What stays throughout:** domain-config runtime (`/domain-configs`), agent pipeline (Deepgram/Groq/Cartesia), FastAPI backend, React frontend, consent/retention jobs. Only the telephony edge changes — which is exactly why the swap is cheap.
 
@@ -6661,7 +6668,7 @@ Either Plivo Enterprise tier (custom concurrency, volume rates from $1k/mo commi
 ## 6. Honest bottom line
 
 **Cheapest legal achievable telephony-only ₹/min:**
-- **Now → 100k calls/mo: ~₹0.38/min** (Plivo domestic, streaming free) ≈ **₹1.15/call** at 3 min.
+- **Now → 100k calls/mo: ~₹0.38/min** (Vobiz domestic, streaming free) ≈ **₹1.15/call** at 3 min.
 - **At scale (~20 lakh+ min/mo): ~₹0.30–0.45/min all-in** via negotiated carrier SIP (usage + channel rentals + DID blended), per TRAI-anchored market benchmarks (frejun.com Jul 2026; caller.digital Jun 2026). Self-hosting the bridge layer removes platform fees but cannot go below carrier termination — physics of the PSTN.
 
 **Where ₹0 is impossible — explicitly:**
@@ -6669,15 +6676,15 @@ Either Plivo Enterprise tier (custom concurrency, volume rates from $1k/mo commi
 2. **Regulatory floor:** DLT registration ₹5,900 + KYC effort; designated-series number rentals; consent-management and traceability engineering mandated by TCCCPR (Feb 2025).
 3. **Reliability floor:** SLA'd failover (second provider/trunk) costs money precisely because single-route grey-style "free" capacity gets silently blocked (§2).
 
-**The one-sentence strategy:** cut ~75% today by replacing Twilio's India legs + Media Streams with Plivo + self-hosted LiveKit SIP (₹5,900 DLT once), stay pay-as-you-go until ~100k calls/mo, then trade aggregator margin for direct carrier SIP — and never, under any circumstances, let a ₹0.05/min SIM-bank offer through the door.
+**The one-sentence strategy:** cut ~75% today by replacing Twilio's India legs + Media Streams with Vobiz + self-hosted LiveKit SIP (₹5,900 DLT once), stay pay-as-you-go until ~100k calls/mo, then trade aggregator margin for direct carrier SIP — and never, under any circumstances, let a ₹0.05/min SIM-bank offer through the door.
 
 ---
 
 ## Sources (accessed Aug 2026)
 
-- Plivo India voice/SIP pricing ₹0.38/min, ₹200 DID, streaming included — plivo.com/voice/pricing/in & /sip-trunking/pricing/in
-- Plivo PAYG caps (2 RPS / 50 concurrent), Enterprise $1k/mo — plivo.com/pricing; costbench.com (20 Jul 2026)
-- Plivo India KYC + media anchoring rules — support.plivo.com "Domestic Calling in India" (18 Nov 2024)
+- Vobiz India voice/SIP pricing ₹0.38/min, ₹200 DID, streaming included — plivo.com/voice/pricing/in & /sip-trunking/pricing/in
+- Vobiz PAYG caps (2 RPS / 50 concurrent), Enterprise $1k/mo — plivo.com/pricing; costbench.com (20 Jul 2026)
+- Vobiz India KYC + media anchoring rules — support.plivo.com "Domestic Calling in India" (18 Nov 2024)
 - Twilio India outbound ₹0.65–1.50/min; DID $2/mo — twilio.com/voice/pricing/in (18 May 2026); edesy.in guides (Jan/May 2026); frejun.com Voice API guide (27 May 2026)
 - Twilio surcharges (Media Streams $0.0044/min etc.), CPS limits, Media Streams regions — quiq.com Twilio pricing breakdown (2 Aug 2026); twilio.com/docs/voice/media-streams/websocket-messages (19 Aug 2026)
 - Exotel credit model & plans — cloudtalk.io Exotel guide (2 Jul 2026); prospeo.io (2026)
@@ -6705,44 +6712,44 @@ Either Plivo Enterprise tier (custom concurrency, volume rates from $1k/mo commi
 # Cost-Cutter Overhaul — Implementation Approach
 
 **Author:** senior-ai-engineer · **Date:** 2026-08-26 · **Status:** APPROVED direction, ready for orchestration dispatch
-**Mandate:** beat the ₹3.5/min multilingual competitor using open-source-first components — multilingual (English + Telugu + Tenglish) calls at ≤₹2/min all-in on Plivo India legs, same product surface.
-**Inputs grounded:** `docs/research/telephony-alternatives.md`, `docs/research/multilingual.md`, actual code (`backend/app/services/{telephony,twilio_bridge,g711}.py`, `backend/app/routers/{twilio,test_call}.py`, `backend/app/services/{dialer,calls_service}.py`, `backend/app/main.py`, `backend/app/config.py`, `voice-agent/app/{pipeline,config}.py`, `frontend/src/components/VoiceSettingsForm.jsx`, `.env.example`) + live vendor-doc verification (Plivo `<Stream>`, Sarvam chat-completions) performed 2026-08-26.
+**Mandate:** beat the ₹3.5/min multilingual competitor using open-source-first components — multilingual (English + Telugu + Tenglish) calls at ≤₹2/min all-in on Vobiz India legs, same product surface.
+**Inputs grounded:** `docs/research/telephony-alternatives.md`, `docs/research/multilingual.md`, actual code (`backend/app/services/{telephony,twilio_bridge,g711}.py`, `backend/app/routers/{twilio,test_call}.py`, `backend/app/services/{dialer,calls_service}.py`, `backend/app/main.py`, `backend/app/config.py`, `voice-agent/app/{pipeline,config}.py`, `frontend/src/components/VoiceSettingsForm.jsx`, `.env.example`) + live vendor-doc verification (Vobiz `<Stream>`, Sarvam chat-completions) performed 2026-08-26.
 
 ---
 
 ## 0. Research-vs-code conflicts found while reading — read these first
 
 1. **Sarvam-M is DEPRECATED (multilingual.md §2 recommendation is stale).** Official docs fetched today state: *"Sarvam-M (24B) has been deprecated and is no longer available through the Chat Completions API. Please migrate to Sarvam-30B or Sarvam-105B"* (docs.sarvam.ai Chat Completions Overview, accessed 2026-08-26). This plan targets **`sarvam-105b`** (non-think mode) everywhere multilingual.md says "Sarvam-M".
-2. **The two research docs disagree on Plivo cost.** multilingual.md §5 assumes telephony ≈ ₹0.80/min; telephony-alternatives.md lands **₹0.38/min all-in** (plivo.com/voice/pricing/in, Aug 2026, streaming + recording included). This plan uses **₹0.38**; multilingual.md's Σ rows are therefore conservative by ~₹0.42/min.
+2. **The two research docs disagree on Vobiz cost.** multilingual.md §5 assumes telephony ≈ ₹0.80/min; telephony-alternatives.md lands **₹0.38/min all-in** (plivo.com/voice/pricing/in, Aug 2026, streaming + recording included). This plan uses **₹0.38**; multilingual.md's Σ rows are therefore conservative by ~₹0.42/min.
 3. **`voice_settings.stt_language` and `speaking_rate` are dead config today.** The frontend saves them (`frontend/src/components/VoiceSettingsForm.jsx:87` shape `{tts_voice_id, speaking_rate, stt_language, llm_model}`), `/internal/agent-config` returns them (`backend/app/routers/internal.py:114`), but `pipeline._voice_overrides()` (`voice-agent/app/pipeline.py:114-123`) reads only `llm_model` and `tts_voice_id`, and Deepgram language is hardcoded `"en"` (`pipeline.py:144`). Phase B makes these live.
-4. **`main.py::_should_run_dialer()` hardcodes the Twilio credential gate** (`backend/app/main.py:34-40`). If we only provisioned Plivo credentials, the dialer silently wouldn't start. Must be made provider-aware in Phase A.
-5. **Plivo `<Stream>` bidirectional support: VERIFIED.** Official docs confirm two-way audio for voice-AI: `<Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">wss://…</Stream>`; outbound audio via `{"event":"playAudio","media":{"contentType":"audio/x-l16|x-mulaw","sampleRate":8000,"payload":"<base64>"}}`; barge-in flush via `clearAudio` control event; Plivo retries a dropped WS twice before disconnecting (plivo.com/docs/voice/xml/audio-streaming; plivo.com/docs/voice-agents/audio-streaming/xml/stream, upd. 2026-07-17; old-support.plivo.com Audio Stream FAQ). Constraints: with `bidirectional=true`, `audioTrack` cannot be `outbound`/`both` (caller-audio only); **default contentType is `audio/x-l16;rate=8000` PCM, NOT mulaw** — we set mulaw explicitly so `g711.py` is reused unchanged; **`extraHeaders` allows only `[A-Za-z0-9]` (max 512 B)** — underscore illegal, so `call_id` rides the answer_url query string instead (we generate the answer XML per call, same pattern as `_voice_webhook()` today).
-6. **Protocol deltas vs Twilio Media Streams** (drives Phase A parser work): no `"connected"` greeting frame (first frame is `start`); metadata lives at `start.callId` / `start.streamId` (not `streamSid`/customParameters); outbound event is `playAudio` (not `media`); signature header is `X-Plivo-Signature-V3` (not `X-Twilio-Signature`). Structurally still "base64 8 kHz mulaw over WSS with start/media/stop events" — our bridge pumps survive almost intact.
+4. **`main.py::_should_run_dialer()` hardcodes the Twilio credential gate** (`backend/app/main.py:34-40`). If we only provisioned Vobiz credentials, the dialer silently wouldn't start. Must be made provider-aware in Phase A.
+5. **Vobiz `<Stream>` bidirectional support: VERIFIED.** Official docs confirm two-way audio for voice-AI: `<Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">wss://…</Stream>`; outbound audio via `{"event":"playAudio","media":{"contentType":"audio/x-l16|x-mulaw","sampleRate":8000,"payload":"<base64>"}}`; barge-in flush via `clearAudio` control event; Vobiz retries a dropped WS twice before disconnecting (plivo.com/docs/voice/xml/audio-streaming; plivo.com/docs/voice-agents/audio-streaming/xml/stream, upd. 2026-07-17; old-support.plivo.com Audio Stream FAQ). Constraints: with `bidirectional=true`, `audioTrack` cannot be `outbound`/`both` (caller-audio only); **default contentType is `audio/x-l16;rate=8000` PCM, NOT mulaw** — we set mulaw explicitly so `g711.py` is reused unchanged; **`extraHeaders` allows only `[A-Za-z0-9]` (max 512 B)** — underscore illegal, so `call_id` rides the answer_url query string instead (we generate the answer XML per call, same pattern as `_voice_webhook()` today).
+6. **Protocol deltas vs Twilio Media Streams** (drives Phase A parser work): no `"connected"` greeting frame (first frame is `start`); metadata lives at `start.callId` / `start.streamId` (not `streamSid`/customParameters); outbound event is `playAudio` (not `media`); signature header is `X-Vobiz-Signature-V3` (not `X-Twilio-Signature`). Structurally still "base64 8 kHz mulaw over WSS with start/media/stop events" — our bridge pumps survive almost intact.
 7. **`docs/research/cost-engineering.md` does not exist** despite being referenced by my operating rules — the ₹/min ledger below follows the conventions of the two research docs that do exist (ex-GST, FX ₹87/$, connected-minute billing). Creating that ledger file should be a follow-up for devops/backend.
 8. **Scope guardrail:** CLAUDE.md says "don't start Telugu/Sarvam work — that's Phase 2." This approved mandate *is* the Phase-2 kickoff; Phases B/C remain execution-gated behind Phase D acceptance numbers regardless.
-9. **Path choice note:** telephony-alternatives.md recommends self-hosted `livekit/sip` (Path A). The mandate directs the Plivo XML `<Stream>` bridge instead — the correct near-term call: it reuses our existing Media-Streams-style bridge (~days, not weeks), keeps every rupee of the ₹0 streaming fee (free on Plivo either way), and leaves `livekit/sip` as the >50-concurrent scale option. Revisit only when PAYG concurrency caps bind (§Risk R7).
+9. **Path choice note:** telephony-alternatives.md recommends self-hosted `livekit/sip` (Path A). The mandate directs the Vobiz XML `<Stream>` bridge instead — the correct near-term call: it reuses our existing Media-Streams-style bridge (~days, not weeks), keeps every rupee of the ₹0 streaming fee (free on Vobiz either way), and leaves `livekit/sip` as the >50-concurrent scale option. Revisit only when PAYG concurrency caps bind (§Risk R7).
 
 ---
 
 ## 1. Target end-state
 
-VocalIQ places outbound calls on Plivo Indian 160-series legs (₹0.38/min, streaming/recording/AMD included, media anchored in India) through a provider-neutral `TelephonyClient` seam selected by `TELEPHONY_PROVIDER`, with Twilio kept warm as an instant-revert fallback; the cascaded LiveKit pipeline resolves its STT/LLM/TTS per immutable AgentVersion from `voice_settings` — Deepgram/Groq/Cartesia remain the platform defaults for English agents, while Telugu/Tenglish agents select Sarvam Saaras-v3 STT + `sarvam-105b` (non-think) + Bulbul-v3 TTS, all reachable behind the same `ProviderBundle` construction and instrumented turn telemetry; qa-eval owns numeric promotion gates (WER, ≥85 % extraction accuracy, ≤900 ms median e2e) so any component flips to default only on evidence and reverts by env flip or a new AgentVersion row — landing multilingual calls at **≈ ₹1.5–2.1/min all-in** (sticker ceiling ≈ ₹3.0, held under ₹2.0 by TTS char discipline + rate negotiation), versus ≈ ₹3.8–5.4 today.
+VocalIQ places outbound calls on Vobiz Indian 160-series legs (₹0.38/min, streaming/recording/AMD included, media anchored in India) through a provider-neutral `TelephonyClient` seam selected by `TELEPHONY_PROVIDER`, with Twilio kept warm as an instant-revert fallback; the cascaded LiveKit pipeline resolves its STT/LLM/TTS per immutable AgentVersion from `voice_settings` — Deepgram/Groq/Cartesia remain the platform defaults for English agents, while Telugu/Tenglish agents select Sarvam Saaras-v3 STT + `sarvam-105b` (non-think) + Bulbul-v3 TTS, all reachable behind the same `ProviderBundle` construction and instrumented turn telemetry; qa-eval owns numeric promotion gates (WER, ≥85 % extraction accuracy, ≤900 ms median e2e) so any component flips to default only on evidence and reverts by env flip or a new AgentVersion row — landing multilingual calls at **≈ ₹1.5–2.1/min all-in** (sticker ceiling ≈ ₹3.0, held under ₹2.0 by TTS char discipline + rate negotiation), versus ≈ ₹3.8–5.4 today.
 
 ---
 
 ## 2. Phased plan (each phase independently deployable AND revertible)
 
-### Phase A — Telephony provider abstraction: `PlivoClient` + Plivo media bridge
+### Phase A — Telephony provider abstraction: `VobizClient` + Vobiz media bridge
 
-**Goal:** dialer/test-call place calls through Plivo; Plivo legs stream into the same `phone-*` LiveKit rooms the voice-agent already serves. Deployable alone; revert = `TELEPHONY_PROVIDER=twilio` + restart (both webhook surfaces stay mounted permanently).
+**Goal:** dialer/test-call place calls through Vobiz; Vobiz legs stream into the same `phone-*` LiveKit rooms the voice-agent already serves. Deployable alone; revert = `TELEPHONY_PROVIDER=twilio` + restart (both webhook surfaces stay mounted permanently).
 
 **New modules**
 
 ```python
 # backend/app/services/plivo_client.py  (mirrors TwilioClient style: lazy import,
 # settings injected, logger.info on placement)
-class PlivoClient:
-    """Production telephony client using the Plivo REST API."""
+class VobizClient:
+    """Production telephony client using the Vobiz REST API."""
     def __init__(self, settings: Settings) -> None: ...
     def _answer_webhook(self, call_id: int) -> str:
         # f"{settings.public_base_url.rstrip('/')}/plivo/voice?call_id={call_id}"
@@ -6753,7 +6760,7 @@ class PlivoClient:
         #     src=settings.plivo_phone_number, dst=to,
         #     answer_url=self._answer_webhook(call_id), answer_method="POST",
         #     hangup_url=f"{base}/plivo/status", hangup_method="POST",
-        #     machine_detection="true",                      # AMD included on Plivo
+        #     machine_detection="true",                      # AMD included on Vobiz
         #     record="record-from-answer-dual",              # ⚠ confirm exact kwarg +
         #     recording_callback_url=...,                    #   callback name vs plivo-python at impl
         # )
@@ -6776,23 +6783,23 @@ def parse_plivo_event(raw: Any) -> "MediaEvent":
     # stop/dtmf passthrough; NO "connected" frame exists (unlike Twilio)
 def build_play_audio(stream_id: str, ulaw_b64: str) -> str:
     # {"event":"playAudio","streamId":sid,"media":{"contentType":"audio/x-mulaw",
-    #  "sampleRate":8000,"payload":b64}}   ← Plivo's outbound frame
+    #  "sampleRate":8000,"payload":b64}}   ← Vobiz's outbound frame
 def build_clear_audio(stream_id: str) -> str:
     # {"event":"clearAudio","streamId":sid}  ← barge-in flush (upgrade over Twilio path)
 ```
 
 **New router** `backend/app/routers/plivo.py` — mirrors `routers/twilio.py` structure exactly:
 
-- `POST /plivo/voice` (`plivo_voice(request, call_id: int, db)`) — `_check_plivo_signature()` (X-Plivo-Signature-V3 via plivo SDK validator, gated on `settings.plivo_validate_signature`), same Call/contact bookkeeping block as `twilio_voice` (`routers/twilio.py:319-346`), then `Response(build_answer_xml(settings.media_ws_base_url, call_id), media_type="application/xml")`.
+- `POST /plivo/voice` (`plivo_voice(request, call_id: int, db)`) — `_check_plivo_signature()` (X-Vobiz-Signature-V3 via plivo SDK validator, gated on `settings.plivo_validate_signature`), same Call/contact bookkeeping block as `twilio_voice` (`routers/twilio.py:319-346`), then `Response(build_answer_xml(settings.media_ws_base_url, call_id), media_type="application/xml")`.
 - `WS /plivo/media` (`plivo_media(websocket)`) — clone of `twilio_media` (`routers/twilio.py:193-316`) with three deltas: (a) handshake expects `start` first (drop the `"connected"` continue at line 231), `ev.call_id` comes from the `call_id` query param on the upgrade request, `ev.call_sid == call.provider_call_id` replaces the CallSid check (line 247); (b) inbound pump feeds `ulaw_to_pcm16(payload)` → same `_make_frame`/`source.capture_frame`; (c) outbound pump sends `build_play_audio(...)` frames and `build_clear_audio(...)` when the room signals agent interruption. Reuses `_make_frame`, `_drain_track`, `_put_sentinel`, queue/backpressure logic verbatim — extract those three into `backend/app/services/media_bridge.py` and have **both** routers import them (twilio.py behavior unchanged; pure move).
-- `POST /plivo/status` — hangup callback; `PLIVO_STATUS_MAP` added beside `TWILIO_STATUS_MAP` in `services/calls_service.py` (Plivo mirrors TwiML status enums: queued/ringing/in-progress/completed/busy/no-answer/failed/canceled — confirm exact strings against first sandbox callbacks), then the same `end_call(...)` branch as `twilio_status` (`routers/twilio.py:349-394`).
+- `POST /plivo/status` — hangup callback; `PLIVO_STATUS_MAP` added beside `TWILIO_STATUS_MAP` in `services/calls_service.py` (Vobiz mirrors TwiML status enums: queued/ringing/in-progress/completed/busy/no-answer/failed/canceled — confirm exact strings against first sandbox callbacks), then the same `end_call(...)` branch as `twilio_status` (`routers/twilio.py:349-394`).
 - `POST /plivo/recording` — persists `RecordingUrl` onto `Call.recording_url`, mirroring `twilio_recording`.
 - Mount in `main.py::create_app` next to `fast_app.include_router(twilio.router)` (line 102), still prefix-less.
 
 **Touch-points on existing code**
 
 - `backend/app/config.py` — add: `telephony_provider: str = "twilio"`, `plivo_auth_id/plivo_auth_token/plivo_phone_number: str = ""`, `plivo_validate_signature: bool = False`; extend `provider_presence` with `"plivo"` and `"telephony_provider"`.
-- `backend/app/main.py` — rewrite `_build_telephony()` (lines 26-31) as a registry: build `TwilioClient` iff twilio creds, `PlivoClient` iff plivo creds, always keep `FakeTelephonyClient` fallback; `fast_app.state.telephony_registry: dict[str, TelephonyClient]` + `fast_app.state.telephony = registry[settings.telephony_provider]` (back-compat for `test_call._get_telephony`). Rewrite `_should_run_dialer()` (lines 34-40) to `settings.dialer_enabled and bool(registry-with-real-clients)` — fixes conflict #4.
+- `backend/app/main.py` — rewrite `_build_telephony()` (lines 26-31) as a registry: build `TwilioClient` iff twilio creds, `VobizClient` iff plivo creds, always keep `FakeTelephonyClient` fallback; `fast_app.state.telephony_registry: dict[str, TelephonyClient]` + `fast_app.state.telephony = registry[settings.telephony_provider]` (back-compat for `test_call._get_telephony`). Rewrite `_should_run_dialer()` (lines 34-40) to `settings.dialer_enabled and bool(registry-with-real-clients)` — fixes conflict #4.
 - `backend/app/routers/test_call.py` — add optional `provider: Optional[str] = None` to `TestCallRequest`; `_get_telephony(request, payload.provider)` resolves from the registry (default = `settings.telephony_provider`). **This is the dual-run lever:** A/B arms on live calls without redeploy.
 - `.env.example` — add `TELEPHONY_PROVIDER=twilio`, `PLIVO_AUTH_ID=`, `PLIVO_AUTH_TOKEN=`, `PLIVO_PHONE_NUMBER=` (+160-series placeholder), `PLIVO_VALIDATE_SIGNATURE=false`.
 - Tests: `backend/tests/test_plivo_client.py` (fake RestClient injection: URL shapes, sid returned, failure → exception like `test_call_flow.py` pattern), `backend/tests/test_plivo_bridge.py` (XML golden test, `parse_plivo_event` happy/junk/start-no-callid, playAudio/clearAudio frame shapes), extend `test_call_flow.py` with provider-override resolution cases.
@@ -6939,13 +6946,13 @@ qa-eval/
 
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
-| R1 | **Plivo stream quirks**: no `connected` frame breaks naive handshake; default codec is L16 not mulaw; `extraHeaders` charset excludes `_`; WS retried only twice then disconnects; bidirectional forbids `audioTrack=outbound/both` | High → Low | Handshake written against Plivo grammar (Phase A); `contentType` pinned to mulaw; call_id via query param; `keepCallAlive=true` keeps call alive across reconnect attempts; integration test replays recorded Plivo frame sequences |
+| R1 | **Vobiz stream quirks**: no `connected` frame breaks naive handshake; default codec is L16 not mulaw; `extraHeaders` charset excludes `_`; WS retried only twice then disconnects; bidirectional forbids `audioTrack=outbound/both` | High → Low | Handshake written against Vobiz grammar (Phase A); `contentType` pinned to mulaw; call_id via query param; `keepCallAlive=true` keeps call alive across reconnect attempts; integration test replays recorded Vobiz frame sequences |
 | R2 | **Sarvam latency at 8 kHz**: cascade budget 650–900 ms has zero slack vs ≤900 ms target; Saaras "Fast mode" <150 ms is a [VENDOR] claim | High | Per-turn `e2e_ms` telemetry already exists — alarm on p95 breach; Cartesia (<90 ms TTFB) stays wired as per-agent TTS escape hatch; `endpointing_ms`/VAD knobs already tuned; if budget blows, keep Sarvam STT + Cartesia TTS hybrid (still beats competitor on Indic accuracy) |
 | R3 | **Tenglish extraction accuracy**: code-mixed utterances may yield wrong/garbled structured fields | High | FR-12 enforced in tools (`LOW_CONFIDENCE_THRESHOLD`, `MAX_ASKS_PER_FIELD`, never guess); `heuristic_extract` (`pipeline.py:301`) needs Telugu-script review in Phase D; gate: 85 % extraction floor blocks promotion |
-| R4 | **DPDP data residency**: Deepgram/Cartesia US-hosted today; Twilio Media Streams hops US1 (no India region). Sarvam is India-hosted — swap *improves* posture; but recordings still land wherever Plivo stores them | Medium | Plivo India media anchoring (KYC + INR account mandatory before IN numbers); verify Plivo recording storage region at account setup; retention job (`RECORDING_RETENTION_DAYS`) unchanged; compliance-agent sign-off before campaign-scale Plivo cutover (DLT registration ₹5,900, 160-series numbers, auto-dialer pre-declaration — telephony-alternatives.md §5 Phase 0 starts day one, in parallel) |
+| R4 | **DPDP data residency**: Deepgram/Cartesia US-hosted today; Twilio Media Streams hops US1 (no India region). Sarvam is India-hosted — swap *improves* posture; but recordings still land wherever Vobiz stores them | Medium | Vobiz India media anchoring (KYC + INR account mandatory before IN numbers); verify Vobiz recording storage region at account setup; retention job (`RECORDING_RETENTION_DAYS`) unchanged; compliance-agent sign-off before campaign-scale Vobiz cutover (DLT registration ₹5,900, 160-series numbers, auto-dialer pre-declaration — telephony-alternatives.md §5 Phase 0 starts day one, in parallel) |
 | R5 | **Sarvam single-vendor concentration + pricing-page inconsistency** (₹30/hr vs ₹1.5/min marketing) | Medium | Get written list pricing pre-contract (multilingual.md gap #4); Deepgram/Cartesia remain one env flip away; negotiate Bulbul v2 rates as condition of volume |
 | R6 | **Groq model churn** (Llama deprecations Aug 2026 forced migration anyway) — escalation tier drift | Low | Escalation model pinned via `GROQ_MODEL` env; quarterly model audit folded into qa-eval cadence |
-| R7 | **Plivo PAYG concurrency cliff** (2 RPS / 50 concurrent; Enterprise $1k/mo) during campaign bursts | Medium | Load-test at 1.5× planned CPS before any campaign cutover; monitor concurrent-leg metric; trigger documented: sustained >300k min/mo or cap hits → renegotiate Enterprise or start carrier-SIP eval (telephony-alternatives.md Phase 3) |
+| R7 | **Vobiz PAYG concurrency cliff** (2 RPS / 50 concurrent; Enterprise $1k/mo) during campaign bursts | Medium | Load-test at 1.5× planned CPS before any campaign cutover; monitor concurrent-leg metric; trigger documented: sustained >300k min/mo or cap hits → renegotiate Enterprise or start carrier-SIP eval (telephony-alternatives.md Phase 3) |
 | R8 | **Compliance barring risk**: one UCC violation bars ALL telecom resources 15 days (Feb 2025 TCCCPR amendment) | High | 160-series transactional numbers (not DND-scrubbed, fits absent-student notification), disclosure script first in every prompt (already rendered first — `render_system_prompt`), calling-hours enforcement unchanged, consent_enforcement stays on |
 
 ---
@@ -6957,7 +6964,7 @@ Per-phase gates are stated inline above. **Live-call acceptance criteria (any ph
 1. Calls placed only to `TEST_PHONE_NUMBERS` allowlist while `CONSENT_ENFORCEMENT=true` (guardrail honored; DLT/KYC sign-off required before widening).
 2. Full loop observable: `phone-{call_id}` room joined by bridge, agent speaks within 2.5 s of pickup, transcript rows + captions render, `turn_latency` JSON lines posted per exchange with all four timing columns non-null.
 3. End-state correctness: hangup maps to the right internal status via the provider status map; `end_call` posts completion; extracted fields visible; recording persisted; retry/backoff bookkeeping fires on no-answer.
-4. Interruption: caller talks over agent → VAD triggers, agent stops, playback buffer cleared (`clearAudio` on Plivo), agent resumes coherently.
+4. Interruption: caller talks over agent → VAD triggers, agent stops, playback buffer cleared (`clearAudio` on Vobiz), agent resumes coherently.
 5. Degradation path: kill a provider key mid-suite → session degrades with apology + `post_complete(status="error")` rather than dead air (`_degrade` path exercised).
 6. Numbers, not vibes: Phase D report attached to every default-flip decision.
 
@@ -6968,19 +6975,19 @@ Per-phase gates are stated inline above. **Live-call acceptance criteria (any ph
 | Phase | Telephony | STT | LLM | TTS | **All-in ₹/min** |
 |---|---|---|---|---|---|
 | **Baseline (today)** Twilio + Deepgram-en + Groq + Cartesia | 1.55–1.60 (voice 1.20–1.50 + Media Streams 0.37 + recording/AMD extras) | 0.37–0.65 | 0.02–0.30 | 1.8–3.0 | **≈ 3.8–5.5** |
-| **After Phase A** Plivo legs (streaming/recording/AMD included) | **0.38** | unchanged | unchanged | unchanged | **≈ 2.6–4.1** |
+| **After Phase A** Vobiz legs (streaming/recording/AMD included) | **0.38** | unchanged | unchanged | unchanged | **≈ 2.6–4.1** |
 | **After Phase B** Telugu arm: Saaras v3 in, Bulbul v3 in | 0.38 | 0.50 | unchanged | 0.55–1.80 | **≈ 1.5–3.0** |
 | **After Phase C** `sarvam-105b` in | 0.38 | 0.50 | 0.05–0.30 | 0.55–1.80 | **≈ 1.5–3.0** (cost-neutral; quality-driven) |
 | **Cumulative expected** (mid TTS chars + v2-rate negotiation −0.5–0.9) | 0.38 | 0.50 | ~0.15 | ~0.55–1.10 | **≈ ₹1.5–2.1 ✅ ≤ ₹2.0 target** |
 
-Notes: English agents can stay on Deepgram-en (₹0.44) + Cartesia where they're already cheapest — per-language routing means the ₹2 figure binds on the *Telugu* arm. Sticker-worst-case (max chars, v3 TTS rates, no negotiation) is ≈ ₹3.0, still under the ₹3.5 competitor line; the three ordered mitigations (v2-rate TTS deal, shorter domain-config phrasings, self-host TTS at >1M chars/mo) hold the ₹2 line. One-time: DLT ₹5,900 + Plivo KYC effort. At ~100k calls/mo, Phase A alone avoids ≈ ₹3.5 lakh/month (telephony-alternatives.md §0).
+Notes: English agents can stay on Deepgram-en (₹0.44) + Cartesia where they're already cheapest — per-language routing means the ₹2 figure binds on the *Telugu* arm. Sticker-worst-case (max chars, v3 TTS rates, no negotiation) is ≈ ₹3.0, still under the ₹3.5 competitor line; the three ordered mitigations (v2-rate TTS deal, shorter domain-config phrasings, self-host TTS at >1M chars/mo) hold the ₹2 line. One-time: DLT ₹5,900 + Vobiz KYC effort. At ~100k calls/mo, Phase A alone avoids ≈ ₹3.5 lakh/month (telephony-alternatives.md §0).
 
 ---
 
 ## 6. Dispatch order & ownership
 
 1. **Phase A** → `telephony-agent` (+`backend-agent` for registry/config edits), compliance-agent starts DLT/KYC track in parallel (day one).
-2. **Phase B** → `voice-pipeline-agent` (+`frontend-agent` for VoiceSettingsForm), gated on Phase A sandbox green (need Plivo legs to test telephony-grade audio).
+2. **Phase B** → `voice-pipeline-agent` (+`frontend-agent` for VoiceSettingsForm), gated on Phase A sandbox green (need Vobiz legs to test telephony-grade audio).
 3. **Phase C** → `conversation-ai-agent` (small diff; can overlap Phase B tail once `sarvam_api_key` lands).
 4. **Phase D** → `qa-eval-agent`, dataset collection starts immediately (it's calendar-bound, not code-bound); all promotions route through it.
 

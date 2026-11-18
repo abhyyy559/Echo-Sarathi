@@ -1,15 +1,15 @@
 # CLAUDE.md — AI Voice Calling Agent
 
 ## What this project is
-A real-time AI voice calling platform for India. Phase 1 = English only, one use case proven end-to-end ("college calls absent students"), but the platform must stay **domain-independent** — new call use-cases are a config file, not new code. Full spec: `PRD.md`. Full vendor/market research behind these decisions: `AI_Voice_Calling_Agent_India_Research.md`.
+A real-time AI voice calling platform for India. Multi-tenant with auth, real telephony (Twilio + Vobiz), campaigns, credits and immutable agent versions. Telugu/Tenglish is live via Sarvam Saaras v4 `codemix` STT and Bulbul TTS. New call use-cases are a domain config, not new code. Architecture: `docs/ARCHITECTURE.md`; competitor research: `docs/OUTPERO_RE_ARCHITECTURE.md`.
 
 ## Current phase
-**Phase 0 — scaffold and single-call proof of concept.** No auth yet. No Telugu yet. No production hardening yet. Do not build ahead of the current milestone in `PRD.md` §10 unless asked.
+**Integration: consolidation + BYOK.** The provider layer is pluggable (see `docs/CONTRIBUTING_ADAPTERS.md`). Outstanding productization gaps (caller memory, voicemail detection, webhooks, employee generator) are tracked in `docs/OUTPERO_RE_ARCHITECTURE.md` §4.
 
 ## Locked technical decisions — do not change without discussing first
 - Voice architecture: **cascaded** (STT → LLM tool-calling → TTS). Never build a speech-to-speech (OpenAI Realtime / Gemini Live) path — it was deliberately rejected, see `PRD.md` §3.
 - Real-time voice orchestration: **LiveKit Agents** (Python). Don't hand-roll WebSocket/session management.
-- Telephony: **Vobiz** (India CPaaS). Twilio adapter stays dormant.
+- Telephony: **Vobiz and Twilio** adapters are both live behind a provider abstraction.
 - STT: **Deepgram**. TTS: **Cartesia**. LLM: a fast/cheap model by default (Groq-hosted or GPT-4o-mini class), with rule-based escalation for hard turns — not a large model on every turn.
 - Backend: **FastAPI** + **PostgreSQL**.
 - Frontend: **React**.
@@ -50,8 +50,8 @@ Claude decides which subagent to use based on the task and each agent's `descrip
 ## Guardrails
 - Do not place real outbound calls to real phone numbers outside an explicitly-approved test list until `compliance-agent` confirms DLT registration and consent flow are live (PRD.md §8/M3). Test against your own number or a sandbox/test number by default.
 - Never fabricate a structured-field value when the LLM extraction is low-confidence — escalate/flag per FR-12, don't guess.
-- Don't add authentication/authorization work unless explicitly asked — it's an intentional non-goal until Phase 1 hardening.
-- Don't start Telugu/Sarvam work — that's Phase 2, a separate PRD.
+- Keep `ALLOW_ANY_OUTBOUND_NUMBER=False`; the safe dialing default is mandatory.
+- Telugu/Sarvam work is shipped — keep the `codemix` STT mode and the pinned shared voice for Tenglish.
 
 ## Commands (fill in once the scaffold exists)
 - Backend tests: `[to be added]`

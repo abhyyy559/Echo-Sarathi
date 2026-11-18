@@ -1,15 +1,20 @@
-# Voice Agent Runtime (LiveKit Workers)
+# EchoSarathi — open-source BYOK voice agents for Indian business
 
-Cascaded real-time voice pipeline: **Deepgram STT (nova-3, en) → LLM tool-calling
-(Groq `llama-3.3-70b-versatile`, OpenAI `gpt-4o-mini` fallback) → Cartesia TTS**,
-orchestrated by [LiveKit Agents](https://docs.livekit.io/agents/) (Python).
+A multi-tenant AI telecalling platform: FastAPI backend, LiveKit Agents worker,
+React dashboard, and real telephony (Twilio + Vobiz). The voice pipeline is
+cascaded and streaming: **Sarvam Saaras v4 (`codemix`) / Deepgram Nova-3 STT →
+LLM tool-calling (Sarvam 105B fast path, Groq keys with failover, OpenAI and
+other overflow providers) → Sarvam Bulbul / Cartesia TTS**, orchestrated by
+[LiveKit Agents](https://docs.livekit.io/agents/) (Python).
 
-This phase the worker handles **browser playground rooms only**
-(`playground-*` prefix). Jobs for any other room prefix are closed gracefully.
+**Tenglish is a first-class capability.** Indic calls keep Telugu and English in
+one mixed-script stream and use one pinned voice across the switch. See
+`docs/OUTPERO_RE_ARCHITECTURE.md` for the architecture research behind these
+decisions, and `docs/CONTRIBUTING_ADAPTERS.md` to add your own STT/TTS/LLM.
 
-> ⚠️ **No telephony happens here this phase. NO Twilio (or Plivo/Exotel) calls
-> are placed by this runtime.** The Twilio Media Streams protocol helper
-> (`app/twilio_protocol.py`) is kept dormant on purpose.
+Telephony is live: the worker accepts `playground-*` and `phone-*` rooms, the
+backend places outbound calls, and campaigns, retries, consent gates and
+per-org concurrency limits are implemented.
 
 ## Layout
 
