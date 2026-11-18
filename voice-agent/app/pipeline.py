@@ -49,6 +49,34 @@ from livekit.agents import (
 from livekit.agents.llm.llm import APIConnectOptions
 from livekit.plugins import cartesia, deepgram, openai, sarvam, silero
 
+from app.providers import (
+    ProviderRole,
+    ProviderSpec,
+    register_provider,
+    select_provider,
+)
+
+
+def _register_builtin_providers() -> None:
+    """Register the shipped providers; community adapters register themselves."""
+    for spec in (
+        ProviderSpec("deepgram", ProviderRole.STT, ("en",)),
+        ProviderSpec("sarvam", ProviderRole.STT, ("te-IN", "hi-IN", "ta-IN", "kn-IN", "ml-IN", "mr-IN")),
+        ProviderSpec("cartesia", ProviderRole.TTS, ("en",)),
+        ProviderSpec("sarvam_bulbul", ProviderRole.TTS, ("te-IN", "hi-IN", "ta-IN", "kn-IN", "ml-IN", "mr-IN")),
+        ProviderSpec("deepgram_aura", ProviderRole.TTS, ("en",)),
+        ProviderSpec("groq", ProviderRole.LLM),
+        ProviderSpec("sarvam", ProviderRole.LLM),
+        ProviderSpec("openai", ProviderRole.LLM),
+        ProviderSpec("twilio", ProviderRole.TELEPHONY),
+        ProviderSpec("vobiz", ProviderRole.TELEPHONY),
+        ProviderSpec("fake", ProviderRole.TELEPHONY),
+    ):
+        register_provider(spec)
+
+
+_register_builtin_providers()
+
 # LiveKit plugins must be imported/registered on the MAIN thread. The provider
 # builders run inside a job thread, so importing Sarvam lazily there raised
 # "Plugins must be registered on the main thread" on the first live call.
@@ -170,6 +198,8 @@ class ProviderBundle:
     # Which STT backend is armed (deepgram | sarvam). The session is tuned
     # differently per provider (Sarvam handles VAD/turn-taking internally).
     stt_provider: str = "deepgram"
+    #: Why this STT was chosen: global env, per-language override, or default.
+    stt_provider_selection: str = "default"
     #: The agent's conversation language ("en" | "te" | "hi"). Carried on the
     #: bundle because the compact mid-call instructions must keep steering the
     #: spoken register, and telemetry is the only thing that rebuilds them.
@@ -177,6 +207,8 @@ class ProviderBundle:
     # Which TTS backend is armed (cartesia | deepgram | sarvam). Reported in
     # the session-start event so the panel names the REAL pipeline.
     tts_provider: str = "cartesia"
+    #: Why this TTS was chosen: global env, per-language override, or default.
+    tts_provider_selection: str = "default"
     # Per-member httpx clients, so no plugin/stream closing one client can take
     # down its siblings. The expensive TLS context is shared (created once at
     # import), which was the actual ~2.9s event-loop block. compare=False keeps
@@ -933,7 +965,9 @@ def build_providers(
     # English stays on Deepgram Nova-3, which is the faster of the two and the
     # locked stack default. STT_PROVIDER=sarvam forces Sarvam everywhere;
     # STT_LANGUAGE_ROUTING=off disables the per-language promotion.
-    stt_choice = os.getenv("STT_PROVIDER", "deepgram").strip().lower()
+    stt_selection = select_provider(ProviderRole.STT, language or "en", settings)
+    stt_choice = stt_selection.spec.name
+    bundle.stt_provider_selection = stt_selection.reason
     route_stt = os.getenv("STT_LANGUAGE_ROUTING", "on").strip().lower() not in (
         "off", "0", "no", "false",
     )
@@ -1013,6 +1047,8 @@ def build_providers(
             "DEEPGRAM_API_KEY missing - speech-to-text disabled"
         )
 
+    tts_selection = select_provider(ProviderRole.TTS, language or "en", settings)
+    bundle.tts_provider_selection = tts_selection.reason
     selected_tts = os.getenv("TTS_PROVIDER", "cartesia").lower()
     sarvam_key = os.getenv("SARVAM_TTS_API", "") or os.getenv("SARVAM_API_KEY", "")
     explicit_language = str(
