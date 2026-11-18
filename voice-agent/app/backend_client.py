@@ -20,10 +20,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import time
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 import httpx
+
+from app.write_spool import WriteSpool
 
 logger = logging.getLogger("voice_agent.backend")
 
@@ -59,9 +63,32 @@ class BackendClient:
         self._client = client or BackendClient._shared_client
         self._owns_client = client is not None
         self._base_url = base_url.rstrip("/")
+        self._internal_token = internal_token
         self._cache_ttl_seconds = cache_ttl_seconds
         self._config_cache: dict[str, tuple[float, Mapping[str, Any]]] = {}
         self._cache_lock = asyncio.Lock()
+        self._spool = WriteSpool(
+            Path(os.getenv("AGENT_SPOOL_DIR", "/tmp/echosarathi-spool")) / "writes.jsonl",
+            sender=self._send_spooled,
+        )
+
+    def _send_spooled(self, path: str, payload: Any) -> bool:
+        """Synchronous retry transport used by the spool (off the event loop)."""
+        try:
+            response = httpx.post(
+                f"{self._base_url}{path}",
+                json=payload,
+                headers={"X-Internal-Token": self._internal_token},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            return False
+
+    async def _spool_and_retry(self, path: str, payload: Any) -> None:
+        self._spool.enqueue(path, payload)
+        await asyncio.to_thread(self._spool.flush_once)
 
     # -- reads ------------------------------------------------------------
 
@@ -166,6 +193,9 @@ class BackendClient:
             response.raise_for_status()
         except Exception as exc:
             logger.error("post_activity failed for call %s: %s", call_id, exc)
+            await self._spool_and_retry(
+                f"/internal/calls/{call_id}/activity", payload
+            )
             return False
         return True
 
@@ -194,6 +224,9 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("post_complete failed for call %s: %s", call_id, exc)
+            await self._spool_and_retry(
+                f"/internal/calls/{call_id}/complete", payload
+            )
             return False
         return True
 
@@ -214,6 +247,7 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("post_hangup failed for call %s: %s", call_id, exc)
+            await self._spool_and_retry(f"/internal/calls/{call_id}/hangup", payload)
             return False
         return True
 
@@ -234,6 +268,9 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("post_telemetry failed (%d events): %s", len(events), exc)
+            await self._spool_and_retry(
+                "/internal/telemetry/events", {"events": [dict(e) for e in events]}
+            )
             return False
         return True
 
@@ -247,6 +284,8 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("POST %s failed (%d items): %s", path, len(items), exc)
+            self._spool.enqueue(path, list(items))
+            await asyncio.to_thread(self._spool.flush_once)
             return False
         return True
 
@@ -258,6 +297,8 @@ class BackendClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("POST %s failed: %s", path, exc)
+            self._spool.enqueue(path, dict(payload))
+            await asyncio.to_thread(self._spool.flush_once)
             return False
         return True
 
