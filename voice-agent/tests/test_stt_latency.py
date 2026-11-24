@@ -66,9 +66,9 @@ def test_deepgram_stt_gets_300ms_endpointing(monkeypatch) -> None:
     bundle = build_providers(_settings())
 
     assert bundle.complete
-    # 300ms (raised from 200) so the agent's own looped-back TTS does not
-    # hair-trigger a retrigger (False-interruption echo hardening).
-    assert _RecorderSTT.last_kwargs["endpointing_ms"] == 300
+    # 500ms: a natural mid-sentence pause on an 8 kHz PSTN leg must not
+    # finalize the turn while the caller is still speaking.
+    assert _RecorderSTT.last_kwargs["endpointing_ms"] == 500
     assert _RecorderSTT.last_kwargs["model"] == "nova-3"
 
 

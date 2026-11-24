@@ -252,7 +252,11 @@ code {
 }
 
 .nav-link:hover {
-  background: rgba(233, 228, 218, 0.06);
+  /* Hover must read as "under the pointer", never as "current page": use a
+     theme-neutral surface tint. The old cream overlay was a dark-theme value
+     hardcoded for both themes, so in light mode hover looked like the only
+     highlight (and the real active item was invisible). */
+  background: var(--surface2);
   color: var(--fg);
   text-decoration: none;
 }
@@ -262,8 +266,13 @@ code {
 }
 
 .nav-link.active {
-  background: rgba(233, 228, 218, 0.1);
+  background: var(--brand-soft);
   color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+}
+
+.nav-link.active:hover {
+  background: var(--brand-soft);
 }
 
 .nav-link.active svg {
@@ -2005,10 +2014,16 @@ audio {
   padding: 4px 8px;
 }
 
-.footlink:hover,
+.footlink:hover {
+  color: var(--fg);
+  background: var(--surface2);
+  text-decoration: none;
+}
+
 .footlink.active {
   color: var(--fg);
-  background: rgba(233, 228, 218, 0.06);
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
   text-decoration: none;
 }
 

@@ -104,8 +104,15 @@ class DialerService:
             .limit(1)
         ).first()
 
-    def _place(self, db: Session, contact: Contact, campaign: Campaign, now: datetime) -> None:
-        """Create a call row and place it; on failure apply retry rules."""
+    def _place(self, db: Session, contact: Contact, campaign: Campaign, now: datetime) -> bool:
+        """Create the call row, claim the contact, then place the leg.
+
+        Returns True only when the provider accepted the call. The contact is
+        marked ``calling`` *before* the provider request so a second dialer
+        process cannot pick the same row during the request; a failed or
+        abandoned placement hands it back to the queue without spending an
+        attempt.
+        """
         call = Call(
             campaign_id=campaign.id,
             contact_id=contact.id,
@@ -123,9 +130,15 @@ class DialerService:
             context={"contact": dict(contact.custom_fields or {})},
         )
         db.add(call)
+        db.flush()  # assign call.id for the claim and the provider request
+        # Claim before dialling: the status flip is what stops a second worker
+        # (another uvicorn worker / Render instance) from dialling this contact
+        # too. There is no row lock around a plain SELECT on the contact row.
+        contact.status = "calling"
+        contact.last_call_id = call.id
         db.commit()  # persist queued call first so it counts as in-flight on failure paths
 
-        self._record_cps(now)
+        self._record_cps(self.clock())
         try:
             sid = self.telephony.place_call(contact.phone, call.id)
         except Exception as exc:  # noqa: BLE001 — per-call isolation by design
@@ -133,9 +146,17 @@ class DialerService:
             call.status = "failed"
             call.ended_at = now
             log_call_event(db, call.id, "dial_failed", {"error": str(exc)})
-            apply_contact_retry(contact, self.settings, now)
+            # Infrastructure failure, not a refusal: park it briefly and retry
+            # without spending one of the contact's attempts.
+            apply_contact_retry(
+                contact,
+                self.settings,
+                now,
+                count_attempt=False,
+                backoff_seconds=self.settings.dial_failure_backoff_seconds,
+            )
             db.commit()
-            return
+            return False
 
         call.provider_call_id = sid
         call.status = "ringing"
@@ -143,6 +164,7 @@ class DialerService:
         contact.last_call_id = call.id
         db.commit()
         logger.info("dialer: call %s ringing to %s (contact %s)", call.id, mask_phone(contact.phone), contact.id)
+        return True
 
     async def run(self, interval_seconds: float = 1.0) -> None:
         """Background loop; each tick runs in a worker thread."""
@@ -198,11 +220,14 @@ class DialerService:
         return True
 
     def tick(self) -> int:
-        """One dialer pass. Returns the number of calls placed."""
+        """One dialer pass. Returns the number of calls actually placed."""
         now = self.clock()
         with self.session_factory() as db:
             # Stuck-row recovery runs around the clock: a carrier-refused call
-            # at 11pm must not glue its contact to "calling" until morning.
+            # at 11pm must not glue its contact to "calling" until morning, and
+            # a process that died mid-placement must not hold a dial slot
+            # forever.
+            self._sweep_stale_queued(db, now)
             self._sweep_stale_ringing(db, now)
         if not self.within_calling_hours(now):
             return 0
@@ -218,6 +243,8 @@ class DialerService:
                     in_flight[campaign.org_id] = in_flight_call_count(
                         db, phone_only=True, org_id=campaign.org_id
                     )
+                skips = 0
+                failures = 0
                 while (
                     in_flight[campaign.org_id] < limit
                     and self._cps_slots_available(now)
@@ -228,11 +255,32 @@ class DialerService:
                     if outcome == "dialled":
                         in_flight[campaign.org_id] += 1
                         placed += 1
-                    # "skipped" consumed a pick without a leg: keep looping so a
-                    # non-dialable contact cannot stall the campaign, but never
-                    # count it as a dial or occupy a concurrency slot.
+                        failures = 0
+                    elif outcome == "failed":
+                        # Placement failed: no slot was used, no call exists.
+                        # A few in a row means the provider is down, so stop
+                        # this tick instead of firing the whole roster at it.
+                        failures += 1
+                        if failures >= self.settings.dialer_max_consecutive_failures:
+                            logger.warning(
+                                "dialer: %s consecutive placement failures, "
+                                "pausing campaign %s until the next tick",
+                                failures,
+                                campaign.id,
+                            )
+                            break
+                    else:  # "skipped": consent revoked, no leg placed
+                        skips += 1
+                        if skips >= self.settings.dialer_max_skips_per_tick:
+                            logger.info(
+                                "dialer: skipped %s non-dialable contacts for campaign %s this tick",
+                                skips,
+                                campaign.id,
+                            )
+                            break
                 maybe_complete_campaign(db, campaign.id)
                 db.commit()
+            self._sweep_stale_queued(db, now)
             self._sweep_stale_ringing(db, now)
         return placed
 
@@ -269,6 +317,55 @@ class DialerService:
         if campaign.org_id is None:
             return deployment_cap
         return max(1, min(plans.concurrency_limit(db, campaign.org_id), deployment_cap))
+
+    def _sweep_stale_queued(self, db: Session, now: datetime, limit: int = 50) -> int:
+        """Reclaim calls that were claimed but never handed to the provider.
+
+        ``_place`` commits the call row (status ``queued``) and the contact
+        claim before it calls the provider. If the process dies in between,
+        that row holds a concurrency slot forever (``queued`` is an in-flight
+        status) and the contact sits in ``calling``; after enough restarts the
+        campaign freezes with no live calls. Anything still queued past the
+        grace period with no provider id is therefore a ghost, not a dial.
+        """
+        cutoff = now - timedelta(seconds=int(self.settings.stale_queued_seconds))
+        stale = db.scalars(
+            select(Call)
+            .where(
+                Call.kind == "phone",
+                Call.status == "queued",
+                Call.provider_call_id.is_(None),
+                Call.started_at.is_not(None),
+                Call.started_at <= cutoff,
+            )
+            .order_by(Call.id)
+            .limit(limit)
+        ).all()
+        for call in stale:
+            call.status = "failed"
+            call.ended_at = now
+            log_call_event(db, call.id, "dial_abandoned", {"reason": "no provider leg"})
+            contact = db.get(Contact, call.contact_id) if call.contact_id else None
+            if (
+                contact is not None
+                and contact.status == "calling"
+                and contact.last_call_id == call.id
+            ):
+                apply_contact_retry(
+                    contact,
+                    self.settings,
+                    now,
+                    count_attempt=False,
+                    backoff_seconds=self.settings.dial_failure_backoff_seconds,
+                )
+            logger.warning(
+                "dialer: abandoned queued call %s (contact %s) with no provider id",
+                call.id,
+                call.contact_id,
+            )
+        if stale:
+            db.commit()
+        return len(stale)
 
     def _sweep_stale_ringing(self, db: Session, now: datetime, limit: int = 5) -> int:
         """Reconcile phone calls stuck with no media leg.
@@ -314,10 +411,11 @@ class DialerService:
         return synced
 
     def _process_next(self, db: Session, campaign: Campaign, now: datetime) -> str:
-        """Pick the next contact: ``"dialled"``, ``"skipped"``, or ``"idle"``.
+        """Pick the next contact: ``"dialled"``, ``"skipped"``, ``"failed"`` or ``"idle"``.
 
         ``"skipped"`` means a contact was retired without a leg (no consent);
-        the caller must keep going, but the campaign placed no call.
+        ``"failed"`` means the provider refused the placement. Neither occupies
+        a concurrency slot, so the caller may keep going.
         """
         contact = self._next_eligible_contact(db, campaign.id, now)
         if contact is None:
@@ -329,5 +427,4 @@ class DialerService:
             contact.status = "opted_out"
             db.commit()
             return "skipped"
-        self._place(db, contact, campaign, now)
-        return "dialled"
+        return "dialled" if self._place(db, contact, campaign, now) else "failed"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any, Optional
 
 from sqlalchemy import func, or_, select
@@ -77,13 +78,32 @@ def in_flight_call_count(
     return int(db.scalar(query) or 0)
 
 
-def apply_contact_retry(contact: Contact, settings: Settings, now: Optional[Any] = None) -> None:
+def apply_contact_retry(
+    contact: Contact,
+    settings: Settings,
+    now: Optional[Any] = None,
+    *,
+    count_attempt: bool = True,
+    backoff_seconds: Optional[int] = None,
+) -> None:
     """Retry bookkeeping after a no-answer/busy/dial-failure.
 
     Increments attempt_count; re-queues with backoff while under
     RETRY_MAX_ATTEMPTS, otherwise marks the contact failed.
+
+    ``count_attempt=False`` is for legs the provider never accepted (5xx,
+    timeout, process restart). Those are infrastructure failures, not the
+    callee refusing the call: charging them to the contact's three-attempt
+    budget turned a three-second provider outage into a permanently failed
+    list. Such a contact is parked for ``backoff_seconds`` and stays queued.
     """
     now = now or utcnow()
+    if not count_attempt:
+        contact.status = "queued"
+        contact.next_attempt_at = now + timedelta(
+            seconds=int(backoff_seconds or 60)
+        )
+        return
     contact.attempt_count = (contact.attempt_count or 0) + 1
     if contact.attempt_count < settings.retry_max_attempts:
         contact.status = "queued"

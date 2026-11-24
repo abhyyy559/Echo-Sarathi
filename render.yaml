@@ -125,11 +125,11 @@ services:
         sync: false
       - key: CONSENT_ENFORCEMENT
         value: "true"
-      # Test calls may dial any valid number (shipped policy). Campaign dialing
-      # still requires per-contact consent. Set false to restore the
-      # TEST_PHONE_NUMBERS allowlist for test calls.
+      # OPT-IN, off by default: true lets test calls dial any valid number.
+      # Campaign dialing still requires per-contact consent. Leave false to
+      # keep the TEST_PHONE_NUMBERS allowlist; flip only for an authorised demo.
       - key: ALLOW_ANY_OUTBOUND_NUMBER
-        value: "true"
+        value: "false"
       - key: DIALER_ENABLED
         value: "true"
       - key: DEFAULT_CPS_LIMIT

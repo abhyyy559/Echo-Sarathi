@@ -1055,8 +1055,13 @@ def render_system_prompt(
     )
     sections.append(
         "HOW TO SPEAK (critical):\n"
-        "- Every reply SHORT: 1-2 sentences, never more than 3. Plain words only: "
-        "no markdown, lists, symbols, emoji, or newlines — this becomes speech.\n"
+        "- Every reply SHORT: 1-2 sentences, never more than 3, and aim under "
+        "20 spoken words. A caller cannot interrupt a wall of words, so long "
+        "turns are what make you feel like a robot reading a script.\n"
+        "- Say your one thing and STOP. Do not fill the silence, do not add a "
+        "second question, do not keep talking to be helpful.\n"
+        "- Plain words only: no markdown, lists, symbols, emoji, or newlines — "
+        "this becomes speech.\n"
         "- Respond to what the caller ACTUALLY said first (brief warm reflection), "
         "ask ONE thing per turn, never repeat answered questions, never read like a script.\n"
         "- Never read the caller's words back verbatim: the transcript of a phone "
@@ -1183,7 +1188,11 @@ def render_system_prompt(
         sections.append(
             f"{QUESTIONS_HEADER}\n"
             + "\n".join(goal_items)
-            + "\nCover ALL goals by call end, in natural order and wording."
+            + "\nThis is a CONVERSATION, not a questionnaire. These are "
+            "destinations, not a script: never march through them in this "
+            "order, never read them out, skip anything the caller already "
+            "answered, and follow whatever they bring up first. Ask one "
+            "thing per turn, in your own words."
         )
     else:
         sections.append(

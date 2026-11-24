@@ -287,11 +287,13 @@ backend and LiveKit is server-side.
 
 ### 5.2 Destination number
 
-With the shipped `ALLOW_ANY_OUTBOUND_NUMBER=true`, the Test Call screen accepts
-any valid number. Campaign dialing still only calls contacts with
-`consent=true`.
+By default (`ALLOW_ANY_OUTBOUND_NUMBER=false`) the Test Call screen accepts
+only the allowlist below and consenting roster contacts. An operator can
+explicitly opt in with `ALLOW_ANY_OUTBOUND_NUMBER=true` for an authorised demo
+number; the demo environment does this. Campaign dialing still only calls
+contacts with `consent=true`.
 
-To restrict test calls again, set `ALLOW_ANY_OUTBOUND_NUMBER=false` and add the
+To restore the safe default, set `ALLOW_ANY_OUTBOUND_NUMBER=false` and add the
 phones you will call to `TEST_PHONE_NUMBERS` (comma-separated):
 
 ```dotenv
@@ -427,7 +429,7 @@ opening delay measured on 2026-10-22.
 | Garbled phone audio | Wrong TTS sample rate | Keep `SARVAM_TTS_SAMPLE_RATE=8000` for phone; the Vobiz bridge converts 8 kHz PCM to mu-law |
 | "Model not found" | Wrong/decommissioned Groq model | Keep `GROQ_MODEL=qwen/qwen3.8-27b`; do not use `llama-3.1-8b-instant` |
 | Call drops immediately | Vobiz credit exhausted or call-create rejected | Check Vobiz balance; inspect backend logs for the Vobiz 4xx body |
-| HTTP 422 "not in TEST_PHONE_NUMBERS" | Allowlist gate is on (`ALLOW_ANY_OUTBOUND_NUMBER=false`) | Add the number to `TEST_PHONE_NUMBERS` (plural), set `ALLOW_ANY_OUTBOUND_NUMBER=true`, or use a consenting contact; the singular `TEST_PHONE_NUMBER` is not read |
+| HTTP 422 "not in TEST_PHONE_NUMBERS" | Allowlist gate is on (`ALLOW_ANY_OUTBOUND_NUMBER=false`, the default) | Add the number to `TEST_PHONE_NUMBERS` (plural) or use a consenting contact; for an authorised demo only, opt in with `ALLOW_ANY_OUTBOUND_NUMBER=true`. The singular `TEST_PHONE_NUMBER` is not read |
 | Backend uses the "wrong" model | Root `.env` wins over `backend/.env` | Edit the root `.env`; do not maintain a second model config |
 | Worker cannot reach LiveKit | Local worker is using `ws://livekit:7880` | Use the compose worker, or set `LIVEKIT_URL_INTERNAL=ws://localhost:7880` and stop the compose worker |
 | Two agents answer / jobs are flaky | Compose worker plus a second local worker | Stop one; use only the compose worker for the demo |
@@ -481,8 +483,9 @@ TTS | ttfb=...
 > demo, use Playground. For a phone demo, run `ngrok http 8000`, put the
 > `https://` URL in both `PUBLIC_BASE_URL` and `PUBLIC_WS_BASE_URL` in the root
 > `.env`, recreate the backend, and use the Test Call page or
-> `scripts\test_call.ps1 -To +91...` (any valid number while
-> `ALLOW_ANY_OUTBOUND_NUMBER=true`). Vobiz is configured
+> `scripts\test_call.ps1 -To +91...` (the Test Call page is at
+> `/playground?mode=phone`; any valid number only after an explicit
+> `ALLOW_ANY_OUTBOUND_NUMBER=true` opt-in, otherwise use the allowlist). Vobiz is configured
 > with `VOBIZ_AUTH_ID`/`VOBIZ_AUTH_TOKEN`/`VOBIZ_PHONE_NUMBER`; there is no SIP
 > trunk or `make_call.py`. The worker is already part of compose-do not start a
 > second one. The verified phone call worked, but first-greeting startup was

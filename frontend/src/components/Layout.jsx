@@ -180,7 +180,11 @@ export default function Layout() {
         {/* Utility surfaces — kept out of the main nav on purpose. */}
         <div className="sidebar-footlinks">
           {UTILITY_LINKS.map((link) => (
-            <NavLink key={link.to} to={link.to} className="footlink">
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) => `footlink${isActive ? ' active' : ''}`}
+            >
               {link.icon}
               <span>{link.label}</span>
             </NavLink>
@@ -194,7 +198,7 @@ export default function Layout() {
             Sign out
           </button>
         </div>
-        <div className="sidebar-footer">Phase 1 · English · India</div>
+        <div className="sidebar-footer">English · తెలుగు · India</div>
       </aside>
       <div className="main-area">
         <header className="topbar">

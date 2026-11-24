@@ -26,6 +26,28 @@
 
 ---
 
+## 0. Current decisions and supersessions (read first)
+
+The PRD below is the **original build spec**, kept as history. These later, shipped decisions
+override it; the code is authoritative where they disagree.
+
+| Original decision | Current decision | Why / when |
+|---|---|---|
+| Telephony = Plivo (Exotel fallback), "avoid Twilio" | **Vobiz** is the active India CPaaS; Twilio adapter stays dormant | India KYC/DLT path + μ-law WebSocket streaming; recorded at `7c6aef2` |
+| Redis for session/queue state | **Postgres** only — Redis dropped | One fewer service; state is in Postgres; recorded at `7c6aef2` |
+| Telugu/multilingual = Phase 2 non-goal | **Telugu/Tenglish via Sarvam is in the current build** | Shipped in `e7e8102` and earlier Sarvam routing work; treat as an early differentiator, not a future plan |
+| Auth/authorization = Phase 1 non-goal | **Multi-tenant auth, orgs, roles and billing are shipped** | Required for the SaaS model in `docs/BUSINESS_MODEL.md` |
+| Phase 0/1 = browser playground only | **Playground + real outbound calls + campaigns** | Worker serves `playground-*` and `phone-*` rooms; backend places Vobiz calls |
+| English-only STT/TTS (Deepgram/Cartesia) | Deepgram Nova-3 + Cartesia for English; **Sarvam Saaras/Bulbul** for Indic/code-mixed | Same cascaded pipeline, provider chosen by agent language |
+| Unrestricted test dialing as shipped default | **`ALLOW_ANY_OUTBOUND_NUMBER=false` by default**; true is an explicit demo opt-in for authorised numbers only | Compliance guardrail restored 24 Nov 2026 |
+
+Remaining gates (not yet shipped): DLT registration for campaign dialing, the carrier's ~60-second
+leg cap observed in `CAMPAIGN_2_RUN_2026-10-22.md`, durable/retried backend writes, and splitting
+the large `backend/app/routers/playground.py` and `voice-agent/app/pipeline.py` modules. Current
+test health and the live-demo path: `docs/DEMO_READINESS.md`.
+
+---
+
 # 1. Product Requirements (PRD)
 
 > Consolidated from source file: PRD.md

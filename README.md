@@ -1,15 +1,18 @@
 # Voice Agent Runtime (LiveKit Workers)
 
-Cascaded real-time voice pipeline: **Deepgram STT (nova-3, en) → LLM tool-calling
-(Groq `llama-3.3-70b-versatile`, OpenAI `gpt-4o-mini` fallback) → Cartesia TTS**,
-orchestrated by [LiveKit Agents](https://docs.livekit.io/agents/) (Python).
+Cascaded real-time voice pipeline: **Deepgram Nova-3 STT (or Sarvam Saaras for
+Indic) → LLM tool-calling (Groq Qwen 3.8-27B primary, with fallbacks) → Cartesia
+Sonic TTS (or Sarvam Bulbul for Indic)**, orchestrated by
+[LiveKit Agents](https://docs.livekit.io/agents/) (Python).
 
-This phase the worker handles **browser playground rooms only**
-(`playground-*` prefix). Jobs for any other room prefix are closed gracefully.
+The worker serves **browser playground rooms** (`playground-*`) and **phone
+rooms bridged from the backend** (`phone-*`). Jobs for any other room prefix
+are closed gracefully.
 
-> ⚠️ **No telephony happens here this phase. NO Twilio (or Plivo/Exotel) calls
-> are placed by this runtime.** The Twilio Media Streams protocol helper
-> (`app/twilio_protocol.py`) is kept dormant on purpose.
+> ⚠️ **This worker never dials a phone number.** PSTN dialing and the Vobiz
+> bridge live in the FastAPI backend; the worker only consumes audio from a
+> LiveKit room. The Twilio Media Streams helper (`app/twilio_protocol.py`) is
+> dormant dead code — Twilio is not an active provider.
 
 ## Layout
 

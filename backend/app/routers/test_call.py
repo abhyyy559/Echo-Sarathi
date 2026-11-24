@@ -1,8 +1,11 @@
-"""Test-call endpoint: place an immediate single call to an allowlisted number.
+"""Test-call endpoint: place an immediate single call.
 
-Test calls bypass the dialer (campaign stays out of `running`), but still
-create contact + call rows so transcripts and reports flow through the same
-pipeline as campaign calls.
+By default only consenting roster contacts and TEST_PHONE_NUMBERS may be
+dialed. Operators can explicitly opt into unrestricted test dialing with
+ALLOW_ANY_OUTBOUND_NUMBER=true (e.g. for an authorised demo number); that
+authorizes the dial, never a consent record. Test calls bypass the dialer
+(campaign stays out of `running`), but still create contact + call rows so
+transcripts and reports flow through the same pipeline as campaign calls.
 """
 from __future__ import annotations
 
@@ -65,7 +68,8 @@ def place_test_call(
     # faculty uploaded) — the request itself is NOT authorization for
     # arbitrary dialing. Anything else stays behind the TEST_PHONE_NUMBERS
     # gate so one authenticated user cannot place billable calls anywhere,
-    # unless the operator turned that gate off explicitly.
+    # unless an operator explicitly opted in with ALLOW_ANY_OUTBOUND_NUMBER=true
+    # (off by default).
     roster_match = None
     if payload.to and target:
         roster_match = db.scalar(

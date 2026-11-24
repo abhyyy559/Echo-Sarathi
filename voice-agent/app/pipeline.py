@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import ssl
+import threading
 import time
 import traceback
 from collections.abc import Coroutine
@@ -910,6 +911,35 @@ def _groq_client_kwargs(model: str) -> dict[str, Any]:
     return kwargs
 
 
+#: Round-robin cursor per provider, guarded because sessions start on multiple
+#: threads. Not a secret: it only holds the next index, never the key itself.
+_KEY_CURSOR: dict[str, int] = {}
+_KEY_CURSOR_LOCK = threading.Lock()
+
+
+def _rotating_key(
+    provider: str, keys: tuple[str, ...], fallback: Optional[str] = None
+) -> Optional[str]:
+    """Next API key for a new session (round-robin across the configured pool).
+
+    Deepgram and Cartesia rate-limit *concurrent streams per key*, so a single
+    key caps how many calls can be live at once. With N keys the worker spreads
+    new sessions across the pool, which raises capacity and means one key at
+    its limit does not fail every call. One key behaves exactly as before.
+    """
+    pool = tuple(key for key in keys if key) or ((fallback,) if fallback else ())
+    if not pool:
+        return None
+    if len(pool) == 1:
+        return pool[0]
+    with _KEY_CURSOR_LOCK:
+        index = _KEY_CURSOR.get(provider, 0) % len(pool)
+        _KEY_CURSOR[provider] = (index + 1) % len(pool)
+    if index == 0:
+        logger.info("%s: rotating across %d API keys", provider, len(pool))
+    return pool[index]
+
+
 def build_providers(
     settings: Settings,
     voice_settings: Optional[Mapping[str, Any]] = None,
@@ -927,6 +957,15 @@ def build_providers(
     model_override, tts_voice_override, voices_by_lang, language = _voice_overrides(voice_settings)
     bundle.language = language
     effective_voice = voices_by_lang.get(language) or tts_voice_override
+    # One key per session, rotating across the configured pool. Speech
+    # providers cap concurrent streams per key, so this is what lets a large
+    # campaign run more calls than one key allows.
+    deepgram_key = _rotating_key(
+        "deepgram", getattr(settings, "deepgram_api_keys", ()), settings.deepgram_api_key
+    )
+    cartesia_key = _rotating_key(
+        "cartesia", getattr(settings, "cartesia_api_keys", ()), settings.cartesia_api_key
+    )
 
     # STT provider routing. A non-English agent must be transcribed by Sarvam
     # Saaras (Nova has no te/hi/bn models in the streaming plugin), while
@@ -946,20 +985,23 @@ def build_providers(
         route_stt and _indian_language and bool(_sarvam_key)
     )
 
-    if settings.deepgram_api_key and not use_sarvam_stt:
+    if deepgram_key and not use_sarvam_stt:
         stt_lang = str(
             (voice_settings or {}).get("stt_language", "en")
         ).strip().lower() or "en"
         # P0-1 endpointing tuning: the livekit-plugins-deepgram 1.8.3 kwarg is
         # ``endpointing_ms`` (introspected signature has NO ``endpointing``);
         # plugin default is a hair-trigger 25 ms which fragments speech.
-        # 300ms (echo hardening): the agent's own looped-back TTS audio must
-        # not hair-trigger a retrigger at the old 200ms.
+        # 500ms: on an 8 kHz PSTN leg a caller's natural mid-sentence pause
+        # (thinking, "um", taking a breath) is routinely 300-450 ms, so 300 ms
+        # finalized the turn while they were still talking and the agent
+        # answered half a sentence. 500 ms still feels responsive and is the
+        # single biggest fix for "it won't let me finish".
         bundle.stt = deepgram.STT(
             model="nova-3",
             language=stt_lang,
-            endpointing_ms=300,
-            api_key=settings.deepgram_api_key,
+            endpointing_ms=500,
+            api_key=deepgram_key,
         )
         bundle.stt_provider = "deepgram"
     elif use_sarvam_stt:
@@ -1099,7 +1141,7 @@ def build_providers(
             sarvam_codec,
             sarvam_pace,
         )
-    elif selected_tts == "cartesia" and settings.cartesia_api_key:
+    elif selected_tts == "cartesia" and cartesia_key:
         tts_kwargs: dict[str, Any] = {}
         if effective_voice:
             tts_kwargs["voice"] = effective_voice
@@ -1114,9 +1156,9 @@ def build_providers(
         pron_dict = pron_dict or str(settings.cartesia_pronunciation_dict_id or "").strip()
         if pron_dict:
             tts_kwargs["pronunciation_dict_id"] = pron_dict
-        bundle.tts = cartesia.TTS(api_key=settings.cartesia_api_key, **tts_kwargs)
+        bundle.tts = cartesia.TTS(api_key=cartesia_key, **tts_kwargs)
         bundle.tts_provider = "cartesia"
-    elif settings.deepgram_api_key:
+    elif deepgram_key:
         # Deepgram Aura fallback. Cartesia returns 402 when its balance runs
         # out (seen live: "Invalid response status", retryable=False), which
         # silences the agent even though everything else works. Aura runs on
@@ -1127,7 +1169,7 @@ def build_providers(
             str((voice_settings or {}).get("tts_model", "") or "").strip()
             or os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
         )
-        bundle.tts = deepgram.TTS(model=aura_model, api_key=settings.deepgram_api_key)
+        bundle.tts = deepgram.TTS(model=aura_model, api_key=deepgram_key)
         bundle.tts_provider = "deepgram"
         logger.info("TTS provider: Deepgram Aura (%s)", aura_model)
     else:
@@ -2436,10 +2478,20 @@ _VAD_INSTANCE: Any = None
 
 
 def _get_vad() -> Any:
-    """Return the shared VAD instance, loading the model on first use."""
+    """Return the shared VAD instance, loading the model on first use.
+
+    ``activation_threshold=0.55`` (Silero default 0.5) trims fan/road/room
+    noise on an 8 kHz phone leg without missing a normal speaking voice —
+    noise-driven false barge-ins were the second half of the "it keeps
+    getting interrupted" complaint.
+    """
     global _VAD_INSTANCE
     if _VAD_INSTANCE is None:
-        _VAD_INSTANCE = silero.VAD.load()
+        try:
+            _VAD_INSTANCE = silero.VAD.load(activation_threshold=0.55)
+        except TypeError:
+            # Older plugin builds (and test stubs) may not accept the kwarg.
+            _VAD_INSTANCE = silero.VAD.load()
     return _VAD_INSTANCE
 
 
@@ -2767,7 +2819,7 @@ def _build_agent_session(
                 # VOICE_MIN_ENDPOINTING_DELAY / VOICE_MAX_ENDPOINTING_DELAY
                 # override both when a demo needs different tuning.
                 min_delay=_env_float(
-                    "VOICE_MIN_ENDPOINTING_DELAY", 0.07 if sarvam_stt else 0.3
+                    "VOICE_MIN_ENDPOINTING_DELAY", 0.07 if sarvam_stt else 0.4
                 ),
                 max_delay=_env_float("VOICE_MAX_ENDPOINTING_DELAY", 2.5),
             ),
@@ -2776,9 +2828,11 @@ def _build_agent_session(
                 enabled=True,
                 mode="vad",
                 discard_audio_if_uninterruptible=True,
-                # 350ms: a real "wait/stop/yes" stops the agent fast, while
-                # sub-word noise blips (handled below by min_words) do not.
-                min_duration=0.35,
+                # 500ms: a real "wait/stop/yes" still stops the agent fast,
+                # but a door, a cough, traffic or a single noise blip on a
+                # phone line no longer cuts the agent off mid-sentence. The
+                # old 350ms let sub-word noise through as an interruption.
+                min_duration=0.5,
                 # Word gate against noise: VAD-only blips that STT cannot
                 # turn into even one word never interrupt; a single spoken
                 # word ("stop", "wait", "hello?") always does.

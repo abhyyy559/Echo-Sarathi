@@ -115,10 +115,11 @@ Add-EnvVar "DEMO_PASSWORD" $cfg["DEMO_PASSWORD"]
 
 Add-EnvVar "TELEPHONY_PROVIDER" "vobiz"
 Add-EnvVar "CONSENT_ENFORCEMENT" "true"
-# Test calls may dial any valid number. Written out explicitly because this PUT
-# replaces the whole service environment; campaign dialing still requires
-# per-contact consent. Set "false" here to restore the TEST_PHONE_NUMBERS gate.
-Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" "true"
+# Unrestricted test dialing is an explicit operator opt-in, off by default.
+# It flows from the gitignored .env (or .deploy.env) only when set there;
+# otherwise no value is sent and the backend's safe default (false) applies.
+# Campaign dialing still requires per-contact consent.
+Add-EnvVar "ALLOW_ANY_OUTBOUND_NUMBER" (Get-ProviderValue -Maps @($local, $cfg) -Key "ALLOW_ANY_OUTBOUND_NUMBER")
 Add-EnvVar "DIALER_ENABLED" $(if ($Secondary) { "false" } else { "true" })
 Add-EnvVar "DEFAULT_CPS_LIMIT" "1"
 # One live call at a time. A second leg dialled while the single cold-starting

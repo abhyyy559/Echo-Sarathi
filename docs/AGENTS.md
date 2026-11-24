@@ -1,7 +1,7 @@
 # AGENTS.md — AI Voice Calling Agent
 
 ## Project Overview
-Real-time AI voice calling platform for India. Phase 0 = English-only browser playground proof-of-concept. No telephony, no auth, no Telugu. Domain-independent: new call use-cases are config files under `domain-configs/`, not code changes.
+Real-time AI voice calling platform for India. Phase 1 = working product: browser playground **plus** real outbound Vobiz calls, multi-tenant auth, and Telugu/Tenglish via Sarvam. Domain-independent: new call use-cases are config files under `domain-configs/`, not code changes. Original Phase-0 decisions and their supersessions are recorded in `docs/PROJECT_MASTER.md` §0; live-demo path in `docs/DEMO_READINESS.md`.
 
 **Locked stack (do not change):**
 - Voice: cascaded (Deepgram STT → Groq/OpenAI LLM tool-calling → Cartesia TTS) via LiveKit Agents (Python)
@@ -91,7 +91,7 @@ python agent.py dev        # or: python agent.py start
 - **Stale .env overriding compose defaults**: Run `docker compose logs backend` to diagnose.
 
 ## Guardrails
-- **No real outbound campaign calls** until compliance-agent confirms DLT registration + consent flow live (PRD §8/M3). Test calls may dial any valid number while `ALLOW_ANY_OUTBOUND_NUMBER=true`; dial only numbers you are authorised to call.
+- **No real outbound campaign calls** until compliance-agent confirms DLT registration + consent flow live (PRD §8/M3). Test calls are capped to `TEST_PHONE_NUMBERS` plus consenting roster contacts by default; unrestricted dialing is an explicit opt-in (`ALLOW_ANY_OUTBOUND_NUMBER=true`) for authorised demo numbers only.
 - **No auth work** unless explicitly asked (Phase 1 hardening).
 - **No Telugu/Sarvam** (Phase 2, separate PRD).
 - **No speech-to-speech path** (OpenAI Realtime / Gemini Live) — cascaded was deliberate choice (PRD §3).

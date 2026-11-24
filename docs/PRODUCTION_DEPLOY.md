@@ -261,7 +261,9 @@ Those two values are compiled into the public JavaScript, so the demo account
 is public by design — that is what a self-serve demo means. It is an `owner` of
 the seeded demo org only, and campaign outbound calling stays bounded by
 per-contact consent (`CONSENT_ENFORCEMENT=true`). Test calls can dial any
-number while `ALLOW_ANY_OUTBOUND_NUMBER=true` (see section 8). If you need a
+number only where an operator explicitly opted in with
+`ALLOW_ANY_OUTBOUND_NUMBER=true` (see section 8); the shipped default is false.
+If you need a
 deployment where the demo is *not* public, unset both variables and hand the
 credentials to reviewers out of band.
 
@@ -321,12 +323,13 @@ Free-tier gotchas that were deliberately designed around:
   password in the source); clearing `DEMO_PASSWORD` and re-deploying removes it.
 - `CONSENT_ENFORCEMENT=true` and `TEST_PHONE_NUMBERS` limits outbound calls to
   numbers you own.
-- `ALLOW_ANY_OUTBOUND_NUMBER=true` lifts the sandbox allowlist for **test
-  calls** on this deployment: any signed-in user can dial any valid number.
-  Campaign dialing still requires per-contact consent, and the startup log
-  prints a warning while this is on. Set it back to false (or delete the var)
-  to restore the allowlist; rotating `TEST_PHONE_NUMBERS` is not enough while
-  the override is on.
+- `ALLOW_ANY_OUTBOUND_NUMBER=true` is an **explicit opt-in** (shipped default
+  false) that lifts the sandbox allowlist for **test calls** on this
+  deployment: any signed-in user can dial any valid number. Campaign dialing
+  still requires per-contact consent, and the startup log prints a warning
+  while this is on. Set it back to false (or delete the var) to restore the
+  allowlist; rotating `TEST_PHONE_NUMBERS` is not enough while the override is
+  on.
 - `/api/health` exposes only booleans, model names, and TCP reachability —
   never key values.
 - `/docs`, `/redoc` and `/openapi.json` are off when `ENVIRONMENT=production`.

@@ -121,6 +121,21 @@ class Settings(BaseSettings):
     default_concurrency_limit: int = 10
     retry_max_attempts: int = 3
     retry_backoff_minutes: int = 15
+    # A leg the provider never accepted (5xx / timeout / network) is NOT the
+    # callee declining, so it must not spend the contact's three attempts. The
+    # contact is parked this long and retried, however long the outage lasts.
+    dial_failure_backoff_seconds: int = 60
+    # A queued call with no provider id after this long means the process died
+    # between "claim" and "place". Left alone it occupies a dial slot forever
+    # and the campaign silently freezes once every slot is held by a ghost.
+    stale_queued_seconds: int = 120
+    # Consent-revoked contacts are retired without dialling; cap how many one
+    # campaign may retire in a single tick so a 50k imported list cannot stall
+    # every other campaign behind one long transaction.
+    dialer_max_skips_per_tick: int = 100
+    # Consecutive placement failures that mean "the provider is down, stop
+    # hammering it this tick" (one bad number still lets the next contact try).
+    dialer_max_consecutive_failures: int = 3
     dialer_enabled: bool = True
     # Render free instances sleep after ~15 min without inbound traffic. While
     # any campaign is running the dialer pings its own public URL this often so
@@ -133,11 +148,12 @@ class Settings(BaseSettings):
     # for test calls and campaign dialing. Also the default target when a test
     # call omits `to`.
     test_phone_numbers: str = ""
-    # Test calls may dial any valid number when this is on (the shipped
-    # default). Set false to cap test calls to TEST_PHONE_NUMBERS plus
-    # consenting roster contacts. Campaign dialing always requires per-contact
-    # consent, independent of this flag.
-    allow_any_outbound_number: bool = True
+    # Unrestricted test dialing is an OPT-IN, off by default. When true, test
+    # calls may dial any valid number; when false, test calls are capped to
+    # TEST_PHONE_NUMBERS plus consenting roster contacts. Campaign dialing
+    # always requires per-contact consent, independent of this flag. Set true
+    # only for an authorised demo/test number with owner sign-off.
+    allow_any_outbound_number: bool = False
     recording_retention_days: int = 90
     retention_job_enabled: bool = True
 

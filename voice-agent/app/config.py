@@ -147,6 +147,13 @@ class Settings:
     sarvam_llm_model: str = "sarvam-105b-conversations"
     sarvam_base_url: str = "https://api.sarvam.ai/v1"
 
+    # Multi-key rotation for the speech providers. Each session takes the next
+    # key round-robin, so N keys multiply the provider's per-key concurrent
+    # stream limit and one exhausted key cannot silence every new call. The
+    # single-key vars stay authoritative first for backward compatibility.
+    deepgram_api_keys: tuple[str, ...] = ()
+    cartesia_api_keys: tuple[str, ...] = ()
+
     @property
     def llm_primary_chain(self) -> tuple[tuple[str, str, str, str], ...]:
         """``(name, base_url, api_key, model)`` members served before Groq.
@@ -253,6 +260,12 @@ class Settings:
     def from_env() -> "Settings":
         _load_env_file()
         single_groq_key = _get("GROQ_API_KEY")
+        deepgram_keys = _parse_key_list(
+            _get("DEEPGRAM_API_KEY"), _get("DEEPGRAM_API_KEYS")
+        )
+        cartesia_keys = _parse_key_list(
+            _get("CARTESIA_API_KEY"), _get("CARTESIA_API_KEYS")
+        )
         return Settings(
             # Inside the compose network the room server is reachable by
             # service name; LIVEKIT_URL is the browser-facing host address and
@@ -262,8 +275,12 @@ class Settings:
             or os.getenv("LIVEKIT_URL", "ws://localhost:7880"),
             livekit_api_key=os.getenv("LIVEKIT_API_KEY", "devkey"),
             livekit_api_secret=os.getenv("LIVEKIT_API_SECRET", "secret"),
-            deepgram_api_key=_get("DEEPGRAM_API_KEY"),
-            cartesia_api_key=_get("CARTESIA_API_KEY"),
+            deepgram_api_key=deepgram_keys[0] if deepgram_keys else None,
+            # Deepgram and Cartesia limit concurrent streams per key; the
+            # worker rotates keys at session start (see pipeline._rotating_key).
+            deepgram_api_keys=deepgram_keys,
+            cartesia_api_key=cartesia_keys[0] if cartesia_keys else None,
+            cartesia_api_keys=cartesia_keys,
             cartesia_pronunciation_dict_id=_get("CARTESIA_PRONUNCIATION_DICT_ID"),
             groq_api_key=single_groq_key,
             # Multi-key rotation: GROQ_API_KEY first, then GROQ_API_KEYS.

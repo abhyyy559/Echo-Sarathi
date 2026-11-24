@@ -86,13 +86,13 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
     pipeline_module._build_agent_session(bundle)
 
     assert captured["aec_warmup_duration"] == 0.0
-    # Model-based turn detection pinned to the local mini model (no doomed
-    # cloud attempt from self-hosted workers); plain "vad" on old SDKs.
+    # Turn detection is environment-dependent: Smart Turn v3 when installed
+    # (production image + local demo), the v1-mini/local fallback otherwise,
+    # and plain "vad" on old SDKs without either. All three are valid here;
+    # this test checks session shape, not which detector is available.
     turn_detection = captured["turn_handling"].pop("turn_detection")
-    if turn_detection == "vad":
-        assert pipeline_module._inference is None
-    else:
-        assert type(turn_detection).__name__ == "TurnDetector"
+    if turn_detection != "vad":
+        assert type(turn_detection).__name__ in ("TurnDetector", "SmartTurnDetector")
     # Preemptive shape is version-dependent (mapping on 1.8+, bool on older):
     # resolve it through the same helper the pipeline uses.
     expected_preemptive = pipeline_module._preemptive_kwargs(True)[
@@ -102,16 +102,16 @@ def test_normal_session_uses_local_vad_turn_handling(monkeypatch) -> None:
         "preemptive_generation": expected_preemptive,
         "endpointing": {
             "mode": "fixed",
-            # 0.3s (lowered from 0.4): the floor is dead time on EVERY turn,
-            # and the semantic detector still catches mid-sentence pauses.
-            "min_delay": 0.3,
+            # 0.4s: the floor is dead time on EVERY turn, but too small a
+            # floor is what made the agent answer half-finished sentences.
+            "min_delay": 0.4,
             "max_delay": 2.5,
         },
         "interruption": {
             "enabled": True,
             "mode": "vad",
             "discard_audio_if_uninterruptible": True,
-            "min_duration": 0.35,
+            "min_duration": 0.5,
             "min_words": 1,
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,

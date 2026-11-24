@@ -33,7 +33,7 @@ Browser playground skips PSTN: mic -> same LiveKit room -> same worker.
 
 ## 4. Compliance (India, non-negotiable)
 
-- Test calls may dial any valid number while `ALLOW_ANY_OUTBOUND_NUMBER=true` (shipped default); campaign traffic stays limited to consented contacts until DLT registration exists. Allowlisted test numbers get `consent_source=test_allowlist`.
+- Test calls are capped to `TEST_PHONE_NUMBERS` plus consenting roster contacts by default. Unrestricted test dialing is an explicit opt-in (`ALLOW_ANY_OUTBOUND_NUMBER=true`, off by default) for authorised demo numbers only; campaign traffic always stays limited to consented contacts until DLT registration exists. Allowlisted test numbers get `consent_source=test_allowlist`.
 - Calling hours 09:00–21:00 Asia/Kolkata; 90-day recording retention; every call discloses AI + recording in the opening line.
 - Production India numbers need KYC; promotional vs transactional routes differ — never improvise this.
 

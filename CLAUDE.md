@@ -1,19 +1,19 @@
 # CLAUDE.md — AI Voice Calling Agent
 
 ## What this project is
-A real-time AI voice calling platform for India. Phase 1 = English only, one use case proven end-to-end ("college calls absent students"), but the platform must stay **domain-independent** — new call use-cases are a config file, not new code. Full spec: `PRD.md`. Full vendor/market research behind these decisions: `AI_Voice_Calling_Agent_India_Research.md`.
+A real-time AI voice calling platform for India. The first proven use case is the college absent-student follow-up, but the platform stays **domain-independent** — new call use-cases are config files under `domain-configs/`, not new code. Consolidated spec, research and build history: `docs/PROJECT_MASTER.md` (the old standalone `PRD.md` and research doc were folded into it).
 
 ## Current phase
-**Phase 0 — scaffold and single-call proof of concept.** No auth yet. No Telugu yet. No production hardening yet. Do not build ahead of the current milestone in `PRD.md` §10 unless asked.
+**Phase 1 — working product, not a scaffold.** Multi-tenant auth, real outbound calls via Vobiz, browser playground, campaigns, billing and observability are shipped. Telugu/Tenglish via Sarvam is in the build (originally a Phase-2 item — see `docs/PROJECT_MASTER.md` for the recorded scope change). Remaining gates: DLT registration for campaign dialing, carrier call-length limit, durable backend writes, and module splits. Do not build ahead of a documented milestone without asking.
 
 ## Locked technical decisions — do not change without discussing first
-- Voice architecture: **cascaded** (STT → LLM tool-calling → TTS). Never build a speech-to-speech (OpenAI Realtime / Gemini Live) path — it was deliberately rejected, see `PRD.md` §3.
+- Voice architecture: **cascaded** (STT → LLM tool-calling → TTS). Never build a speech-to-speech (OpenAI Realtime / Gemini Live) path — it was deliberately rejected, see `docs/PROJECT_MASTER.md` §1/§3.
 - Real-time voice orchestration: **LiveKit Agents** (Python). Don't hand-roll WebSocket/session management.
-- Telephony: **Vobiz** (India CPaaS). Twilio adapter stays dormant.
-- STT: **Deepgram**. TTS: **Cartesia**. LLM: a fast/cheap model by default (Groq-hosted or GPT-4o-mini class), with rule-based escalation for hard turns — not a large model on every turn.
-- Backend: **FastAPI** + **PostgreSQL**.
-- Frontend: **React**.
-- All of the above are India-region hosted (Mumbai) for data-localization reasons.
+- Telephony: **Vobiz** (India CPaaS). Twilio adapter stays dormant. Plivo/Exotel were the original prototype choice and are **superseded** — recorded in `docs/PROJECT_MASTER.md`.
+- STT: **Deepgram Nova-3** (English) with **Sarvam Saaras** for Indic/code-mixed calls. TTS: **Cartesia** (English) with **Sarvam Bulbul** for Indic. LLM: fast/cheap by default (Groq Qwen 3.8-27B with fallbacks), rule-based escalation for hard turns — not a large model on every turn.
+- Backend: **FastAPI** + **PostgreSQL**. Session/queue state lives in Postgres — the original **Redis** decision is superseded.
+- Frontend: **React** (Vite).
+- All of the above are India-region hosted for data-localization reasons.
 
 ## Repo layout (target — scaffold this if it doesn't exist yet)
 ```
@@ -48,13 +48,16 @@ Claude decides which subagent to use based on the task and each agent's `descrip
 - Log per-call latency (STT/LLM/TTS timing) and cost from day one — don't bolt this on later.
 
 ## Guardrails
-- Do not place real outbound calls to real phone numbers outside an explicitly-approved test list until `compliance-agent` confirms DLT registration and consent flow are live (PRD.md §8/M3). Test against your own number or a sandbox/test number by default.
+- Do not place real outbound **campaign** calls outside an approved, consented list until `compliance-agent` confirms DLT registration and consent flow are live (`docs/PROJECT_MASTER.md` §8/M3). Test against your own number or an authorised test number by default.
+- Test calls are capped to `TEST_PHONE_NUMBERS` plus consenting roster contacts by default. `ALLOW_ANY_OUTBOUND_NUMBER=true` is an explicit, demo-only opt-in — never a shipped default — and dial only numbers you are authorised to call.
 - Never fabricate a structured-field value when the LLM extraction is low-confidence — escalate/flag per FR-12, don't guess.
-- Don't add authentication/authorization work unless explicitly asked — it's an intentional non-goal until Phase 1 hardening.
-- Don't start Telugu/Sarvam work — that's Phase 2, a separate PRD.
+- Auth/multi-tenancy and Telugu/Tenglish are already in the build; treat them as existing surface, not new scope. Don't expand them without an explicit ask.
+- Never add a speech-to-speech path (OpenAI Realtime / Gemini Live) — the cascaded pipeline was a deliberate choice.
 
-## Commands (fill in once the scaffold exists)
-- Backend tests: `[to be added]`
-- Voice-agent local run: `[to be added]`
-- Frontend dev server: `[to be added]`
-- Lint/format: `[to be added]`
+## Commands
+- Backend tests: `cd backend; .venv\Scripts\python.exe -m pytest -q` (409 tests)
+- Voice-agent tests: `cd voice-agent; .venv\Scripts\python.exe -m pytest tests -q` (230 tests)
+- Frontend build/dev: `cd frontend; npm run build` / `npm run dev`
+- Full local stack: `powershell -File scripts\dev-up.ps1` then `scripts\seed.ps1` → <http://localhost:3000>
+- Single live call: `powershell -File scripts\test_call.ps1 -To +91... -Hold 45`
+- Demo runbook and pitch notes: `docs/DEMO_READINESS.md`, `docs/PITCH_CHEAT_SHEET.md`

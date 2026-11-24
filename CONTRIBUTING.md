@@ -45,12 +45,13 @@ containing a credential is rejected before it is pushed.
 ## Calls, consent and phone numbers
 
 - Do not place outbound campaign calls to real phone numbers from a
-  development machine. Test calls may dial any valid number while
-  `ALLOW_ANY_OUTBOUND_NUMBER=true`, but never dial a number you are not
-  authorised to call.
-- `CONSENT_ENFORCEMENT` (campaign consent) stays on in production. The
-  test-call allowlist is an explicit opt-out through
-  `ALLOW_ANY_OUTBOUND_NUMBER`; set it false to restore the allowlist.
+  development machine. Test calls are limited to `TEST_PHONE_NUMBERS` and
+  consenting roster contacts unless an operator explicitly opts in with
+  `ALLOW_ANY_OUTBOUND_NUMBER=true` (off by default). Never dial a number you
+  are not authorised to call.
+- `CONSENT_ENFORCEMENT` (campaign consent) stays on in production. Setting
+  `ALLOW_ANY_OUTBOUND_NUMBER=true` is an explicit opt-out of the test-call
+  allowlist for an authorised demo number; leave it false otherwise.
 - KYC, DLT registration and carrier terms apply to every number this platform
   dials from. Never add a number you are not authorised to call.
 
