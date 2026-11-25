@@ -334,6 +334,7 @@ def _apply_status(db: Session, call: Call, payload: Any) -> None:
         if contact is not None:
             contact.status = "completed"
             contact.next_attempt_at = None
+        _charge_call(db, call)
         maybe_complete_campaign(db, call.campaign_id)
     elif status == "escalated":
         call.status = "completed"
@@ -347,6 +348,7 @@ def _apply_status(db: Session, call: Call, payload: Any) -> None:
         if contact is not None:
             contact.status = "completed"
             contact.next_attempt_at = None
+        _charge_call(db, call)
         maybe_complete_campaign(db, call.campaign_id)
     elif status == "failed":
         call.status = "failed"
@@ -357,6 +359,16 @@ def _apply_status(db: Session, call: Call, payload: Any) -> None:
             contact.next_attempt_at = None
         maybe_complete_campaign(db, call.campaign_id)
     log_call_event(db, call.id, f"status:{status}", {"reason": reason})
+
+
+def _charge_call(db: Session, call: Call) -> None:
+    """Debit the wallet for a completed call. Idempotent (per call_id)."""
+    from app.services.billing import charge_call
+
+    try:
+        charge_call(db, call)
+    except Exception:  # noqa: BLE001 — billing must never break call completion
+        logger.exception("charge_call failed for call %s", call.id)
 
 
 _REPORT_HANDLERS = {

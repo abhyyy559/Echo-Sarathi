@@ -143,14 +143,14 @@ export default function OverviewPage() {
               <div style={{ padding: '20px 22px' }}>
                 <div className="chart">
                   {calls7d.map((day) => {
-                    const h = day.count === 0 ? 2 : Math.max(8, Math.round((day.count / maxDayCount) * 100));
+                    const h = Math.max(2, day.count > 0 ? Math.round((day.count / maxDayCount) * 100) : 0);
                     const date = new Date(`${day.date}T00:00:00`);
                     const label = Number.isNaN(date.getTime())
                       ? day.date.slice(5)
                       : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
                     return (
                       <div key={day.date} className="bar" data-v={day.count} title={`${day.count} calls · ${label}`}>
-                        <i style={{ height: `${h}%` }} />
+                        <i style={{ height: `${h}%`, minHeight: '14px' }} />
                         <em>{label}</em>
                         <b>{day.count}</b>
                       </div>

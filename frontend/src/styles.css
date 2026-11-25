@@ -3768,6 +3768,7 @@ th.preview-head-phone {
 .chart .bar i {
   width: 100%;
   max-width: 40px;
+  min-height: 14px;
   border-radius: 5px 5px 0 0;
   background: linear-gradient(180deg, var(--brand), rgba(233, 228, 218, 0.3));
   transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
