@@ -20,6 +20,22 @@ export default function AgentsPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
+  const [deleting, setDeleting] = useState(null);
+
+  // Agents are soft-deleted by the backend (status -> archived); versions stay
+  // queryable, so just drop the card from this page.
+  const handleDelete = async (a) => {
+    if (!window.confirm(`Archive agent "${a.name}"? It leaves the pickers; versions are kept.`)) return;
+    setDeleting(a.id);
+    try {
+      await agentsApi.archive(a.id);
+      setAgents((prev) => (prev || []).filter((x) => x.id !== a.id));
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setDeleting((prev) => (prev === a.id ? null : prev));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +163,14 @@ export default function AgentsPage() {
                   </button>
                   <button type="button" className="btn sm ghost" onClick={() => navigate(`/agents/${a.id}`)}>
                     Configure
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm ghost"
+                    disabled={deleting === a.id}
+                    onClick={() => handleDelete(a)}
+                  >
+                    {deleting === a.id ? 'Archiving…' : 'Delete'}
                   </button>
                 </div>
               </div>
