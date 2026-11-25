@@ -164,6 +164,8 @@ def _ensure_starter_agents(
     preset = _load_telugu_preset()
     prankster = _load_preset("prankster.json")
     sweet_checkin = _load_preset("sweet-checkin.json")
+    appointment_preset = _load_preset("clinic-appointment-confirmation.json")
+    real_estate_preset = _load_preset("real-estate-site-visit.json")
     _rename_legacy_starters(db, org_id)
     specs = {
         "english": (
@@ -192,6 +194,18 @@ def _ensure_starter_agents(
             "Anu",
             "Warm check-in companion · a short, sweet call to see how someone's day is going.",
             sweet_checkin["version_payload"],
+        ),
+        # Additional use-case starters (appointment booking, real estate)
+        # come straight from the versioned presets in domain-configs/.
+        "appointment_booking": (
+            "Meera",
+            "Clinic appointment coordinator · calls patients to confirm or reschedule appointments.",
+            appointment_preset["version_payload"],
+        ),
+        "real_estate": (
+            "Arjun",
+            "Property advisor · calls enquiries and books site visits. Never pushes a sale.",
+            real_estate_preset["version_payload"],
         ),
     }
     created: dict[str, dict[str, Any]] = {}
